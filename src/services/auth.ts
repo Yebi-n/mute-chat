@@ -80,6 +80,20 @@ export async function requestSignUpPhoneOtp(phoneNumber: string, temporaryPasswo
   return { phone, session: data.session, temporaryPassword: signupPassword };
 }
 
+export async function checkPhoneSignUpStatus(phoneNumber: string) {
+  const phone = normalizeKoreanPhoneNumber(phoneNumber);
+  const { data, error } = await requireClient().rpc('check_phone_signup_status', {
+    p_phone: phone,
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    phone,
+    canSignUp: Boolean(row?.can_signup ?? true),
+    reason: String(row?.reason ?? 'ok'),
+  };
+}
+
 export async function requestPasswordRecoveryOtp(phoneNumber: string) {
   const phone = normalizeKoreanPhoneNumber(phoneNumber);
   const { error } = await requireClient().auth.signInWithOtp({

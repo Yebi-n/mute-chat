@@ -11,11 +11,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ExternalColorPicker, { BrightnessSlider, InputWidget, Panel3 } from 'reanimated-color-picker';
 import {
   ActivityIndicator, Alert, Animated, FlatList, Image, KeyboardAvoidingView, Linking, Platform, Pressable, SafeAreaView,
-  ScrollView, StyleSheet, Switch, Text, TextInput, View, PanResponder, Keyboard,
+  ScrollView, Share, StyleSheet, Switch, Text, TextInput, View, PanResponder, Keyboard,
 } from 'react-native';
-import { rooms, stories } from './src/mockData';
 import { isSupabaseConfigured, supabase } from './src/lib/supabase';
 import {
+  checkPhoneSignUpStatus,
   getCurrentSession,
   normalizeKoreanPhoneNumber,
   requestPasswordRecoveryOtp,
@@ -31,7 +31,7 @@ import {
 import { createRoom, decideRoomJoin, listMyActiveRoomIds, listPendingRoomJoinRequests, listRoomMembers, listRooms, requestRoomJoinWithAvatar, setRoomCover, setRoomOwnerProfile, ServerRoom, ServerRoomMember } from './src/services/rooms';
 import { getVerificationStatus, startAdultVerification } from './src/services/verification';
 import { registerPushDevice } from './src/services/notifications';
-import { configureRoomAccess, kickOrBanRoomMember, listBlockedRoomMembers, setRoomMemberRole, setRoomPinned, transferRoomOwnership, unbanRoomMember, verifyRoomPin } from './src/services/roomFeatures';
+import { clearRoomMemberMute, configureRoomAccess, kickOrBanRoomMember, listBlockedRoomMembers, setRoomMemberMute, setRoomMemberRole, setRoomPinned, transferRoomOwnership, unbanRoomMember, verifyRoomPin } from './src/services/roomFeatures';
 import { listRecentSystemMessages, listRoomMessages, sendTextMessage, ServerRoomMessage } from './src/services/chat';
 import { sendUploadedImages, uploadValidatedImage } from './src/services/media';
 import { requestAccountDeletion, submitReport } from './src/services/safety';
@@ -50,7 +50,23 @@ type ComposerTool = 'media' | 'style' | 'secret' | null;
 const CHAT_COLLAPSE_CHAR_THRESHOLD = 140;
 const CHAT_COLLAPSE_LINE_LIMIT = 4;
 const DEMO_ROOM_ID = 'green-table';
-type RoomMember = {userId?:string;name:string;intro:string;avatarUri?:string;owner?:boolean;mine?:boolean;coHost?:boolean;blocked?:boolean};
+const DEMO_ROOM: Room = {
+  id: DEMO_ROOM_ID,
+  name: '샘플 라운지',
+  description: '채팅 유형, 가입신청, 스토리, 공지선 등 모든 샘플 동작을 확인하는 더미 방입니다.',
+  tags: ['샘플'],
+  memberCount: 38,
+  maxMembers: 50,
+  region: '서울',
+  category: 'general',
+  topSpaceCount: 34,
+  isPromoted: true,
+  isActive: true,
+  emoji: '○',
+  imageColor: '#E8ECEA',
+};
+const DEMO_PUBLIC_STORY_ROOM = DEMO_ROOM;
+type RoomMember = {userId?:string;name:string;intro:string;avatarUri?:string;owner?:boolean;mine?:boolean;coHost?:boolean;blocked?:boolean;mutedUntil?:string|null};
 type TopSpacePackage = { points: number; seconds: number };
 type ColorProduct = { color:string; name:string; price:number };
 type Notice = {
@@ -120,7 +136,7 @@ const ROOM_MEMBERS: RoomMember[] = [
 ];
 
 const ROOM_UPDATED_AT: Record<string,number> = {
-  'green-table': Date.now()-72000,
+  [DEMO_ROOM_ID]: Date.now()-72000,
   'weekend-photo': Date.now()-18*60000,
   'suwon-walk': Date.now()-74*60000,
   'late-cinema': Date.now()-3*60*60000,
@@ -145,6 +161,7 @@ function mapRoomMembers(serverMembers: ServerRoomMember[], currentUserId?: strin
     owner: member.role === 'owner',
     mine: currentUserId ? member.userId === currentUserId : false,
     coHost: member.role === 'cohost',
+    mutedUntil: member.mutedUntil ?? null,
   })) satisfies RoomMember[];
 }
 
@@ -314,6 +331,16 @@ function EdgeBackLayer({onBack}:{onBack?:()=>void}) {
   return <View {...responder.panHandlers} style={s.edgeBackLayer} pointerEvents="box-only" />;
 }
 
+function AuthHeader({title,onBack}:{title:string;onBack?:()=>void}) {
+  return <View style={s.authHeader}>
+    <Pressable disabled={!onBack} onPress={onBack} style={s.authHeaderBack}>
+      {onBack?<Ionicons name="chevron-back" size={22} color={colors.textSubtle}/>:null}
+    </Pressable>
+    <Text style={s.authHeaderTitle}>{title}</Text>
+    <View style={s.authHeaderBack}/>
+  </View>;
+}
+
 export default function App() {
   const demoMode = !isSupabaseConfigured;
   const [session, setSession] = useState<Session | null>(null);
@@ -343,10 +370,10 @@ function AuthenticatedApp({session,onSignedOut}:{session:Session|null;onSignedOu
   const [screen, setScreen] = useState<Screen>('main');
   const [bottomTab, setBottomTab] = useState<BottomTab>('myRooms');
   const [category, setCategory] = useState<MainTab>('promotion');
-  const [selectedRoom, setSelectedRoom] = useState(rooms[0]);
-  const [roomData, setRoomData] = useState<Room[]>(rooms);
-  const [joinedIds, setJoinedIds] = useState(['green-table', 'weekend-photo']);
-  const [ownedRoomIds,setOwnedRoomIds]=useState(['green-table']);
+  const [selectedRoom, setSelectedRoom] = useState(DEMO_ROOM);
+  const [roomData, setRoomData] = useState<Room[]>([DEMO_ROOM]);
+  const [joinedIds, setJoinedIds] = useState<string[]>([DEMO_ROOM_ID]);
+  const [ownedRoomIds,setOwnedRoomIds]=useState<string[]>([DEMO_ROOM_ID]);
   const [pendingIds, setPendingIds] = useState<string[]>([]);
   const [adminReadOnly,setAdminReadOnly]=useState(false);
   const [query, setQuery] = useState('');
@@ -397,9 +424,9 @@ function AuthenticatedApp({session,onSignedOut}:{session:Session|null;onSignedOu
     if (!isSupabaseConfigured) return;
     Promise.all([listRooms(), listMyActiveRoomIds(), getVerificationStatus()])
       .then(([serverRooms, activeIds, verification]) => {
-        const mapped = serverRooms.map(mapServerRoom);
-        setRoomData(mapped.length ? mapped : rooms);
-        setJoinedIds(activeIds);
+        const mapped = serverRooms.map(mapServerRoom).filter((room) => room.id !== DEMO_ROOM_ID);
+        setRoomData([DEMO_ROOM, ...mapped]);
+        setJoinedIds([...new Set([DEMO_ROOM_ID, ...activeIds])]);
         setAdultVerified(verification.adultVerified);
         if (mapped.length) setSelectedRoom(mapped[0]);
       })
@@ -407,7 +434,7 @@ function AuthenticatedApp({session,onSignedOut}:{session:Session|null;onSignedOu
   }, []);
   useEffect(()=>{
     if(!isSupabaseConfigured)return;
-    const timer=setInterval(()=>listMyActiveRoomIds().then(setJoinedIds).catch(()=>undefined),10000);
+    const timer=setInterval(()=>listMyActiveRoomIds().then((ids)=>setJoinedIds([...new Set([DEMO_ROOM_ID, ...ids])])).catch(()=>undefined),10000);
     return()=>clearInterval(timer);
   },[]);
 
@@ -561,13 +588,21 @@ function mapServerRoom(room: ServerRoom): Room {
 function serverErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes('RATE_LIMITED')) return '잠시 후 다시 시도해주세요.';
+  if (message.includes('PHONE_ALREADY_REGISTERED')) return '이미 가입된 전화번호입니다.';
+  if (message.includes('PHONE_SIGNUP_COOLDOWN')) return '탈퇴 후 3일 동안 같은 전화번호로 가입할 수 없습니다.';
   if (message.includes('ALREADY_MEMBER')) return '이미 참여 중인 방입니다.';
   if (message.includes('ROOM_FULL')) return '방의 최대 인원에 도달했습니다.';
   if (message.includes('ROOM_CREATE_COOLDOWN')) return '방은 1분에 한 번만 만들 수 있습니다.';
   if (message.includes('ROOM_BANNED')) return '이 방에서 재가입이 제한된 계정입니다.';
+  if (message.includes('MEMBER_NOT_FOUND')) return '대상 멤버를 찾을 수 없습니다.';
+  if (message.includes('CANNOT_MUTE_OWNER')) return '방장은 채팅 금지할 수 없습니다.';
+  if (message.includes('INVALID_MUTE_DURATION')) return '허용된 채팅 금지 시간만 설정할 수 있습니다.';
   if (message.includes('ACCOUNT_REJOIN_COOLDOWN')) return '탈퇴 후 3일 동안 같은 전화번호로 가입할 수 없습니다.';
   if (message.includes('ADMIN_ACCOUNT_DELETION_FORBIDDEN')) return '슈퍼관리자 계정은 탈퇴할 수 없습니다.';
   if (message.includes('INVALID_PIN')) return 'PIN은 숫자 6자리로 입력해주세요.';
+  if (message.includes('INSUFFICIENT_POINTS')) return '포인트가 부족합니다.';
+  if (message.includes('ROOM_MUTED')) return '채팅 금지 상태입니다.';
+  if (message.includes('POINT_PRODUCT_NOT_SUPPORTED')) return '아직 준비되지 않은 상품입니다.';
   if (message.includes('AUTH_REQUIRED') || message.includes('JWT')) return '로그인이 만료되었습니다. 다시 로그인해주세요.';
   if (message.includes('invalid input syntax for type uuid')) return '이 항목은 아직 데모 데이터입니다. 서버에 생성된 방에서 다시 시도해주세요.';
   return message;
@@ -742,19 +777,21 @@ function PhoneAuthScreenV2({onRecoveryStateChange}:{onRecoveryStateChange:(activ
   const requestSignupOtp=async()=>{
     if(!validPhone||loading)return;
     const normalized=normalizeKoreanPhoneNumber(phone);
-    setNormalizedPhone(normalized);
-    setCode('');
-    setSignupPhoneVerified(false);
-    setSignupPhoneNotice('');
-    setSignupOtpStatus('idle');
-    setSignupOtpError('');
-    setOtpSeconds(300);
-    setCooldown(60);
-    setSignupOtpRequested(true);
-    onRecoveryStateChange(true);
-    Animated.timing(signupReveal,{toValue:1,duration:240,useNativeDriver:false}).start();
     setLoading(true);
     try{
+      const status=await checkPhoneSignUpStatus(normalized);
+      if(!status.canSignUp){
+        setSignupOtpRequested(false);
+        setSignupPhoneVerified(false);
+        setSignupOtpStatus('idle');
+        setSignupOtpError('');
+        setOtpSeconds(0);
+        setCooldown(0);
+        signupReveal.setValue(0);
+        onRecoveryStateChange(false);
+        setSignupPhoneNotice(status.reason==='exists'?'이미 가입된 전화번호입니다.':'탈퇴 후 3일 동안은 다시 가입할 수 없습니다.');
+        return;
+      }
       const result=await requestSignUpPhoneOtp(phone);
       if(result.session){
         await signOut();
@@ -762,21 +799,28 @@ function PhoneAuthScreenV2({onRecoveryStateChange}:{onRecoveryStateChange:(activ
       }
       setNormalizedPhone(result.phone);
       setSignupTemporaryPassword(result.temporaryPassword);
+      setCode('');
+      setSignupPhoneVerified(false);
+      setSignupPhoneNotice('');
+      setSignupOtpStatus('idle');
+      setSignupOtpError('');
+      setOtpSeconds(300);
+      setCooldown(60);
+      setSignupOtpRequested(true);
+      onRecoveryStateChange(true);
+      Animated.timing(signupReveal,{toValue:1,duration:240,useNativeDriver:false}).start();
     }catch(error){
       const message=serverErrorMessage(error);
       if(/already|registered|exists|duplicate|가입된|존재/i.test(message)){
-        setSignupPhoneNotice('이미 가입된 계정입니다.');
+        setSignupPhoneNotice('이미 가입된 전화번호입니다.');
         setSignupOtpRequested(false);
         setOtpSeconds(0);
         setCooldown(0);
         onRecoveryStateChange(false);
         signupReveal.setValue(0);
       }else{
-        setSignupPhoneNotice('문자가 오지 않으면 60초 후 다시 요청해주세요.');
+        setSignupPhoneNotice(message);
       }
-      return;
-      onRecoveryStateChange(false);
-      Alert.alert('인증번호 전송 실패',serverErrorMessage(error));
     }finally{
       setLoading(false);
     }
@@ -804,10 +848,13 @@ function PhoneAuthScreenV2({onRecoveryStateChange}:{onRecoveryStateChange:(activ
     setSignupOtpStatus('idle');
     setSignupOtpError('');
     setSignupPhoneVerified(false);
+    setSignupPhoneNotice('');
     setLoading(true);
     try{
       if(mode==='signup'){
-        const result=await requestSignUpPhoneOtp(normalizedPhone,signupTemporaryPassword);
+        const targetPhone=normalizedPhone||normalizeKoreanPhoneNumber(phone);
+        const result=await requestSignUpPhoneOtp(targetPhone,signupTemporaryPassword);
+        setNormalizedPhone(result.phone);
         setSignupTemporaryPassword(result.temporaryPassword);
       }
       else await requestPasswordRecoveryOtp(phone);
@@ -891,20 +938,20 @@ function PhoneAuthScreenV2({onRecoveryStateChange}:{onRecoveryStateChange:(activ
   };
 
   if(mode==='recovery'&&step==='otp'){
-    return <SafeAreaView style={s.authScreen}><StatusBar style="dark"/><View style={s.authCard}><MuteLogo/><Text style={s.authTitle}>인증번호 입력</Text><Text style={s.authBody}>문자로 받은 6자리 번호를 5분 안에 입력해주세요.</Text><View style={s.authPinLine}><TextInput autoFocus value={code} onChangeText={(value)=>setCode(value.replace(/\D/g,'').slice(0,6))} keyboardType="number-pad" placeholder="000000" placeholderTextColor={colors.textMuted} style={[s.authInput,s.authPinInput]}/><Text style={s.authTimer}>{timerText}</Text></View><Pressable disabled={loading||code.length!==6||otpSeconds===0} onPress={verifyRecoveryCode} style={[s.primary,(loading||code.length!==6||otpSeconds===0)&&s.disabled]}><Text style={s.primaryText}>{loading?'확인 중...':'인증 완료'}</Text></Pressable><Pressable disabled={cooldown>0||loading} onPress={resendCode} style={s.authBack}><Text style={s.authBackText}>{cooldown>0?`${cooldown}초 후 재전송`:'인증번호 다시 받기'}</Text></Pressable><Pressable onPress={()=>setStep('form')} style={s.authBack}><Text style={s.authBackText}>전화번호 다시 입력</Text></Pressable></View></SafeAreaView>;
+    return <SafeAreaView style={s.authScreen}><StatusBar style="dark"/><AuthHeader title="비밀번호 찾기" onBack={()=>resetFlow('login')}/><View style={s.authCard}><Text style={s.authTitle}>인증번호 입력</Text><Text style={s.authBody}>문자로 받은 6자리 번호를 5분 안에 입력해주세요.</Text><View style={s.authPinLine}><TextInput autoFocus value={code} onChangeText={(value)=>setCode(value.replace(/\D/g,'').slice(0,6))} keyboardType="number-pad" placeholder="000000" placeholderTextColor={colors.textMuted} style={[s.authInput,s.authPinInput]}/><Text style={s.authTimer}>{timerText}</Text></View><Pressable disabled={loading||code.length!==6||otpSeconds===0} onPress={verifyRecoveryCode} style={[s.primary,(loading||code.length!==6||otpSeconds===0)&&s.disabled]}><Text style={s.primaryText}>{loading?'확인 중...':'인증 완료'}</Text></Pressable><Pressable disabled={cooldown>0||loading} onPress={resendCode} style={s.authBack}><Text style={s.authBackText}>{cooldown>0?`${cooldown}초 후 재전송`:'인증번호 다시 받기'}</Text></Pressable><Pressable onPress={()=>setStep('form')} style={s.authBack}><Text style={s.authBackText}>전화번호 다시 입력</Text></Pressable></View></SafeAreaView>;
   }
 
   if(mode==='recovery'&&step==='newPassword'){
-    return <SafeAreaView style={s.authScreen}><StatusBar style="dark"/><View style={s.authCard}><MuteLogo/><Text style={s.authTitle}>새 비밀번호 설정</Text><Text style={s.authBody}>8자 이상의 새 비밀번호를 입력해주세요.</Text><TextInput secureTextEntry value={password} onChangeText={setPassword} placeholder="새 비밀번호" placeholderTextColor={colors.textMuted} style={s.authInput}/><TextInput secureTextEntry value={passwordConfirm} onChangeText={setPasswordConfirm} placeholder="새 비밀번호 확인" placeholderTextColor={colors.textMuted} style={s.authInput}/><Pressable disabled={loading||!validPassword||!passwordsMatch} onPress={changePassword} style={[s.primary,(loading||!validPassword||!passwordsMatch)&&s.disabled]}><Text style={s.primaryText}>{loading?'변경 중...':'비밀번호 변경'}</Text></Pressable></View></SafeAreaView>;
+    return <SafeAreaView style={s.authScreen}><StatusBar style="dark"/><AuthHeader title="비밀번호 찾기" onBack={()=>setStep('otp')}/><View style={s.authCard}><Text style={s.authTitle}>새 비밀번호 설정</Text><Text style={s.authBody}>8자 이상의 새 비밀번호를 입력해주세요.</Text><TextInput secureTextEntry value={password} onChangeText={setPassword} placeholder="새 비밀번호" placeholderTextColor={colors.textMuted} style={s.authInput}/><TextInput secureTextEntry value={passwordConfirm} onChangeText={setPasswordConfirm} placeholder="새 비밀번호 확인" placeholderTextColor={colors.textMuted} style={s.authInput}/><Pressable disabled={loading||!validPassword||!passwordsMatch} onPress={changePassword} style={[s.primary,(loading||!validPassword||!passwordsMatch)&&s.disabled]}><Text style={s.primaryText}>{loading?'변경 중...':'비밀번호 변경'}</Text></Pressable></View></SafeAreaView>;
   }
 
   if(mode==='signup'){
     return (
       <SafeAreaView style={s.authScreen}>
         <StatusBar style="dark"/>
+        <AuthHeader title="회원가입" onBack={()=>resetFlow('login')}/>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.authScroll}>
           <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} style={s.authCard}>
-            <MuteLogo/>
             <Text style={s.authTitle}>전화번호로 가입</Text>
             <Text style={s.authBody}>전화번호를 인증한 뒤 비밀번호를 설정해주세요.</Text>
             <View style={s.authPhoneRow}>
@@ -966,7 +1013,7 @@ function PhoneAuthScreenV2({onRecoveryStateChange}:{onRecoveryStateChange:(activ
     return <SafeAreaView style={s.authScreen}><StatusBar style="dark"/><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.authScroll}><KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} style={s.authCard}><MuteLogo/><Text style={s.authTitle}>전화번호로 가입</Text><Text style={s.authBody}>전화번호 인증 후 비밀번호를 설정해주세요.</Text><View style={s.authPhoneRow}><TextInput editable={!signupPhoneVerified} value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="010-0000-0000" placeholderTextColor={colors.textMuted} style={[s.authInput,s.authPhoneInput,signupPhoneVerified&&s.authInputVerified]}/><Pressable disabled={loading||!validPhone||signupPhoneVerified||(signupOtpRequested&&cooldown>0)} onPress={signupOtpRequested?resendCode:requestSignupOtp} style={[s.authVerifyButton,(loading||!validPhone||signupPhoneVerified||(signupOtpRequested&&cooldown>0))&&s.authVerifyButtonDisabled]}><Text style={[s.authVerifyText,(loading||!validPhone||signupPhoneVerified||(signupOtpRequested&&cooldown>0))&&s.authVerifyTextDisabled]}>{signupPhoneVerified?'인증완료':signupOtpRequested?(cooldown>0?`${cooldown}초`:'재전송'):'인증하기'}</Text></Pressable></View>{signupOtpRequested&&<Animated.View style={[s.authSignupReveal,{opacity:signupReveal,maxHeight:signupReveal.interpolate({inputRange:[0,1],outputRange:[0,310]})}]}><View style={s.authPinHeader}><Text style={s.authPinLabel}>{signupPhoneVerified?'전화번호 인증이 완료됐어요.':'문자로 받은 6자리 PIN'}</Text>{!signupPhoneVerified&&<Text style={[s.authTimer,otpExpired&&s.authTimerExpired]}>{otpExpired?'시간 만료':timerText}</Text>}</View>{!signupPhoneVerified&&<View style={s.authPinLine}><TextInput autoFocus value={code} onChangeText={(value)=>setCode(value.replace(/\D/g,'').slice(0,6))} editable={!otpExpired} keyboardType="number-pad" placeholder="000000" placeholderTextColor={colors.textMuted} style={[s.authInput,s.authPinInput]}/><Pressable disabled={loading||code.length!==6||otpExpired} onPress={verifySignupCode} style={[s.authPinButton,(loading||code.length!==6||otpExpired)&&s.authVerifyButtonDisabled]}><Text style={[s.authVerifyText,(loading||code.length!==6||otpExpired)&&s.authVerifyTextDisabled]}>확인</Text></Pressable></View>}{signupPhoneVerified&&<><TextInput secureTextEntry value={password} onChangeText={setPassword} placeholder="비밀번호 8자 이상" placeholderTextColor={colors.textMuted} style={s.authInput}/><TextInput secureTextEntry value={passwordConfirm} onChangeText={setPasswordConfirm} placeholder="비밀번호 다시 입력" placeholderTextColor={colors.textMuted} style={s.authInput}/><Text style={[s.authPasswordHint,passwordConfirm.length>0&&!passwordsMatch&&s.authPasswordMismatch]}>{passwordConfirm.length===0?'영문, 숫자 등을 조합해 8자 이상 입력해주세요.':passwordsMatch?'비밀번호가 일치합니다.':'비밀번호가 일치하지 않습니다.'}</Text><Pressable disabled={loading||!validPassword||!passwordsMatch} onPress={completeSignup} style={[s.primary,(loading||!validPassword||!passwordsMatch)&&s.disabled]}><Text style={s.primaryText}>{loading?'가입 중...':'가입하기'}</Text></Pressable></>}</Animated.View>}<Pressable onPress={()=>resetFlow('login')} style={s.authBack}><Text style={s.authBackText}>로그인으로 돌아가기</Text></Pressable></KeyboardAvoidingView></ScrollView></SafeAreaView>;
   }
 
-  return <SafeAreaView style={s.authScreen}><StatusBar style="dark"/><KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} style={s.authCard}><MuteLogo symbolOnly/><Text style={s.authTitle}>{mode==='login'?'로그인':'비밀번호 찾기'}</Text><Text style={s.authBody}>{mode==='login'?'전화번호와 비밀번호를 입력해주세요.':'문자 인증 후 새 비밀번호를 설정합니다.'}</Text><TextInput autoCapitalize="none" value={phone} onChangeText={setPhone} keyboardType={mode==='login'?'default':'phone-pad'} placeholder="010-0000-0000" placeholderTextColor={colors.textMuted} style={s.authInput}/>{mode==='login'&&<TextInput secureTextEntry value={password} onChangeText={setPassword} placeholder="비밀번호 8자 이상" placeholderTextColor={colors.textMuted} style={s.authInput}/>}<Pressable disabled={loading||(mode==='login'?!validLoginIdentifier:!validPhone)||(mode==='login'&&!validPassword)} onPress={mode==='login'?login:requestRecovery} style={[s.primary,(loading||(mode==='login'?!validLoginIdentifier:!validPhone)||(mode==='login'&&!validPassword))&&s.disabled]}><Text style={s.primaryText}>{loading?'처리 중...':mode==='login'?'로그인':'인증번호 받기'}</Text></Pressable>{mode==='login'?<View><Pressable onPress={()=>resetFlow('recovery')} style={s.authBack}><Text style={s.authBackText}>비밀번호를 잊으셨나요?</Text></Pressable><Pressable onPress={()=>resetFlow('signup')} style={s.authBack}><Text style={s.authBackText}>처음이신가요? 가입하기</Text></Pressable></View>:<Pressable onPress={()=>resetFlow('login')} style={s.authBack}><Text style={s.authBackText}>로그인으로 돌아가기</Text></Pressable>}</KeyboardAvoidingView></SafeAreaView>;
+  return <SafeAreaView style={s.authScreen}><StatusBar style="dark"/><AuthHeader title={mode==='login'?'로그인':'비밀번호 찾기'} onBack={mode==='login'?undefined:()=>resetFlow('login')}/><KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} style={s.authCard}><Text style={s.authTitle}>{mode==='login'?'로그인':'비밀번호 찾기'}</Text><Text style={s.authBody}>{mode==='login'?'전화번호와 비밀번호를 입력해주세요.':'문자 인증 후 새 비밀번호를 설정합니다.'}</Text><TextInput autoCapitalize="none" value={phone} onChangeText={setPhone} keyboardType={mode==='login'?'default':'phone-pad'} placeholder="010-0000-0000" placeholderTextColor={colors.textMuted} style={s.authInput}/>{mode==='login'&&<TextInput secureTextEntry value={password} onChangeText={setPassword} placeholder="비밀번호 8자 이상" placeholderTextColor={colors.textMuted} style={s.authInput}/>}<Pressable disabled={loading||(mode==='login'?!validLoginIdentifier:!validPhone)||(mode==='login'&&!validPassword)} onPress={mode==='login'?login:requestRecovery} style={[s.primary,(loading||(mode==='login'?!validLoginIdentifier:!validPhone)||(mode==='login'&&!validPassword))&&s.disabled]}><Text style={s.primaryText}>{loading?'처리 중...':mode==='login'?'로그인':'인증번호 받기'}</Text></Pressable>{mode==='login'?<View><Pressable onPress={()=>resetFlow('recovery')} style={s.authBack}><Text style={s.authBackText}>비밀번호를 잊으셨나요?</Text></Pressable><Pressable onPress={()=>resetFlow('signup')} style={s.authBack}><Text style={s.authBackText}>처음이신가요? 가입하기</Text></Pressable></View>:<Pressable onPress={()=>resetFlow('login')} style={s.authBack}><Text style={s.authBackText}>로그인으로 돌아가기</Text></Pressable>}</KeyboardAvoidingView></SafeAreaView>;
 }
 
 function MainScreen({ bottomTab, setBottomTab, category, setCategory, joinedIds, activeTopSpaces, now, roomData, adultVerified, isSuperAdmin, points, attendanceAvailableAt, rewardedAdAvailable, promotionTimestamps, onAttendance, onRewardedAd, topSpaceProgress, openRoom, openRoomDetail, onAdminReportRoom, onNotification, onRanking, onSearch, onSettings, onCreate }: {
@@ -990,7 +1037,7 @@ function MainScreen({ bottomTab, setBottomTab, category, setCategory, joinedIds,
   };
   const filtered = useMemo(() => roomData.filter((room) => {
     const tabMatch = bottomTab === 'myRooms' ? joinedIds.includes(room.id)
-      : category === 'promotion' ? (adultVerified||isSuperAdmin||!room.isAdult) && (Boolean(promotionTimestamps[room.id]) || room.isPromoted || room.isActive)
+      : category === 'promotion' ? (adultVerified||isSuperAdmin||!room.isAdult) && (Boolean(promotionTimestamps[room.id]) || room.isPromoted)
         : category === 'member' ? room.category === 'member'
           : category === 'concept' ? room.category === 'concept'
           : category === 'region' ? !!room.region : !!room.isAdult;
@@ -1030,15 +1077,17 @@ function MainScreen({ bottomTab, setBottomTab, category, setCategory, joinedIds,
     {listMode && <FlatList data={filtered} keyExtractor={(item) => item.id} contentContainerStyle={s.list}
       ListHeaderComponent={bottomTab === 'myRooms'
         ? <View style={s.listHeader}><Text style={s.listTitle}>내 채팅</Text></View>
-          : <View>
-              <>
-                <SectionLabel title="Top" action="랭킹" onAction={onRanking}/>
-                {topRoom
-                  ? <RoomRow room={topRoom} joined={joinedIds.includes(topRoom.id)} blurAdult={category==='adult'} onPress={() => openRoom(topRoom)} onDescriptionPress={()=>openRoomDetail(topRoom)} topSpaceProgress={topSpaceProgress(topRoom)} activityLabel={formatRoomActivity(topRoom.updatedAt??ROOM_UPDATED_AT[topRoom.id]??now,now,false)} topHighlight />
-                  : null}
-              </>
-              <SectionLabel title="Hot"/>
-            </View>}
+          : category==='promotion'
+            ? null
+            : <View>
+                <>
+                  <SectionLabel title="Top" action="랭킹" onAction={onRanking} compact/>
+                  {topRoom
+                    ? <RoomRow room={topRoom} joined={joinedIds.includes(topRoom.id)} blurAdult={category==='adult'} onPress={() => openRoom(topRoom)} onDescriptionPress={()=>openRoomDetail(topRoom)} topSpaceProgress={topSpaceProgress(topRoom)} activityLabel={formatRoomActivity(topRoom.updatedAt??ROOM_UPDATED_AT[topRoom.id]??now,now,false)} topHighlight />
+                    : null}
+                </>
+                <SectionLabel title="Hot" compact/>
+              </View>}
       renderItem={({ item, index }) => bottomTab === 'discover' && item.id===topRoom?.id ? null : <RoomRow room={item} joined={joinedIds.includes(item.id)} blurAdult={bottomTab==='discover'&&(category==='adult'||(category==='promotion'&&Boolean(item.isAdult)))} pinned={pinnedRoomIds.includes(item.id)} onLongPress={()=>Alert.alert(item.name,undefined,[...(bottomTab==='myRooms'?[{text:pinnedRoomIds.includes(item.id)?'상단 고정 해제':'상단에 고정',onPress:()=>toggleRoomPin(item)}]:[]),...(isSuperAdmin?[{text:'서버로 신고',style:'destructive' as const,onPress:()=>onAdminReportRoom(item)}]:[]),{text:'취소',style:'cancel'}])} onPress={() => openRoom(item)} onDescriptionPress={bottomTab==='discover'?()=>openRoomDetail(item):undefined} unreadCount={bottomTab === 'myRooms' ? (index === 0 ? 12 : 0) : 0} activityLabel={bottomTab==='discover'&&category==='promotion'?'':formatRoomActivity(item.updatedAt??ROOM_UPDATED_AT[item.id]??now,now,bottomTab==='myRooms')} />}
       ListEmptyComponent={<Empty title="표시할 방이 없어요" body="검색어나 카테고리를 변경해 보세요." />}
     />}
@@ -1086,6 +1135,8 @@ function RoomDetail({ room, joined, adminReadOnly, isSuperAdmin, onAdminReportUs
   const [pinError,setPinError]=useState('');
   const [pinChecking,setPinChecking]=useState(false);
   const [members,setMembers]=useState<RoomMember[]>(()=>room.id===DEMO_ROOM_ID?membersForRoom(room):[]);
+  const [storyOverlayId,setStoryOverlayId]=useState<string|null>(null);
+  const [storyPanelKey,setStoryPanelKey]=useState(0);
   const [currentUserId,setCurrentUserId]=useState<string|undefined>();
   const isPrivateRoom=Boolean(room.isPrivate || room.tags.includes('비밀방'));
 
@@ -1102,11 +1153,39 @@ function RoomDetail({ room, joined, adminReadOnly, isSuperAdmin, onAdminReportUs
       .then((serverMembers)=>setMembers(mapRoomMembers(serverMembers,currentUserId)))
       .catch(()=>undefined);
   },[currentUserId,room]);
+  const viewerRole = useMemo<'owner'|'cohost'|'member'|null>(()=>{
+    const me=members.find((member)=>member.mine);
+    if(!me)return null;
+    if(me.owner)return 'owner';
+    if(me.coHost)return 'cohost';
+    return 'member';
+  },[members]);
 
-  if(profile)return <MemberProfile member={profile} room={room} onBack={()=>setProfile(null)}/>;
+  if(profile)return <MemberProfile member={profile} room={room} viewerRole={adminReadOnly||isSuperAdmin?null:viewerRole} onBack={()=>setProfile(null)}/>;
+  if(storyOverlayId)return <SafeAreaView style={s.safe}><StatusBar style="light"/><StoryPanel key={`overlay-${storyOverlayId}`} room={room} joined={joined} isStaff={members.some((member)=>member.mine&&(member.owner||member.coHost))} showChatButton={false} showInternalHeader title="스토리" initialSelectedId={storyOverlayId} onClose={()=>{setStoryOverlayId(null);setStoryPanelKey((value)=>value+1);}} onEnterChat={()=>{setStoryOverlayId(null);setStoryPanelKey((value)=>value+1);}}/></SafeAreaView>;
 
-  const onShare=async()=>{setMenuOpen(false);setToast('링크 공유는 아직 준비 중입니다.');setTimeout(()=>setToast(''),1800);};
-  const onReport=()=>{setMenuOpen(false);Alert.alert('신고하기','신고 사유 선택 기능은 다음 단계에서 연결됩니다.');};
+  const onShare=async()=>{
+    setMenuOpen(false);
+    try{
+      await Share.share({
+        title: room.name,
+        message: `[뮤트] ${room.name}\n${room.description}${room.tags.length?`\n${room.tags.map((tag)=>`#${tag}`).join(' ')}`:''}`,
+      });
+    }catch(error){
+      if(String(error).includes('User did not share'))return;
+      Alert.alert('공유 실패',serverErrorMessage(error));
+    }
+  };
+  const onReport=async()=>{
+    setMenuOpen(false);
+    if(!isUuid(room.id)){Alert.alert('신고 불가','서버에 생성된 방만 신고할 수 있습니다.');return;}
+    try{
+      await submitReport({targetType:'room',targetId:room.id,reason:'other',detail:`방 신고: ${room.name}`});
+      Alert.alert('신고 접수 완료','방 신고가 접수되었습니다.');
+    }catch(error){
+      Alert.alert('신고 실패',serverErrorMessage(error));
+    }
+  };
   const openApply=()=>{if(isPrivateRoom&&!joined&&!adminReadOnly&&!isSuperAdmin){setPinOpen(true);return;}onApply();};
   const verifyJoinPin=async()=>{
     if(pin.length!==6||pinChecking)return;
@@ -1139,7 +1218,7 @@ function RoomDetail({ room, joined, adminReadOnly, isSuperAdmin, onAdminReportUs
           <View style={s.memberSectionHead}><Text style={s.memberSectionTitle}>멤버</Text></View>
           <View style={s.detailMemberGrid}>{members.map((member)=><Pressable key={member.userId??member.name} onPress={()=>setProfile(member)} onLongPress={isSuperAdmin&&member.userId?()=>onAdminReportUser(member.userId!,member.name):undefined} style={s.detailMemberItem}><View style={s.detailMemberAvatar}><Avatar uri={member.avatarUri} size={64}/>{member.owner&&<View style={s.crown}><Ionicons name="trophy" size={13} color="#FFF"/></View>}</View><View style={s.detailMemberNameLine}><Text style={s.gridName}>{member.name}</Text></View>{member.owner?<Badge text="방장" pink/>:member.coHost?<Badge text="부방장"/>:null}</Pressable>)}</View>
         </ScrollView>
-      : <StoryPanel room={room} joined={joined} isStaff={members.some((member)=>member.mine&&(member.owner||member.coHost))} showChatButton={false} showInternalHeader={false} onEnterChat={onEnterChat}/>
+      : <StoryPanel key={`room-story-${storyPanelKey}`} room={room} joined={joined} isStaff={members.some((member)=>member.mine&&(member.owner||member.coHost))} showChatButton={false} showInternalHeader={false} onEnterChat={onEnterChat} onOpenDetail={(story)=>setStoryOverlayId(story.id)}/>
     }
     {tab==='profile'&&<View style={s.detailSticky}>{(joined||adminReadOnly||isSuperAdmin)?<Pressable onPress={onEnterChat} style={s.detailJoinButton}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.detailJoinGradient}><Text style={s.primaryText}>{enterLabel}</Text></LinearGradient></Pressable>:pending?<View style={s.pendingButton}><Ionicons name="time-outline" size={17} color={colors.textMuted}/><Text style={s.pendingText}>가입 승인 대기 중</Text></View>:<Pressable onPress={openApply} style={s.detailJoinButton}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.detailJoinGradient}><Text style={s.primaryText}>가입 신청하기</Text></LinearGradient></Pressable>}</View>}
     {toast!==''&&<View pointerEvents="none" style={s.toast}><Text style={s.toastText}>{toast}</Text></View>}
@@ -1220,7 +1299,7 @@ function ChatRoom({ room, readOnly, isKnownOwner, isSuperAdmin, onAdminReportUse
   const [storyPanelInitialWrite,setStoryPanelInitialWrite]=useState(false);
   const [photoViewer,setPhotoViewer]=useState<{uri:string;menuOpen:boolean}|null>(null);
   const [toast,setToast]=useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>([
+  const [messages, setMessages] = useState<ChatMessage[]>(()=>room.id===DEMO_ROOM_ID?[
     { id: '1', kind: 'text', mine: false, name: '초록윤', text: '오늘 저녁 산책할 사람 있나요?', time: '오후 9:21' },
     { id: '2', kind: 'text', mine: false, name: '초록윤', text: '날씨가 좋아서 천천히 걸으면 좋겠어요. 산책 코스는 지난번에 갔던 공원 입구에서 시작해서 강변을 따라 천천히 걷고, 중간에 편의점 앞 벤치에서 잠깐 쉬었다가 돌아오는 방향이면 좋을 것 같아요. 늦게 합류하는 분도 찾기 쉽도록 출발 전에 위치를 한 번 더 공유할게요. 혹시 비가 오면 실내로 바로 바꿀 수 있도록 대체 장소도 같이 정해두면 좋겠습니다. 처음 보는 분들도 부담 없게 이동 속도는 느리게 잡고, 중간에 사진 찍고 쉬는 시간도 넣을게요.', time: '오후 9:22' },
     { id: '3', kind: 'system', event: 'join', text: '한걸음님이 들어왔습니다.' },
@@ -1232,7 +1311,7 @@ function ChatRoom({ room, readOnly, isKnownOwner, isSuperAdmin, onAdminReportUse
     { id: '8-kick', kind: 'system', event: 'kick', text: '느린준님이 강퇴되었습니다: 한걸음' },
     { id: '9', kind: 'system', event: 'room', text: '방 설명이 변경되었습니다: 한걸음' },
     { id: '10', kind: 'story', mine: false, name: '해질녘', storyId:'s1', title:'이번 주 산책 후보', preview:'토요일 오후에 걷기 좋은 코스를 몇 군데 정리해봤어요. 같이 보고 의견 남겨주세요.', time:'오후 9:28' },
-  ]);
+  ]:[]);
   useEffect(()=>{
     if(!supabase)return;
     supabase.auth.getUser().then(({data})=>setCurrentUserId(data.user?.id)).catch(()=>undefined);
@@ -1426,8 +1505,18 @@ function ChatRoom({ room, readOnly, isKnownOwner, isSuperAdmin, onAdminReportUse
     {text:'복사',onPress:()=>copyMessage(item.text)},
     {text:'취소',style:'cancel'},
   ]);
-  const combinedMessages=messages;
-  const visibleMessages=combinedMessages;
+  const combinedMessages=useMemo(()=>{
+    const byId=new Map<string,ChatMessage>();
+    [...messages,...roomSystemMessages].forEach((item)=>{
+      const normalizedId=item.id.startsWith('server-')?item.id.slice(7):item.id;
+      if(!byId.has(normalizedId))byId.set(normalizedId,{...item,id:normalizedId});
+    });
+    return [...byId.values()];
+  },[messages,roomSystemMessages]);
+  const visibleMessages=combinedMessages.filter((item)=>{
+    if(item.kind!=='secret')return true;
+    return item.mine||item.recipient===myDisplayName||isSuperAdmin;
+  });
   useEffect(()=>{
     const latest=visibleMessages[visibleMessages.length-1];
     if(!latest||latest.kind==='system'||latest.mine)return;
@@ -1449,9 +1538,9 @@ function ChatRoom({ room, readOnly, isKnownOwner, isSuperAdmin, onAdminReportUse
   if(profileMember)return <MemberProfile member={profileMember} room={room} viewerRole={myRole} editable={Boolean(profileMember.mine)} onBack={()=>setProfileMember(null)}/>;
   const addStoryPreview=(story:StoryItem)=>{const preview=story.blocks.filter((block)=>block.type==='text').map((block)=>block.text).join(' ').slice(0,86);setMessages((items)=>[...items,{id:`story-${story.id}-${Date.now()}`,kind:'story',mine:story.mine??true,name:story.author,avatarUri:story.authorAvatarUri,storyId:story.id,title:story.title,preview,time:'지금'}]);};
   if(panel==='overview')return <RoomDetail room={room} joined adminReadOnly={readOnly} isSuperAdmin={isSuperAdmin} onAdminReportUser={onAdminReportUser} pending={false} onBack={()=>setPanel(null)} onApply={()=>setPanel(null)} onEnterChat={()=>setPanel(null)} enterLabel="채팅방으로 돌아가기"/>;
-  if(panel==='stories')return <StoryPanel room={room} joined isStaff={isStaff} showChatButton={false} showInternalHeader title="스토리" initialSelectedId={storyPanelInitialId??undefined} initialWrite={storyPanelInitialWrite} onClose={()=>{setStoryPanelInitialId(null);setStoryPanelInitialWrite(false);setPanel(null);}} onEnterChat={()=>{setStoryPanelInitialId(null);setStoryPanelInitialWrite(false);setPanel(null);}} onStorySaved={(story)=>{setStoryPanelInitialWrite(false);addStoryPreview(story);}}/>;
+  if(panel==='stories')return <StoryPanel room={room} joined isStaff={isStaff} showChatButton={false} showInternalHeader title="스토리" initialSelectedId={storyPanelInitialId??undefined} initialWrite={storyPanelInitialWrite} onClose={()=>{setStoryPanelInitialId(null);setStoryPanelInitialWrite(false);setPanel(null);}} onEnterChat={()=>{setStoryPanelInitialId(null);setStoryPanelInitialWrite(false);setPanel(null);}} onStorySaved={(story)=>{setStoryPanelInitialWrite(false);if(!messages.some((item)=>item.kind==='story'&&item.storyId===story.id))addStoryPreview(story);}}/>;
   if (panel) return <SafeAreaView style={s.safe}><StatusBar style="light"/><TopBar title={panel==='applications'?'가입 신청 목록':panel==='members'?'멤버 관리':panel==='blocked'?'차단 멤버 목록':panel==='profile'?'프로필':'방 공개 설정'} onBack={() => setPanel(null)}/>{panel==='applications'?<JoinRequests room={room}/>:panel==='members'?<MemberPanel room={room} isOwner={isOwner} isSuperAdmin={isSuperAdmin} onAdminReportUser={onAdminReportUser} onProfile={setProfileMember}/>:panel==='blocked'?<BlockedMembers room={room}/>:<RoomAccessSettings room={room} onSaved={()=>setPanel(null)}/>}</SafeAreaView>;
-  return <SafeAreaView style={s.safe}><EdgeBackLayer onBack={onBack}/><StatusBar style="light" /><TopBar title={`[${room.name}]`} inlineCount={room.memberCount} onBack={onBack} secondaryTrailing="search" onSecondaryTrailingPress={()=>{setChatSearchOpen((value)=>!value);setChatSearch('');}} trailing="menu" onTrailingPress={() => {Keyboard.dismiss();setTool(null);setChatSearchOpen(false);readOnly?setPanel('members'):setDrawerOpen(true);}} />
+  return <SafeAreaView style={s.safe}><EdgeBackLayer onBack={onBack}/><StatusBar style="light" /><TopBar title={`[${room.name}]`} inlineCount={room.memberCount} onBack={onBack} secondaryTrailing="search" onSecondaryTrailingPress={()=>{setChatSearchOpen((value)=>!value);setChatSearch('');}} trailing="menu" onTrailingPress={() => {Keyboard.dismiss();setTool(null);setChatSearchOpen(false);(readOnly&&!isSuperAdmin)?setPanel('members'):setDrawerOpen(true);}} />
     {chatSearchOpen&&<View style={s.chatSearchBar}><Ionicons name="search" size={18} color={colors.textMuted}/><TextInput autoFocus value={chatSearch} onChangeText={setChatSearch} placeholder="이 방의 채팅 검색" placeholderTextColor={colors.textMuted} style={s.chatSearchInput}/><Text style={s.chatSearchCount}>{chatSearchMatches.length?`${chatSearchCursor+1}/${chatSearchMatches.length}`:'0건'}</Text><Pressable disabled={!chatSearchMatches.length} onPress={()=>moveSearch(1)} style={s.chatSearchNav}><Ionicons name="chevron-up" size={19} color={chatSearchMatches.length?colors.textSubtle:colors.gray300}/></Pressable><Pressable disabled={!chatSearchMatches.length} onPress={()=>moveSearch(-1)} style={s.chatSearchNav}><Ionicons name="chevron-down" size={19} color={chatSearchMatches.length?colors.textSubtle:colors.gray300}/></Pressable><Pressable onPress={()=>{setChatSearchOpen(false);setChatSearch('');}} style={s.chatSearchNav}><Ionicons name="close" size={20} color={colors.textSubtle}/></Pressable></View>}
     <KeyboardAvoidingView style={[s.flex,{backgroundColor:chatBackground}]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       {readOnly&&<View style={s.readOnlyBanner}><Ionicons name="eye-outline" size={15} color={colors.mint700}/><Text style={s.readOnlyText}>관리자 읽기 전용 조회</Text></View>}
@@ -1463,39 +1552,65 @@ function ChatRoom({ room, readOnly, isKnownOwner, isSuperAdmin, onAdminReportUse
         const continuous=!item.mine&&previous?.kind!=='system'&&!previous?.mine&&previous?.name===item.name;
         const expanded=expandedMessages.includes(item.id);
         const shouldCollapse=item.kind==='text'&&item.text.length>=CHAT_COLLAPSE_CHAR_THRESHOLD;
-        return <View key={item.id} onLayout={(event)=>{messagePositions.current[item.id]=event.nativeEvent.layout.y;}}>{unreadMarker}<View style={[s.messageRow,item.mine&&s.mineRow,continuous&&s.continuousRow]}>{!item.mine&&!continuous?<Pressable accessibilityLabel={`${item.name} 프로필 메뉴`} onPress={()=>setSelectedMember(item.name)}><Avatar uri={item.avatarUri} size={46}/></Pressable>:!item.mine?<View style={s.avatarSpacer}/>:null}<View style={s.messageBlock}>{!item.mine&&!continuous&&<Text style={s.sender}>{item.name}</Text>}<View style={s.bubbleLine}>{item.mine&&<Text numberOfLines={1} style={s.time}>{item.time}</Text>}<Pressable onLongPress={()=>item.kind==='image'&&item.imageUris?.[0]?setPhotoViewer({uri:item.imageUris[0],menuOpen:false}):messageActions(item as Extract<ChatMessage,{kind:'text'|'secret'}>)} style={[s.bubble,item.kind==='image'&&s.imageBubble,activeSearchMessage?.id===item.id&&s.searchBubbleActive,item.mine?{backgroundColor:bubbleColor,borderBottomRightRadius:4}:s.otherBubble]}>{item.replyTo&&<View style={s.replyQuote}><Text style={s.replyQuoteName}>{replyLabel(item.replyTo.name,myDisplayName)}</Text><Text numberOfLines={1} style={s.replyQuoteText}>{item.replyTo.text}</Text></View>}{item.kind==='image'?(item.imageUris?.length?<ImageGrid uris={item.imageUris} onSave={saveImage} onPress={(uri)=>setPhotoViewer({uri,menuOpen:false})}/>:<View style={s.imagePlaceholder}><Ionicons name="image-outline" size={30} color={colors.gray300}/></View>):item.kind==='secret'?<View style={s.secretContent}><View style={s.secretLabel}><Ionicons name="lock-closed" size={12} color={colors.pink600}/><Text style={s.secretLabelText}>{item.recipient}님에게만 보이는 쪽지</Text></View><Text style={[s.messageText,item.mine&&{color:textColor}]}>{item.text}</Text></View>:<View><Text numberOfLines={expanded||!shouldCollapse?undefined:CHAT_COLLAPSE_LINE_LIMIT} style={[s.messageText,item.mine&&{color:textColor}]}>{item.text}</Text>{shouldCollapse&&<Pressable onPress={(event)=>{event.stopPropagation?.();setExpandedMessages((ids)=>ids.includes(item.id)?ids.filter((id)=>id!==item.id):[...ids,item.id]);}}><Text style={s.expandMessage}>{expanded?'접기':'전체보기'}</Text></Pressable>}</View>}</Pressable>{!item.mine&&<Text numberOfLines={1} style={s.time}>{item.time}</Text>}</View></View></View></View>;
+        return <View key={item.id} onLayout={(event)=>{messagePositions.current[item.id]=event.nativeEvent.layout.y;}}>{unreadMarker}<View style={[s.messageRow,item.mine&&s.mineRow,continuous&&s.continuousRow]}>{(!continuous)?<Pressable accessibilityLabel={`${item.name} 프로필 메뉴`} onPress={()=>setSelectedMember(item.name)}><Avatar uri={item.avatarUri} size={46}/></Pressable>:<View style={s.avatarSpacer}/>}<View style={[s.messageBlock,item.mine&&s.mineMessageBlock]}>{(!continuous)&&<Text style={[s.sender,item.mine&&s.mineSender]}>{item.name}</Text>}<View style={[s.bubbleLine,item.mine&&s.mineBubbleLine]}>{item.mine&&<Text numberOfLines={1} style={s.time}>{item.time}</Text>}<Pressable onLongPress={()=>item.kind==='image'&&item.imageUris?.[0]?setPhotoViewer({uri:item.imageUris[0],menuOpen:false}):messageActions(item as Extract<ChatMessage,{kind:'text'|'secret'}>)} style={[s.bubble,item.kind==='image'&&s.imageBubble,activeSearchMessage?.id===item.id&&s.searchBubbleActive,item.mine?{backgroundColor:bubbleColor,borderBottomRightRadius:4}:s.otherBubble]}>{item.replyTo&&<View style={s.replyQuote}><Text style={s.replyQuoteName}>{replyLabel(item.replyTo.name,myDisplayName)}</Text><Text numberOfLines={1} style={s.replyQuoteText}>{item.replyTo.text}</Text></View>}{item.kind==='image'?(item.imageUris?.length?<ImageGrid uris={item.imageUris} onSave={saveImage} onPress={(uri)=>setPhotoViewer({uri,menuOpen:false})}/>:<View style={s.imagePlaceholder}><Ionicons name="image-outline" size={30} color={colors.gray300}/></View>):item.kind==='secret'?<View style={s.secretContent}><View style={s.secretLabel}><Ionicons name="lock-closed" size={12} color={colors.pink600}/><Text style={s.secretLabelText}>{item.recipient}님에게만 보이는 쪽지</Text></View><Text style={[s.messageText,item.mine&&{color:textColor}]}>{item.text}</Text></View>:<View><Text numberOfLines={expanded||!shouldCollapse?undefined:CHAT_COLLAPSE_LINE_LIMIT} style={[s.messageText,item.mine&&{color:textColor}]}>{item.text}</Text>{shouldCollapse&&<Pressable onPress={(event)=>{event.stopPropagation?.();setExpandedMessages((ids)=>ids.includes(item.id)?ids.filter((id)=>id!==item.id):[...ids,item.id]);}}><Text style={s.expandMessage}>{expanded?'접기':'전체보기'}</Text></Pressable>}</View>}</Pressable>{!item.mine&&<Text numberOfLines={1} style={s.time}>{item.time}</Text>}</View></View></View></View>;
       })}</ScrollView>
       {newMessagePreview!==''&&<Pressable onPress={()=>scrollToLatest()} style={s.newMessagePreview}><Text numberOfLines={1} style={s.newMessagePreviewText}>{newMessagePreview}</Text><Ionicons name="chevron-down" size={15} color="#FFF"/></Pressable>}
       {!chatSearchOpen&&<>
       {!readOnly&&<ComposerPanel tool={tool} showPromotion={isOwner} onCamera={() => sendImage('camera')} onGallery={() => sendImage('gallery')} onTopSpace={()=>{setTool(null);setTopSpaceOpen(true);}} onPromotion={openPromotion} onNewStory={()=>{setTool(null);setStoryPanelInitialId(null);setStoryPanelInitialWrite(true);setPanel('stories');}} secretDraft={secretDraft} onSecretDraft={setSecretDraft} onSendSecret={sendSecret} bubbleColor={bubbleColor} textColor={textColor} backgroundColor={chatBackground} onBubbleColor={setBubbleColor} onTextColor={setTextColor} onBackgroundColor={setChatBackground}/>}
       {!readOnly&&replyTo&&<View style={s.replyComposer}><View style={s.flex}><Text style={s.replyComposerName}>{replyLabel(replyTo.name,myDisplayName)}</Text><Text numberOfLines={1} style={s.replyComposerText}>{replyTo.text}</Text></View><Pressable onPress={()=>setReplyTo(null)}><Ionicons name="close" size={20} color={colors.textMuted}/></Pressable></View>}
-      {!readOnly&&<View style={s.composer}><IconCircle name={tool==='media'?'close':'add'} onPress={() => setTool((value) => value === 'media' ? null : 'media')} /><IconCircle name="brush-outline" active={tool==='style'} onPress={() => setTool((value) => value === 'style' ? null : 'style')} /><TextInput value={message} onFocus={focusComposer} onChangeText={setMessage} onSubmitEditing={send} placeholder="메시지를 입력해주세요." placeholderTextColor={colors.textMuted} style={[s.composerInput,Platform.OS==='web'&&({outlineStyle:'none'} as object)]} /><Pressable disabled={!message.trim()} onPress={send} style={s.send}><LinearGradient colors={message.trim()?['#82B9C1','#5DBB8C']:['#C9D8D5','#BFCAC7']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.sendGradient}><Ionicons name="paper-plane" size={18} color="#FFF" /></LinearGradient></Pressable></View>}
+      {!readOnly&&<View style={s.composer}><IconCircle name={tool==='media'?'close':'add'} onPress={() => {Keyboard.dismiss();setTool((value) => value === 'media' ? null : 'media');}} /><IconCircle name="brush-outline" active={tool==='style'} onPress={() => {Keyboard.dismiss();setTool((value) => value === 'style' ? null : 'style');}} /><TextInput value={message} onFocus={focusComposer} onChangeText={setMessage} onSubmitEditing={send} placeholder="메시지를 입력해주세요." placeholderTextColor={colors.textMuted} style={[s.composerInput,Platform.OS==='web'&&({outlineStyle:'none'} as object)]} /><Pressable disabled={!message.trim()} onPress={send} style={s.send}><LinearGradient colors={message.trim()?['#82B9C1','#5DBB8C']:['#C9D8D5','#BFCAC7']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.sendGradient}><Ionicons name="paper-plane" size={18} color="#FFF" /></LinearGradient></Pressable></View>}
       </>}
     </KeyboardAvoidingView>
-    <MemberActionSheet member={selectedMember} readOnly={readOnly} secretOpen={tool==='secret'} onClose={()=>{setSelectedMember(null);if(tool==='secret')setTool(null);}} onHeart={()=>{sendHeart();setSelectedMember(null);}} onPoint={()=>{setPointTarget(selectedMember);setPointDraft('');setSelectedMember(null);}} onSecret={()=>setTool('secret')} onProfile={()=>{const found=roomMembers.find((item)=>item.name===selectedMember)??{name:selectedMember??'멤버',intro:'이 방에서 사용하는 프로필입니다.'};setSelectedMember(null);setProfileMember(found);}} onReport={()=>{const found=roomMembers.find((item)=>item.name===selectedMember);if(isSuperAdmin&&found?.userId)onAdminReportUser(found.userId,found.name);else Alert.alert('신고하기','신고 사유 선택 기능은 다음 단계에서 연결됩니다.');setSelectedMember(null);}} secretDraft={secretDraft} onSecretDraft={setSecretDraft} onSendSecret={()=>{sendSecret();setSelectedMember(null);}}/>
-    {pointTarget&&<View style={s.sheetLayer}><Pressable accessibilityLabel="포인트 보내기 닫기" onPress={()=>{setPointTarget(null);setPointDraft('');}} style={s.sheetDim}/><View style={s.pointSendSheet}><View style={s.sheetHandle}/><Text style={s.pointSendTitle}>{pointTarget}님에게 포인트 보내기</Text><Text style={s.pointSendBody}>1p부터 보유 포인트 {points.toLocaleString()}p까지 보낼 수 있어요.</Text><TextInput autoFocus value={pointDraft} onChangeText={(value)=>setPointDraft(value.replace(/[^0-9]/g,''))} keyboardType="number-pad" placeholder="보낼 포인트" placeholderTextColor={colors.textMuted} style={[s.pointSendInput,Platform.OS==='web'&&({outlineStyle:'none'} as object)]}/><View style={s.pointSendActions}><Pressable onPress={()=>{setPointTarget(null);setPointDraft('');}} style={s.pointSendCancel}><Text style={s.pointSendCancelText}>취소</Text></Pressable><Pressable disabled={!pointDraft||Number(pointDraft)<1||Number(pointDraft)>points} onPress={sendPoint} style={[s.pointSendButton,(!pointDraft||Number(pointDraft)<1||Number(pointDraft)>points)&&s.disabled]}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.pointSendGradient}><Text style={s.primaryText}>보내기</Text></LinearGradient></Pressable></View></View></View>}
-    {photoViewer&&<View style={s.photoViewer}><Pressable accessibilityLabel="사진 닫기" onPress={()=>setPhotoViewer((current)=>current?.menuOpen?{...current,menuOpen:false}:null)} style={s.photoViewerDim}/><ExpoImage source={{uri:photoViewer.uri}} contentFit="contain" style={s.photoViewerExpandedImage}/><Pressable onPress={()=>setPhotoViewer(null)} style={s.photoViewerCloseLeft}><Ionicons name="close" size={24} color="#FFF"/></Pressable><Pressable onPress={()=>setPhotoViewer((current)=>current?{...current,menuOpen:!current.menuOpen}:current)} style={s.photoViewerMore}><Ionicons name="ellipsis-horizontal" size={24} color="#FFF"/></Pressable>{photoViewer.menuOpen&&<View style={s.photoViewerMenu}><Pressable onPress={async()=>{const saved=await saveImage(photoViewer.uri);if(saved)setPhotoViewer((current)=>current?{...current,menuOpen:false}:current);}} style={s.photoViewerMenuItem}><Text style={s.photoViewerMenuText}>저장하기</Text></Pressable><Pressable onPress={()=>{setPhotoViewer((current)=>current?{...current,menuOpen:false}:current);Alert.alert('신고하기','신고 사유 선택 기능은 다음 단계에서 연결됩니다.');}} style={s.photoViewerMenuItem}><Text style={s.photoViewerMenuText}>신고하기</Text></Pressable></View>}</View>}
+    <MemberActionSheet member={selectedMember} readOnly={readOnly} secretOpen={tool==='secret'} onClose={()=>{setSelectedMember(null);if(tool==='secret')setTool(null);}} onHeart={()=>{sendHeart();setSelectedMember(null);}} onPoint={()=>{setPointTarget(selectedMember);setPointDraft('');setSelectedMember(null);}} onSecret={()=>setTool('secret')} onProfile={()=>{const found=roomMembers.find((item)=>item.name===selectedMember)??{name:selectedMember??'멤버',intro:'이 방에서 사용하는 프로필입니다.'};setSelectedMember(null);setProfileMember(found);}} onReport={async()=>{const found=roomMembers.find((item)=>item.name===selectedMember);try{if(isSuperAdmin&&found?.userId){onAdminReportUser(found.userId,found.name);}else if(found?.userId&&isUuid(found.userId)){await submitReport({targetType:'user',targetId:found.userId,reason:'other',detail:`멤버 신고: ${found.name}`});Alert.alert('신고 접수 완료','멤버 신고가 접수되었습니다.');}else Alert.alert('신고 불가','서버에 생성된 멤버만 신고할 수 있습니다.');}catch(error){Alert.alert('신고 실패',serverErrorMessage(error));}setSelectedMember(null);}} secretDraft={secretDraft} onSecretDraft={setSecretDraft} onSendSecret={()=>{sendSecret();setSelectedMember(null);}}/>
+    {pointTarget&&<View style={s.sheetLayer}><Pressable accessibilityLabel="포인트 보내기 닫기" onPress={()=>{setPointTarget(null);setPointDraft('');}} style={s.sheetDim}/><KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} style={s.sheetKeyboard}><View style={s.pointSendSheet}><View style={s.sheetHandle}/><Text style={s.pointSendTitle}>{pointTarget}님에게 포인트 보내기</Text><Text style={s.pointSendBody}>1p부터 보유 포인트 {points.toLocaleString()}p까지 보낼 수 있어요.</Text><TextInput autoFocus value={pointDraft} onChangeText={(value)=>setPointDraft(value.replace(/[^0-9]/g,''))} keyboardType="number-pad" placeholder="보낼 포인트" placeholderTextColor={colors.textMuted} style={[s.pointSendInput,Platform.OS==='web'&&({outlineStyle:'none'} as object)]}/><View style={s.pointSendActions}><Pressable onPress={()=>{setPointTarget(null);setPointDraft('');}} style={s.pointSendCancel}><Text style={s.pointSendCancelText}>취소</Text></Pressable><Pressable disabled={!pointDraft||Number(pointDraft)<1||Number(pointDraft)>points} onPress={sendPoint} style={[s.pointSendButton,(!pointDraft||Number(pointDraft)<1||Number(pointDraft)>points)&&s.disabled]}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.pointSendGradient}><Text style={s.primaryText}>보내기</Text></LinearGradient></Pressable></View></View></KeyboardAvoidingView></View>}
+    {photoViewer&&<View style={s.photoViewer}><Pressable accessibilityLabel="사진 닫기" onPress={()=>setPhotoViewer((current)=>current?.menuOpen?{...current,menuOpen:false}:null)} style={s.photoViewerDim}/><ExpoImage source={{uri:photoViewer.uri}} contentFit="contain" style={s.photoViewerExpandedImage}/><Pressable onPress={()=>setPhotoViewer(null)} style={s.photoViewerCloseLeft}><Ionicons name="close" size={24} color="#FFF"/></Pressable><Pressable onPress={()=>setPhotoViewer((current)=>current?{...current,menuOpen:!current.menuOpen}:current)} style={s.photoViewerMore}><Ionicons name="ellipsis-horizontal" size={24} color="#FFF"/></Pressable>{photoViewer.menuOpen&&<View style={s.photoViewerMenu}><Pressable onPress={async()=>{const saved=await saveImage(photoViewer.uri);if(saved)setPhotoViewer((current)=>current?{...current,menuOpen:false}:current);}} style={s.photoViewerMenuItem}><Text style={s.photoViewerMenuText}>저장하기</Text></Pressable><Pressable onPress={async()=>{setPhotoViewer((current)=>current?{...current,menuOpen:false}:current);if(!isUuid(room.id)){Alert.alert('신고 불가','서버에 생성된 방의 사진만 신고할 수 있습니다.');return;}try{await submitReport({targetType:'room',targetId:room.id,reason:'other',detail:`채팅 이미지 신고: ${room.name}`});Alert.alert('신고 접수 완료','이미지 신고가 접수되었습니다.');}catch(error){Alert.alert('신고 실패',serverErrorMessage(error));}}} style={s.photoViewerMenuItem}><Text style={s.photoViewerMenuText}>신고하기</Text></Pressable></View>}</View>}
     <TopSpaceSheet open={topSpaceOpen} room={room} points={points} expiresAt={topSpaceExpiresAt} remaining={topSpaceRemaining} result={boostResult} onClose={()=>{setTopSpaceOpen(false);setBoostResult(null);}} onBoost={async(option)=>{try{setBoostResult(await onBoost(option)?'success':'shortage');}catch(error){Alert.alert('탑스페이스 실패',serverErrorMessage(error));}}}/>
-    <ChatDrawer open={drawerOpen} isOwner={isOwner} isStaff={isStaff} onClose={() => setDrawerOpen(false)} onProfileEdit={()=>{setDrawerOpen(false);setProfileMember(roomMembers.find((member)=>member.mine)??{name:'나',intro:'방에서 사용하는 내 프로필',mine:true});}} onApplications={()=>{setDrawerOpen(false);setPanel('applications');}} onStories={() => {setDrawerOpen(false);setStoryPanelInitialId(null);setStoryPanelInitialWrite(false);setPanel('overview');}} onOpenMembers={() => {setDrawerOpen(false);setPanel('members');}} onBlocked={()=>{setDrawerOpen(false);setPanel('blocked');}} onRoomSettings={()=>{setDrawerOpen(false);setPanel('roomSettings');}} onDelete={()=>Alert.alert('방 삭제하기','방을 정말 삭제하시겠습니까? 모든 내역이 삭제됩니다.',[{text:'취소',style:'cancel'},{text:'삭제하기',style:'destructive'}])} onLeave={()=>Alert.alert('방 나가기','방을 정말 나가시겠습니까? 모든 내역이 삭제됩니다.',[{text:'취소',style:'cancel'},{text:'나가기',style:'destructive'}])} />
+    <ChatDrawer open={drawerOpen} isOwner={isOwner} isStaff={isStaff} isSuperAdmin={isSuperAdmin} readOnly={readOnly} onClose={() => setDrawerOpen(false)} onProfileEdit={()=>{setDrawerOpen(false);setProfileMember(roomMembers.find((member)=>member.mine)??{name:'나',intro:'방에서 사용하는 내 프로필',mine:true});}} onApplications={()=>{setDrawerOpen(false);setPanel('applications');}} onStories={() => {setDrawerOpen(false);setStoryPanelInitialId(null);setStoryPanelInitialWrite(false);setPanel('overview');}} onOpenMembers={() => {setDrawerOpen(false);setPanel('members');}} onBlocked={()=>{setDrawerOpen(false);setPanel('blocked');}} onRoomSettings={()=>{setDrawerOpen(false);setPanel('roomSettings');}} onDelete={()=>Alert.alert('방 삭제하기','방을 정말 삭제하시겠습니까? 모든 내역이 삭제됩니다.',[{text:'취소',style:'cancel'},{text:'삭제하기',style:'destructive'}])} onLeave={()=>Alert.alert('방 나가기','방을 정말 나가시겠습니까? 모든 내역이 삭제됩니다.',[{text:'취소',style:'cancel'},{text:'나가기',style:'destructive'}])} />
     {toast!==''&&<View pointerEvents="none" style={s.toast}><Text style={s.toastText}>{toast}</Text></View>}
   </SafeAreaView>;
 }
 
 function initialStoryItems(room:Room):StoryItem[]{
-  return stories.map((story,index)=>({
-    id:story.id,roomId:room.id,roomName:room.name,title:story.title,author:story.author,
-    createdAt:index===0?'2026.06.14. 14:20':'2026.06.13. 19:10',
-    visibility:index===0?'public':'room',
-    blocks:[{id:`${story.id}-text`,type:'text',text:`${story.body}\n\n서로 가능한 시간과 장소를 댓글로 남겨주세요. 의견을 모아 본문에 계속 업데이트하겠습니다.`}],
-    comments:index===0?[
-      {id:'c1',author:'느린준',body:'저는 토요일 저녁이 좋아요. 장소도 투표했어요!',createdAt:'2분 전'},
-      {id:'c2',author:'해질녘',body:'사진도 함께 올려주시면 좋을 것 같아요.',createdAt:'방금'},
-    ]:[],
-    views:index===0?128:42,
-    hearts:index===0?18:5,
-    liked:false,
-    mine:index===1,
-  }));
+  return [
+    {
+      id:'demo-story-1',
+      roomId:room.id,
+      roomName:room.name,
+      title:'이번 주 오프라인 일정 정리',
+      author:'초록윤',
+      createdAt:'2026-06-18T10:20:00.000Z',
+      visibility:'public',
+      blocks:[
+        {id:'demo-story-1-text-1',type:'text',text:'토요일 저녁 산책 후보 코스를 정리했습니다. 강변 코스, 공원 코스, 카페 합류 코스 중에서 편한 쪽으로 의견 남겨주세요.'},
+        {id:'demo-story-1-text-2',type:'text',text:'처음 오는 멤버도 부담 없도록 중간 합류 지점과 우천 시 대체 장소까지 같이 적어두었습니다.'},
+      ],
+      comments:[
+        {id:'demo-comment-1',author:'느린준',body:'저는 토요일 저녁이 좋아요. 강변 코스 한 표요.',createdAt:'2026-06-18T10:36:00.000Z'},
+        {id:'demo-comment-2',author:'해질녘',body:'사진 찍기엔 공원 코스가 더 좋아 보여요.',createdAt:'2026-06-18T10:44:00.000Z'},
+      ],
+      views:128,
+      hearts:18,
+      liked:false,
+      mine:false,
+    },
+    {
+      id:'demo-story-2',
+      roomId:room.id,
+      roomName:room.name,
+      title:'오늘의 분위기 기록',
+      author:'나',
+      createdAt:'2026-06-17T19:10:00.000Z',
+      visibility:'room',
+      blocks:[
+        {id:'demo-story-2-text-1',type:'text',text:'오늘 대화 분위기가 좋아서 짧게 남겨둡니다. 다음에도 이렇게 편하게 이야기하면 좋겠어요.'},
+      ],
+      comments:[],
+      views:42,
+      hearts:5,
+      liked:false,
+      mine:true,
+    },
+  ];
 }
 
 function mapServerStory(story:ServerStory,currentUserId?:string):StoryItem{
@@ -1506,12 +1621,12 @@ function mapServerStory(story:ServerStory,currentUserId?:string):StoryItem{
     blocks:story.blocks.map((block,index)=>block.type==='text'
       ? {id:`${story.id}-text-${index}`,type:'text',text:block.text}
       : {id:`${story.id}-image-${index}`,type:'image',uri:block.uri,storagePath:block.storagePath,mimeType:block.mimeType}),
-    comments:story.comments.map((comment)=>({id:comment.id,author:comment.author,authorAvatarUri:comment.authorAvatarUrl,body:comment.body,createdAt:new Date(comment.createdAt).toLocaleString('ko-KR'),mine:comment.authorUserId===currentUserId})),
+    comments:story.comments.map((comment)=>({id:comment.id,author:comment.author,authorAvatarUri:comment.authorAvatarUrl,body:comment.body,createdAt:formatStoryTime(comment.createdAt),mine:comment.authorUserId===currentUserId})),
     mine:story.authorUserId===currentUserId,
   };
 }
 
-function StoryPanel({room,joined,isStaff:initialStaff,showChatButton=true,showInternalHeader=false,title='스토리',showLinkedRoom=false,initialSelectedId,initialWrite=false,onClose,onEnterChat,onStorySaved}:{room:Room;joined:boolean;isStaff:boolean;showChatButton?:boolean;showInternalHeader?:boolean;title?:string;showLinkedRoom?:boolean;initialSelectedId?:string;initialWrite?:boolean;onClose?:()=>void;onEnterChat:()=>void;onStorySaved?:(story:StoryItem)=>void}) {
+function StoryPanel({room,joined,isStaff:initialStaff,showChatButton=true,showInternalHeader=false,title='스토리',showLinkedRoom=false,initialSelectedId,initialWrite=false,onClose,onEnterChat,onStorySaved,onOpenDetail}:{room:Room;joined:boolean;isStaff:boolean;showChatButton?:boolean;showInternalHeader?:boolean;title?:string;showLinkedRoom?:boolean;initialSelectedId?:string;initialWrite?:boolean;onClose?:()=>void;onEnterChat:()=>void;onStorySaved?:(story:StoryItem)=>void;onOpenDetail?:(story:StoryItem)=>void}) {
   const [filter,setFilter]=useState<'all'|StoryVisibility>('all');
   const [staff,setStaff]=useState(initialStaff);
   const isStaff=staff;
@@ -1555,7 +1670,7 @@ function StoryPanel({room,joined,isStaff:initialStaff,showChatButton=true,showIn
     <ScrollView contentContainerStyle={[s.panel,{paddingBottom:joined?150:100}]}>{visible.map((story)=>{
       const text=story.blocks.filter((block)=>block.type==='text').map((block)=>block.text).join(' ');
       const latest=story.comments.at(-1);
-      return <Pressable key={story.id} onPress={()=>setSelected(story)} style={s.story}><View style={s.storyAuthor}><Avatar uri={story.authorAvatarUri} size={42}/><View style={s.flex}><Text style={s.storyAuthorName}>{story.author}</Text><Text style={s.storyTime}>{story.createdAt} · {story.visibility==='public'?'전체 공개':'방 멤버 공개'}</Text></View></View><Text numberOfLines={2} style={s.storyTitle}>{story.title}</Text><Text numberOfLines={4} ellipsizeMode="tail" style={s.storyBody}>{text}</Text>{latest&&<View style={s.storyComment}><Avatar uri={latest.authorAvatarUri} size={30}/><View style={s.flex}><Text style={s.storyCommentName}>{latest.author}</Text><Text numberOfLines={2} style={s.storyCommentBody}>{latest.body}</Text></View></View>}{story.comments.length>0&&<Text style={s.storyMeta}>댓글 {story.comments.length}개 모두 보기</Text>}</Pressable>;
+      return <Pressable key={story.id} onPress={()=>onOpenDetail?onOpenDetail(story):setSelected(story)} style={s.story}><View style={s.storyAuthor}><Avatar uri={story.authorAvatarUri} size={42}/><View style={s.flex}><Text style={s.storyAuthorName}>{story.author}</Text><Text style={s.storyTime}>{formatStoryTime(story.createdAt)} · {story.visibility==='public'?'전체 공개':'방 멤버 공개'}</Text></View></View><Text numberOfLines={2} style={s.storyTitle}>{story.title}</Text><Text numberOfLines={4} ellipsizeMode="tail" style={s.storyBody}>{text}</Text>{latest&&<View style={s.storyComment}><Avatar uri={latest.authorAvatarUri} size={30}/><View style={s.flex}><Text style={s.storyCommentName}>{latest.author}</Text><Text numberOfLines={2} style={s.storyCommentBody}>{latest.body}</Text></View></View>}{story.comments.length>0&&<Text style={s.storyMeta}>댓글 {story.comments.length}개 모두 보기</Text>}</Pressable>;
     })}</ScrollView>
     {joined&&<>{showChatButton&&<Pressable onPress={onEnterChat} style={s.storyChatButton}><Text style={s.primaryText}>채팅방 들어가기</Text></Pressable>}<Pressable accessibilityLabel="스토리 글쓰기" onPress={()=>setWriting(true)} style={[s.storyFab,!showChatButton&&{bottom:22}]}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.fabGradient}><Ionicons name="create-outline" size={22} color="#FFF"/></LinearGradient></Pressable></>}
   </View>;
@@ -1590,7 +1705,16 @@ function StoryDetail({story,room,joined,canModerate,publicMode=false,showLinkedR
   };
   const storyMenuActions=[
     ...(canDelete?[{label:'삭제하기',onPress:()=>{setMenuOpen(false);onDelete();}}]:[]),
-    {label:'신고하기',onPress:()=>{setMenuOpen(false);Alert.alert('신고하기','신고 사유 선택 기능은 다음 단계에서 연결됩니다.');}},
+    {label:'신고하기',onPress:async()=>{
+      setMenuOpen(false);
+      if(!isUuid(story.id)){Alert.alert('신고 불가','서버에 저장된 스토리만 신고할 수 있습니다.');return;}
+      try{
+        await submitReport({targetType:'story',targetId:story.id,reason:'other',detail:`스토리 신고: ${story.title}`});
+        Alert.alert('신고 접수 완료','스토리 신고가 접수되었습니다.');
+      }catch(error){
+        Alert.alert('신고 실패',serverErrorMessage(error));
+      }
+    }},
   ];
   return <View style={s.flex}>
     {!hideHeader&&<LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.storyDetailHeader}>
@@ -1618,7 +1742,7 @@ function StoryDetail({story,room,joined,canModerate,publicMode=false,showLinkedR
           </View>
         </View>}
       </View>
-      {story.blocks.map((block)=>block.type==='text'?<Text key={block.id} style={s.storyDetailText}>{block.text}</Text>:<ExpoImage key={block.id} source={{uri:block.uri}} contentFit="cover" style={s.storyDetailImage}/>)}
+      {story.blocks.map((block)=>block.type==='text'?<Text key={block.id} style={s.storyDetailText}>{block.text}</Text>:<ExpoImage key={block.id} source={{uri:block.uri}} contentFit="contain" style={s.storyDetailImage}/>)}
       <View style={s.commentSection}>
         <Text style={s.commentCount}>댓글 {story.comments.length}</Text>
         {story.comments.map((item)=><View key={item.id} style={s.storyDetailComment}><Avatar uri={item.authorAvatarUri} size={34}/><View style={s.flex}><View style={s.commentMetaLine}><Text style={s.storyCommentName}>{item.author}</Text><Text style={s.storyCommentTime}>{item.createdAt}</Text></View><Text style={s.storyCommentBody}>{item.body}</Text></View>{(story.mine||item.mine)&&<Pressable accessibilityLabel="댓글 삭제" onPress={()=>removeComment(item)} style={s.commentDelete}><Ionicons name="close" size={16} color={colors.gray300}/></Pressable>}</View>)}
@@ -1636,22 +1760,27 @@ function StoryEditor({room,initial,embedded=false,onCancel,onSave}:{room:Room;in
   const updateText=(id:string,text:string)=>setBlocks((items)=>items.map((item)=>item.id===id&&item.type==='text'?{...item,text}:item));
   const addText=()=>setBlocks((items)=>[...items,{id:`text-${Date.now()}`,type:'text',text:''}]);
   const addImages=async()=>{
-    const permission=await ImagePicker.requestMediaLibraryPermissionsAsync();if(!permission.granted)return;
     const remaining=10-blocks.filter((block)=>block.type==='image').length;
     if(remaining<=0){Alert.alert('첨부 제한','사진은 최대 10장까지 첨부할 수 있습니다.');return;}
-    const result=await ImagePicker.launchImageLibraryAsync({mediaTypes:['images'],allowsMultipleSelection:true,selectionLimit:remaining,quality:.85});if(result.canceled)return;
-    const next:StoryBlock[]=[];
-    for(const asset of result.assets.slice(0,remaining)){
-      if(asset.mimeType==='image/gif')continue;
-      let uploadId:string|undefined;
-      if(isSupabaseConfigured&&isUuid(room.id)){
-        const bytes=await (await fetch(asset.uri)).arrayBuffer();
-        const uploaded=await uploadValidatedImage({uri:asset.uri,mimeType:(asset.mimeType as 'image/jpeg'|'image/png'|'image/webp')??'image/jpeg',fileSize:bytes.byteLength,width:asset.width??1,height:asset.height??1,purpose:'story',roomId:room.id});
-        uploadId=uploaded.uploadId;
-      }
-      next.push({id:`image-${Date.now()}-${next.length}`,type:'image',uri:asset.uri,uploadId});
+    const source=await promptImageSource();
+    if(!source)return;
+    const asset=await pickSingleImage({source,aspect:[4,5],quality:.85});
+    if(!asset||asset.mimeType==='image/gif')return;
+    const width=asset.width??1440;
+    const height=asset.height??1440;
+    const scale=Math.min(1,1440/Math.max(width,height));
+    const optimized=await ImageManipulator.manipulateAsync(
+      asset.uri,
+      [{resize:{width:Math.max(1,Math.round(width*scale))}}],
+      {compress:.82,format:ImageManipulator.SaveFormat.JPEG},
+    );
+    let uploadId:string|undefined;
+    if(isSupabaseConfigured&&isUuid(room.id)){
+      const bytes=await (await fetch(optimized.uri)).arrayBuffer();
+      const uploaded=await uploadValidatedImage({uri:optimized.uri,mimeType:'image/jpeg',fileSize:bytes.byteLength,width:Math.max(1,Math.round(width*scale)),height:Math.max(1,Math.round(height*scale)),purpose:'story',roomId:room.id});
+      uploadId=uploaded.uploadId;
     }
-    setBlocks((items)=>[...items,...next]);
+    setBlocks((items)=>[...items,{id:`image-${Date.now()}`,type:'image',uri:optimized.uri,uploadId,mimeType:'image/jpeg'}]);
   };
   const save=async()=>{
     const normalized=blocks.filter((block)=>block.type==='image'||block.text.trim()).map((block)=>block.type==='text'?{...block,text:block.text.trim()}:block);
@@ -1669,12 +1798,12 @@ function StoryEditor({room,initial,embedded=false,onCancel,onSave}:{room:Room;in
     }catch(error){Alert.alert('스토리 저장 실패',serverErrorMessage(error));}finally{setSaving(false);}
   };
   const hasBody=blocks.some((block)=>block.type==='text'&&Boolean(block.text.trim()));
-  const content=<><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.storyEditor}><TextInput value={title} onChangeText={(value)=>setTitle(value.slice(0,45))} placeholder="제목" placeholderTextColor={colors.textMuted} style={s.storyTitleInput}/><View style={s.storyAuthor}><DefaultAvatar size={44}/><View><Text style={s.storyAuthorName}>나</Text><Text style={s.storyTime}>{room.name} 프로필</Text></View></View><View style={s.storyEditorVisibility}><Pressable onPress={()=>setVisibility('room')} style={[s.visibilityOption,visibility==='room'&&s.visibilityOptionActive]}><Text style={s.visibilityText}>방 멤버</Text></Pressable><Pressable onPress={()=>setVisibility('public')} style={[s.visibilityOption,visibility==='public'&&s.visibilityOptionActive]}><Text style={s.visibilityText}>전체 공개</Text></Pressable></View>{blocks.map((block)=>block.type==='text'?<TextInput key={block.id} value={block.text} onChangeText={(text)=>updateText(block.id,text)} multiline placeholder="본문을 입력하세요." placeholderTextColor={colors.textMuted} style={s.storyBlockInput}/>:<View key={block.id} style={s.storyEditorImageWrap}><ExpoImage source={{uri:block.uri}} contentFit="cover" style={s.storyEditorImage}/><Pressable onPress={()=>setBlocks((items)=>items.filter((item)=>item.id!==block.id))} style={s.storyImageRemove}><Ionicons name="close" size={17} color="#FFF"/></Pressable></View>)}<View style={s.storyEditorToolbar}><Pressable onPress={addImages} style={s.storyToolbarButton}><Ionicons name="images-outline" size={21} color={colors.textSubtle}/></Pressable><Pressable onPress={addText} style={s.storyToolbarButton}><Ionicons name="text-outline" size={21} color={colors.textSubtle}/></Pressable><View style={s.flex}/><Pressable onPress={onCancel} style={s.storyEditorCancel}><Text style={s.storyEditorCancelText}>취소</Text></Pressable><Pressable disabled={saving||!title.trim()||!hasBody} onPress={save} style={[s.storyEditorSubmit,(saving||!title.trim()||!hasBody)&&s.disabled]}><Text style={s.primaryText}>{saving?'저장 중...':'게시'}</Text></Pressable></View></ScrollView></>;
+  const content=<><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.storyEditor}><TextInput value={title} onChangeText={(value)=>setTitle(value.slice(0,45))} placeholder="제목" placeholderTextColor={colors.textMuted} style={s.storyTitleInput}/><View style={s.storyAuthor}><DefaultAvatar size={44}/><View><Text style={s.storyAuthorName}>나</Text><Text style={s.storyTime}>{room.name} 프로필</Text></View></View><View style={s.storyEditorVisibility}><Pressable onPress={()=>setVisibility('room')} style={[s.visibilityOption,visibility==='room'&&s.visibilityOptionActive]}><Text style={s.visibilityText}>방 멤버</Text></Pressable><Pressable onPress={()=>setVisibility('public')} style={[s.visibilityOption,visibility==='public'&&s.visibilityOptionActive]}><Text style={s.visibilityText}>전체 공개</Text></Pressable></View>{blocks.map((block)=>block.type==='text'?<TextInput key={block.id} value={block.text} onChangeText={(text)=>updateText(block.id,text)} multiline placeholder="본문을 입력하세요." placeholderTextColor={colors.textMuted} style={s.storyBlockInput}/>:<View key={block.id} style={s.storyEditorImageWrap}><ExpoImage source={{uri:block.uri}} contentFit="contain" style={s.storyEditorImage}/><Pressable onPress={()=>setBlocks((items)=>items.filter((item)=>item.id!==block.id))} style={s.storyImageRemove}><Ionicons name="close" size={17} color="#FFF"/></Pressable></View>)}<View style={s.storyEditorToolbar}><Pressable onPress={addImages} style={s.storyToolbarButton}><Ionicons name="images-outline" size={21} color={colors.textSubtle}/></Pressable><Pressable onPress={addText} style={s.storyToolbarButton}><Ionicons name="text-outline" size={21} color={colors.textSubtle}/></Pressable><View style={s.flex}/><Pressable onPress={onCancel} style={s.storyEditorCancel}><Text style={s.storyEditorCancelText}>취소</Text></Pressable><Pressable disabled={saving||!title.trim()||!hasBody} onPress={save} style={[s.storyEditorSubmit,(saving||!title.trim()||!hasBody)&&s.disabled]}><Text style={s.primaryText}>{saving?'저장 중...':'게시'}</Text></Pressable></View></ScrollView></>;
   return embedded?<View style={s.safe}>{content}</View>:<SafeAreaView style={s.safe}><TopBar title={initial?'스토리 편집':'스토리 작성'} onBack={onCancel}/>{content}</SafeAreaView>;
 }
 
 function PublicStoryFeed({roomData,joinedIds}:{roomData:Room[];joinedIds:string[]}){
-  const room=rooms[0];
+  const room=DEMO_PUBLIC_STORY_ROOM;
   const [sort,setSort]=useState<'random'|'views'|'hearts'|'latest'>('latest');
   const [selected,setSelected]=useState<StoryItem|null>(null);
   const [publicStories,setPublicStories]=useState<StoryItem[]>(()=>initialStoryItems(room).filter((item)=>item.visibility==='public'));
@@ -1723,18 +1852,26 @@ function RoomAccessSettings({room,onSaved}:{room:Room;onSaved:()=>void}){
   const [saving,setSaving]=useState(false);
   const invalidPin=visibility==='private'&&pin.length!==6;
   const save=async()=>{setSaving(true);try{if(isSupabaseConfigured&&isUuid(room.id))await configureRoomAccess({roomId:room.id,visibility,pin});onSaved();}catch(error){setSaving(false);Alert.alert('저장 실패',serverErrorMessage(error));}};
-  return <ScrollView contentContainerStyle={s.accessSettings}><Text style={s.accessTitle}>방 노출 범위</Text><Text style={s.accessBody}>비밀방은 홈과 검색에 표시되지 않습니다. 가입 신청 전 PIN 6자리 확인이 필요합니다.</Text><View style={s.visibilityRows}><Pressable onPress={()=>{setVisibility('public');setPin('');}} style={[s.visibilityCard,visibility==='public'&&s.visibilityCardActive]}><Ionicons name="earth-outline" size={21} color={colors.mint700}/><View><Text style={s.visibilityCardTitle}>공개방</Text><Text style={s.visibilityCardText}>홈과 검색에 표시</Text></View></Pressable><Pressable onPress={()=>setVisibility('private')} style={[s.visibilityCard,visibility==='private'&&s.visibilityCardActive]}><Ionicons name="lock-closed-outline" size={21} color={colors.mint700}/><View><Text style={s.visibilityCardTitle}>비밀방</Text><Text style={s.visibilityCardText}>PIN 6자리 필수</Text></View></Pressable></View>{visibility==='private'&&<View style={s.field}><Text style={s.fieldLabel}>PIN 비밀번호</Text><TextInput value={pin} onChangeText={(value)=>setPin(value.replace(/\D/g,'').slice(0,6))} keyboardType="number-pad" secureTextEntry placeholder="숫자 6자리" placeholderTextColor={colors.textMuted} style={s.input}/>{invalidPin&&<Text style={s.pinError}>비밀방은 PIN 6자리를 반드시 설정해야 합니다.</Text>}</View>}<Pressable disabled={saving||invalidPin} onPress={save} style={[s.accessSave,(saving||invalidPin)&&s.disabled]}><LinearGradient colors={saving||invalidPin?['#C9D8D5','#BFCAC7']:['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.accessSaveGradient}><Text style={s.primaryText}>{saving?'저장 중...':'설정 저장'}</Text></LinearGradient></Pressable></ScrollView>;
+  return <ScrollView contentContainerStyle={s.accessSettings}><Text style={s.accessTitle}>방 노출 범위</Text><View style={s.visibilityRows}><Pressable onPress={()=>{setVisibility('public');setPin('');}} style={[s.visibilityCard,visibility==='public'&&s.visibilityCardActive]}><Ionicons name="earth-outline" size={21} color={colors.mint700}/><View><Text style={s.visibilityCardTitle}>공개방</Text><Text style={s.visibilityCardText}>홈과 검색에 표시</Text></View></Pressable><Pressable onPress={()=>setVisibility('private')} style={[s.visibilityCard,visibility==='private'&&s.visibilityCardActive]}><Ionicons name="lock-closed-outline" size={21} color={colors.mint700}/><View><Text style={s.visibilityCardTitle}>비밀방</Text><Text style={s.visibilityCardText}>PIN 6자리 필수</Text></View></Pressable></View>{visibility==='private'&&<View style={s.field}><Text style={s.fieldLabel}>PIN 비밀번호</Text><TextInput value={pin} onChangeText={(value)=>setPin(value.replace(/\D/g,'').slice(0,6))} keyboardType="number-pad" secureTextEntry placeholder="숫자 6자리" placeholderTextColor={colors.textMuted} style={s.input}/>{invalidPin&&<Text style={s.pinError}>비밀방은 PIN 6자리를 반드시 설정해야 합니다.</Text>}</View>}<Pressable disabled={saving||invalidPin} onPress={save} style={[s.accessSave,(saving||invalidPin)&&s.disabled]}><LinearGradient colors={saving||invalidPin?['#C9D8D5','#BFCAC7']:['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.accessSaveGradient}><Text style={s.primaryText}>{saving?'저장 중...':'설정 저장'}</Text></LinearGradient></Pressable></ScrollView>;
 }
 
 function MemberPanel({room,isOwner,isSuperAdmin,onAdminReportUser,onProfile}:{room:Room;isOwner:boolean;isSuperAdmin:boolean;onAdminReportUser:(id:string,label:string)=>void;onProfile:(member:RoomMember)=>void}) {
-  const [members,setMembers]=useState<RoomMember[]>([
-    {userId:'00000000-0000-4000-8000-000000000002',name:'한걸음',intro:'방에서 사용하는 내 소개입니다.',mine:true},
-    {userId:'00000000-0000-4000-8000-000000000001',name:'초록윤',intro:'작은 모임과 편안한 대화를 좋아해요.',owner:true},
-    {userId:'00000000-0000-4000-8000-000000000003',name:'느린준',intro:'천천히 친해지는 중',coHost:true},
-    {userId:'00000000-0000-4000-8000-000000000004',name:'해질녘',intro:'퇴근 후 산책과 커피'},
-    {userId:'00000000-0000-4000-8000-000000000005',name:'솔바람',intro:'서울 곳곳을 탐색해요',coHost:true},
-  ]);
+  const [currentUserId,setCurrentUserId]=useState<string|undefined>();
+  const [members,setMembers]=useState<RoomMember[]>(()=>room.id===DEMO_ROOM_ID?membersForRoom(room):[]);
   const [editing,setEditing]=useState<string|null>(null);
+  useEffect(()=>{
+    if(!supabase)return;
+    supabase.auth.getUser().then(({data})=>setCurrentUserId(data.user?.id)).catch(()=>undefined);
+  },[]);
+  useEffect(()=>{
+    if(!isSupabaseConfigured||!isUuid(room.id)){
+      setMembers(room.id===DEMO_ROOM_ID?membersForRoom(room):[]);
+      return;
+    }
+    listRoomMembers(room.id)
+      .then((serverMembers)=>setMembers(mapRoomMembers(serverMembers,currentUserId)))
+      .catch(()=>undefined);
+  },[currentUserId,room.id,room.memberCount]);
   const selected=members.find((member)=>member.name===editing);
   const toggle=async()=>{if(!selected?.userId)return;try{if(isSupabaseConfigured&&isUuid(room.id)&&isUuid(selected.userId))await setRoomMemberRole(room.id,selected.userId,selected.coHost?'member':'cohost');setMembers((value)=>value.map((member)=>member.name!==editing?member:{...member,coHost:!member.coHost}));setEditing(null);}catch(error){Alert.alert('권한 변경 실패',serverErrorMessage(error));}};
   const transfer=()=>{if(!selected?.userId)return;const targetUserId=selected.userId;Alert.alert('방장 권한 위임',`${selected.name}님에게 방장을 넘기시겠습니까?`,[{text:'취소',style:'cancel'},{text:'위임하기',style:'destructive',onPress:async()=>{try{if(isSupabaseConfigured&&isUuid(room.id)&&isUuid(targetUserId))await transferRoomOwnership(room.id,targetUserId);setMembers((items)=>items.map((item)=>item.userId===targetUserId?{...item,owner:true,coHost:false}:item.mine?{...item,owner:false,coHost:true}:item));setEditing(null);}catch(error){Alert.alert('방장 위임 실패',serverErrorMessage(error));}}}])};
@@ -1753,20 +1890,100 @@ function MemberProfile({member,room,viewerRole=null,editable=false,onBack}:{memb
   const [intro,setIntro]=useState(member.intro);
   const [avatar,setAvatar]=useState<ImagePicker.ImagePickerAsset|null>(null);
   const pick=async()=>{if(!editable){setPhotoOpen(true);return;}const source=await promptImageSource();if(!source)return;const asset=await pickSingleImage({source,aspect:[1,1],quality:.82});if(asset)setAvatar(asset);};
-  const save=()=>Alert.alert('프로필 저장','방별 프로필 저장 API는 다음 단계에서 연결됩니다.');
+  const save=async()=>{
+    try{
+      let avatarUploadId:string|undefined;
+      if(avatar&&isSupabaseConfigured&&isUuid(room.id)){
+        const resized=await ImageManipulator.manipulateAsync(avatar.uri,[{resize:{width:720}}],{compress:.8,format:ImageManipulator.SaveFormat.JPEG});
+        const bytes=await (await fetch(resized.uri)).arrayBuffer();
+        const upload=await uploadValidatedImage({uri:resized.uri,mimeType:'image/jpeg',fileSize:bytes.byteLength,width:720,height:720,purpose:'profile-avatar'});
+        avatarUploadId=upload.uploadId;
+      }
+      if(isSupabaseConfigured&&isUuid(room.id)){
+        await setRoomOwnerProfile({roomId:room.id,displayName:name.trim(),introduction:intro.trim(),avatarUploadId});
+      }
+      Alert.alert('프로필 저장 완료','방 프로필이 저장되었습니다.',[{text:'확인',onPress:onBack}]);
+    }catch(error){
+      Alert.alert('프로필 저장 실패',serverErrorMessage(error));
+    }
+  };
   const canShowMenu=!editable&&!member.mine&&Boolean(viewerRole);
+  const manageableUserId=member.userId&&isUuid(member.userId)?member.userId:null;
+  const canManageTarget=Boolean(isSupabaseConfigured&&isUuid(room.id)&&manageableUserId);
+  const isMuted=Boolean(member.mutedUntil&&new Date(member.mutedUntil).getTime()>Date.now());
   const actions=viewerRole==='owner'
     ? [
         member.coHost?'부방장 해제하기':'부방장 설정하기',
         '방장 양도하기',
-        '채팅 금지',
+        isMuted?'채팅 금지 해제':'채팅 금지',
         '강퇴하기',
         '신고하기',
       ]
     : viewerRole==='cohost'
-      ? ['채팅 금지','강퇴하기','신고하기']
+      ? [isMuted?'채팅 금지 해제':'채팅 금지','강퇴하기','신고하기']
       : ['신고하기'];
-  const selectAction=(label:string)=>{setMenuOpen(false);Alert.alert(label,'세부 처리 로직은 다음 단계에서 연결합니다.');};
+  const finishAction=(title:string,message:string)=>Alert.alert(title,message,[{text:'확인',onPress:onBack}]);
+  const applyMute=async(durationSeconds:number,labelText:string)=>{
+    if(!canManageTarget||!manageableUserId){Alert.alert('처리 불가','서버에 생성된 멤버만 관리할 수 있습니다.');return;}
+    try{
+      await setRoomMemberMute(room.id,manageableUserId,durationSeconds);
+      finishAction('채팅 금지 완료',`${member.name}님을 ${labelText} 동안 채팅 금지했습니다.`);
+    }catch(error){
+      Alert.alert('채팅 금지 실패',serverErrorMessage(error));
+    }
+  };
+  const selectAction=(label:string)=>{
+    setMenuOpen(false);
+    if(label==='신고하기'){
+      if(!manageableUserId){Alert.alert('신고 불가','서버에 생성된 멤버만 신고할 수 있습니다.');return;}
+      submitReport({targetType:'user',targetId:manageableUserId,reason:'other',detail:`멤버 신고: ${member.name}`})
+        .then(()=>Alert.alert('신고 접수 완료','멤버 신고가 접수되었습니다.'))
+        .catch((error)=>Alert.alert('신고 실패',serverErrorMessage(error)));
+      return;
+    }
+    if(!canManageTarget||!manageableUserId){Alert.alert('처리 불가','서버에 생성된 멤버만 관리할 수 있습니다.');return;}
+    if(label==='부방장 설정하기'||label==='부방장 해제하기'){
+      setRoomMemberRole(room.id,manageableUserId,label==='부방장 설정하기'?'cohost':'member')
+        .then(()=>finishAction('권한 변경 완료',`${member.name}님의 권한을 변경했습니다.`))
+        .catch((error)=>Alert.alert('권한 변경 실패',serverErrorMessage(error)));
+      return;
+    }
+    if(label==='방장 양도하기'){
+      Alert.alert('방장 양도하기',`${member.name}님에게 방장 권한을 넘기시겠습니까?`,[
+        {text:'취소',style:'cancel'},
+        {text:'양도하기',onPress:()=>transferRoomOwnership(room.id,manageableUserId)
+          .then(()=>finishAction('방장 양도 완료',`${member.name}님에게 방장 권한을 넘겼습니다.`))
+          .catch((error)=>Alert.alert('방장 양도 실패',serverErrorMessage(error)))},
+      ]);
+      return;
+    }
+    if(label==='강퇴하기'){
+      Alert.alert('강퇴하기',`${member.name}님을 방에서 내보내시겠습니까?`,[
+        {text:'취소',style:'cancel'},
+        {text:'강퇴하기',style:'destructive',onPress:()=>kickOrBanRoomMember({roomId:room.id,userId:manageableUserId,ban:false})
+          .then(()=>finishAction('강퇴 완료',`${member.name}님을 내보냈습니다.`))
+          .catch((error)=>Alert.alert('강퇴 실패',serverErrorMessage(error)))},
+      ]);
+      return;
+    }
+    if(label==='채팅 금지 해제'){
+      clearRoomMemberMute(room.id,manageableUserId)
+        .then(()=>finishAction('채팅 금지 해제 완료',`${member.name}님의 채팅 금지를 해제했습니다.`))
+        .catch((error)=>Alert.alert('채팅 금지 해제 실패',serverErrorMessage(error)));
+      return;
+    }
+    if(label==='채팅 금지'){
+      Alert.alert('채팅 금지 기간 선택',undefined,[
+        {text:'10초',onPress:()=>applyMute(10,'10초')},
+        {text:'30초',onPress:()=>applyMute(30,'30초')},
+        {text:'1분',onPress:()=>applyMute(60,'1분')},
+        {text:'5분',onPress:()=>applyMute(300,'5분')},
+        {text:'10분',onPress:()=>applyMute(600,'10분')},
+        {text:'1시간',onPress:()=>applyMute(3600,'1시간')},
+        {text:'취소',style:'cancel'},
+      ]);
+    }
+  };
   return <SafeAreaView style={s.safe}><EdgeBackLayer onBack={onBack}/><ProfileCaptureGuard/><StatusBar style="light"/><TopBar title={editable?'프로필 수정':'프로필'} onBack={onBack} trailing={canShowMenu?'ellipsis-horizontal':undefined} onTrailingPress={canShowMenu?()=>setMenuOpen((value)=>!value):undefined}/>{canShowMenu&&menuOpen&&<View style={s.sheetLayer}><Pressable accessibilityLabel="프로필 메뉴 닫기" onPress={()=>setMenuOpen(false)} style={s.sheetDim}/><View style={s.profileActionMenu}><View style={s.profileActionList}>{actions.map((label)=><Pressable key={label} onPress={()=>selectAction(label)} style={s.profileActionRow}><Text style={s.profileActionText}>{label}</Text></Pressable>)}</View></View></View>}<KeyboardAvoidingView style={s.flex} behavior={Platform.OS==='ios'?'padding':undefined}><ScrollView keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets contentContainerStyle={s.memberProfilePage}><Pressable accessibilityLabel={editable?'프로필 사진 변경':'프로필 사진 크게 보기'} onPress={pick}>{avatar?<Image source={{uri:avatar.uri}} style={s.memberProfileAvatarLarge}/>:<DefaultAvatar size={96}/>}</Pressable>{editable?<View style={s.memberProfileEditCard}><LimitedField label="이름" value={name} onChange={(value)=>setName(value.slice(0,13))} placeholder="방에서 사용할 이름" limit={13}/><LimitedField label="자기 소개" value={intro} onChange={(value)=>setIntro(value.slice(0,60))} placeholder="자기 소개를 입력해주세요." limit={60} multiline/><Pressable disabled={!name.trim()||!intro.trim()} onPress={save} style={[s.primary,(!name.trim()||!intro.trim())&&s.disabled]}><Text style={s.primaryText}>저장하기</Text></Pressable></View>:<><View style={s.memberProfileNameLine}><Text style={s.memberProfileName}>{member.name}</Text>{member.owner?<Badge text="방장" pink/>:member.coHost?<Badge text="부방장"/>:null}</View><Text style={s.memberProfileRoom}>{room.name}에서 사용하는 프로필</Text><View style={s.memberProfileCard}><Text style={s.memberProfileLabel}>자기 소개</Text><Text style={s.memberProfileIntro}>{member.intro}</Text></View></>}</ScrollView></KeyboardAvoidingView>{photoOpen&&<View style={s.photoViewer}><Pressable accessibilityLabel="프로필 사진 닫기" onPress={()=>setPhotoOpen(false)} style={s.photoViewerDim}/><Image source={avatar?{uri:avatar.uri}:require('./assets/default-profile.png')} style={s.photoViewerImage}/><Pressable onPress={()=>setPhotoOpen(false)} style={s.photoViewerClose}><Ionicons name="close" size={24} color="#FFF"/></Pressable></View>}</SafeAreaView>;
 }
 
@@ -1774,7 +1991,7 @@ function NativeProfileCaptureGuard(){ScreenCapture.usePreventScreenCapture('mute
 function ProfileCaptureGuard(){return Platform.OS==='web'?null:<NativeProfileCaptureGuard/>;}
 
 function RoomOverview({room,onProfile}:{room:Room;onProfile:(member:RoomMember)=>void}){
-  return <ScrollView contentContainerStyle={s.overviewPage}><DefaultRoomCover/><View style={s.overviewIntro}><Text style={s.spaceTitle}>{room.name}</Text><Text style={s.gradientTags}>{room.tags.map((tag)=>`#${tag}`).join('  ')}</Text><Text style={s.spaceBody}>{room.description}</Text></View><Text style={s.overviewSection}>멤버</Text><View style={s.detailMemberGrid}>{membersForRoom(room).map((member)=><Pressable key={member.name} onPress={()=>onProfile(member)} style={s.detailMemberItem}><DefaultAvatar size={58}/><Text style={s.gridName}>{member.name}</Text>{member.owner?<Badge text="방장" pink/>:member.coHost?<Badge text="부방장"/>:null}</Pressable>)}</View><Text style={s.overviewSection}>스토리</Text>{stories.map((story)=><View key={story.id} style={s.overviewStory}><Text numberOfLines={2} style={s.storyBody}>{story.body}</Text></View>)}</ScrollView>;
+  return <ScrollView contentContainerStyle={s.overviewPage}><DefaultRoomCover/><View style={s.overviewIntro}><Text style={s.spaceTitle}>{room.name}</Text><Text style={s.gradientTags}>{room.tags.map((tag)=>`#${tag}`).join('  ')}</Text><Text style={s.spaceBody}>{room.description}</Text></View><Text style={s.overviewSection}>멤버</Text><View style={s.detailMemberGrid}>{membersForRoom(room).map((member)=><Pressable key={member.name} onPress={()=>onProfile(member)} style={s.detailMemberItem}><DefaultAvatar size={58}/><Text style={s.gridName}>{member.name}</Text>{member.owner?<Badge text="방장" pink/>:member.coHost?<Badge text="부방장"/>:null}</Pressable>)}</View><Text style={s.overviewSection}>스토리</Text>{initialStoryItems(room).map((story)=><View key={story.id} style={s.overviewStory}><Text numberOfLines={2} style={s.storyBody}>{story.blocks.filter((block)=>block.type==='text').map((block)=>block.text).join(' ')}</Text></View>)}</ScrollView>;
 }
 
 function JoinRequests({room}:{room:Room}){
@@ -1859,7 +2076,7 @@ function CreateRoom({ adultVerified, onBack, onCreated }: { adultVerified:boolea
   const submit=async()=>{setSubmitting(true);try{let avatarUploadId:string|undefined;if(isSupabaseConfigured&&profileAvatar){const resized=await ImageManipulator.manipulateAsync(profileAvatar.uri,[{resize:{width:720}}],{compress:.8,format:ImageManipulator.SaveFormat.JPEG});const bytes=await (await fetch(resized.uri)).arrayBuffer();const avatarUpload=await uploadValidatedImage({uri:resized.uri,mimeType:'image/jpeg',fileSize:bytes.byteLength,width:720,height:720,purpose:'profile-avatar'});avatarUploadId=avatarUpload.uploadId;}const input={name:name.trim(),description:description.trim(),category:roomType,maxMembers,region:roomType==='region'?region.trim():undefined};const id=isSupabaseConfigured?await createRoom(input):`demo-${Date.now()}`;if(isSupabaseConfigured){await setRoomOwnerProfile({roomId:id,displayName:profileName.trim(),introduction:profileIntro.trim(),avatarUploadId});if(visibility==='private')await configureRoomAccess({roomId:id,visibility,pin});}let finalCoverUri=coverAsset?.uri;if(isSupabaseConfigured&&coverAsset){const isGif=coverAsset.mimeType==='image/gif'||coverAsset.uri.toLowerCase().endsWith('.gif');let uri=coverAsset.uri;const mimeType:'image/jpeg'|'image/gif'=isGif?'image/gif':'image/jpeg';let width=coverAsset.width??1;let height=coverAsset.height??1;if(!isGif){const scale=Math.min(1,1440/Math.max(1,width));const resized=await ImageManipulator.manipulateAsync(uri,[{resize:{width:Math.max(1,Math.round(width*scale))}}],{compress:.8,format:ImageManipulator.SaveFormat.JPEG});uri=resized.uri;finalCoverUri=uri;width=Math.max(1,Math.round(width*scale));height=Math.max(1,Math.round(height*scale));}const bytes=await (await fetch(uri)).arrayBuffer();const upload=await uploadValidatedImage({uri,mimeType,fileSize:bytes.byteLength,width,height,purpose:'room-cover',roomId:id});await setRoomCover(id,upload.uploadId);}const created:Room={id,name:input.name,description:input.description,tags:[visibility==='private'?'비밀방':roomType==='concept'?'콘셉트':roomType==='adult'?'성인':'Member'],memberCount:1,maxMembers,category:roomType==='concept'?'concept':roomType==='member'?'member':'general',topSpaceCount:0,isAdult:roomType==='adult',isActive:true,emoji:'○',imageColor:'#E8ECEA',coverUri:finalCoverUri,region:roomType==='region'?region.trim():undefined};onCreated(created);}catch(error){Alert.alert('방 생성 실패',serverErrorMessage(error));setSubmitting(false);}};
   const invalidPin=visibility==='private'&&pin.length!==6;
   const disabled=!name.trim()||!description.trim()||!profileName.trim()||!profileIntro.trim()||submitting||invalidPin||(roomType==='region'&&!region.trim());
-  return <SafeAreaView style={s.safe}><EdgeBackLayer onBack={onBack}/><StatusBar style="light"/><TopBar title="방 생성하기" onBack={onBack}/><KeyboardAvoidingView style={s.flex} behavior={Platform.OS==='ios'?'padding':undefined}><ScrollView ref={formScrollRef} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets contentContainerStyle={s.form}><Pressable accessibilityLabel="대표 이미지 선택" onPress={selectCover} style={s.uploadRound}>{coverUri?<Image source={{uri:coverUri}} style={s.uploadRoundImage}/>:<Ionicons name="camera-outline" size={28} color={colors.mint700}/>}</Pressable><LimitedField label="방 이름" value={name} onChange={(value)=>setName(value.slice(0,13))} placeholder="방제를 입력해주세요." limit={13}/><LimitedField label="방 설명" value={description} onChange={(value)=>setDescription(value.slice(0,120))} placeholder="방 설명을 입력해주세요." limit={120} multiline/><View style={s.ownerProfileBlock}><Text style={s.ownerProfileTitle}>방에서 사용할 내 프로필</Text><Pressable accessibilityLabel="방장 프로필 사진 선택" onPress={selectProfileAvatar} style={s.ownerProfileAvatar}>{profileAvatar?<Image source={{uri:profileAvatar.uri}} style={s.joinAvatar}/>:<DefaultAvatar size={82}/>}<View style={s.editDot}><Ionicons name="camera" size={13} color="#FFF"/></View></Pressable><LimitedField label="이름" value={profileName} onChange={(value)=>setProfileName(value.slice(0,13))} placeholder="방에서 사용할 이름" limit={13}/><LimitedField label="자기 소개" value={profileIntro} onChange={(value)=>setProfileIntro(value.slice(0,60))} placeholder="자기 소개를 입력해주세요." limit={60} multiline/></View><View style={s.field}><Text style={s.fieldLabel}>공개 설정</Text><View style={s.visibilityRows}><Pressable onPress={()=>{setVisibility('public');setPin('');}} style={[s.visibilityCard,visibility==='public'&&s.visibilityCardActive]}><Ionicons name="earth-outline" size={21} color={colors.mint700}/><View><Text style={s.visibilityCardTitle}>공개방</Text><Text style={s.visibilityCardText}>홈과 검색에 표시</Text></View></Pressable><Pressable onPress={()=>setVisibility('private')} style={[s.visibilityCard,visibility==='private'&&s.visibilityCardActive]}><Ionicons name="lock-closed-outline" size={21} color={colors.mint700}/><View><Text style={s.visibilityCardTitle}>비밀방</Text><Text style={s.visibilityCardText}>PIN 6자리 필수</Text></View></Pressable></View>{visibility==='private'&&<View style={s.pinFieldWrap}><TextInput value={pin} onFocus={()=>scrollCreateField(capacityFieldY.current,true)} onChangeText={(value)=>setPin(value.replace(/\D/g,'').slice(0,6))} keyboardType="number-pad" secureTextEntry placeholder="PIN 6자리" placeholderTextColor={colors.textMuted} style={s.input}/>{invalidPin&&<Text style={s.pinError}>비밀방은 PIN 6자리를 반드시 설정해야 합니다.</Text>}</View>}</View><View style={s.field}><Text style={s.fieldLabel}>분류</Text><View style={s.radioList}>{types.map(([value,label,typeDisabled])=><Pressable key={value} disabled={typeDisabled} onPress={()=>setRoomType(value)} style={[s.radioRow,typeDisabled&&s.radioDisabled]}><View style={[s.radioCircle,roomType===value&&s.radioCircleActive]}>{roomType===value&&<View style={s.radioDot}/>}</View><Text style={[s.radioText,typeDisabled&&s.radioTextDisabled]}>{label}</Text>{typeDisabled&&<Text style={s.radioReason}>성인 인증 필요</Text>}</Pressable>)}</View>{roomType==='region'&&<View onLayout={(event)=>{regionFieldY.current=event.nativeEvent.layout.y;}} style={s.regionFieldWrap}><Field label="지역" value={region} onChange={(value)=>setRegion(value.slice(0,20))} placeholder="경기 남부"/></View>}</View><View onLayout={(event)=>{capacityFieldY.current=event.nativeEvent.layout.y;}} style={s.field}><View style={s.capacityLine}><Text style={s.fieldLabel}>최대 인원</Text><Text style={s.capacityHintInline}>(최소 1명, 최대 80명)</Text></View><View style={s.stepper}><Pressable accessibilityLabel="인원 줄이기" onPress={()=>setCapacity(maxMembers-1)} style={s.stepperButton}><Ionicons name="remove" size={20} color={colors.textSubtle}/></Pressable><TextInput keyboardType="number-pad" value={`${maxMembers}`} onFocus={()=>scrollCreateField(capacityFieldY.current,true)} onChangeText={(value)=>setCapacity(Number(value.replace(/[^0-9]/g,'')))} style={[s.stepperInput,Platform.OS==='web'&&({outlineStyle:'none'} as object)]}/><Text style={s.stepperUnit}>명</Text><Pressable accessibilityLabel="인원 늘리기" onPress={()=>setCapacity(maxMembers+1)} style={s.stepperButton}><Ionicons name="add" size={20} color={colors.textSubtle}/></Pressable></View></View></ScrollView><View style={s.sticky}><Pressable disabled={disabled} onPress={submit} style={[s.primary,disabled&&s.disabled]}><Text style={s.primaryText}>{submitting?'생성 중...':'방 생성하기'}</Text></Pressable></View></KeyboardAvoidingView></SafeAreaView>;
+  return <SafeAreaView style={s.safe}><EdgeBackLayer onBack={onBack}/><StatusBar style="light"/><TopBar title="방 생성하기" onBack={onBack}/><KeyboardAvoidingView style={s.flex} behavior={Platform.OS==='ios'?'padding':undefined}><ScrollView ref={formScrollRef} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets contentContainerStyle={s.form}><Pressable accessibilityLabel="대표 이미지 선택" onPress={selectCover} style={s.uploadRound}>{coverUri?<Image source={{uri:coverUri}} style={s.uploadRoundImage}/>:<Ionicons name="camera-outline" size={28} color={colors.mint700}/>}</Pressable><LimitedField label="방 이름" value={name} onChange={(value)=>setName(value.slice(0,13))} placeholder="방제를 입력해주세요." limit={13}/><LimitedField label="방 설명" value={description} onChange={(value)=>setDescription(value.slice(0,120))} placeholder="방 설명을 입력해주세요." limit={120} multiline/><View style={s.ownerProfileBlock}><Text style={s.ownerProfileTitle}>방에서 사용할 내 프로필</Text><Pressable accessibilityLabel="방장 프로필 사진 선택" onPress={selectProfileAvatar} style={s.ownerProfileAvatar}>{profileAvatar?<Image source={{uri:profileAvatar.uri}} style={s.joinAvatar}/>:<DefaultAvatar size={82}/>}<View style={s.editDot}><Ionicons name="camera" size={13} color="#FFF"/></View></Pressable><LimitedField label="이름" value={profileName} onChange={(value)=>setProfileName(value.slice(0,13))} placeholder="방에서 사용할 이름" limit={13}/><LimitedField label="자기 소개" value={profileIntro} onChange={(value)=>setProfileIntro(value.slice(0,60))} placeholder="자기 소개를 입력해주세요." limit={60} multiline/></View><View style={s.field}><Text style={s.fieldLabel}>공개 설정</Text><View style={s.visibilityRows}><Pressable onPress={()=>{setVisibility('public');setPin('');}} style={[s.visibilityCard,visibility==='public'&&s.visibilityCardActive]}><Ionicons name="earth-outline" size={21} color={colors.mint700}/><View><Text style={s.visibilityCardTitle}>공개방</Text><Text style={s.visibilityCardText}>홈과 검색에 표시</Text></View></Pressable><Pressable onPress={()=>setVisibility('private')} style={[s.visibilityCard,visibility==='private'&&s.visibilityCardActive]}><Ionicons name="lock-closed-outline" size={21} color={colors.mint700}/><View><Text style={s.visibilityCardTitle}>비밀방</Text><Text style={s.visibilityCardText}>PIN 6자리 필수</Text></View></Pressable></View>{visibility==='private'&&<View style={s.pinFieldWrap}><TextInput value={pin} onFocus={()=>scrollCreateField(capacityFieldY.current,true)} onChangeText={(value)=>setPin(value.replace(/\D/g,'').slice(0,6))} keyboardType="number-pad" secureTextEntry placeholder="PIN 6자리" placeholderTextColor={colors.textMuted} style={s.input}/>{invalidPin&&<Text style={s.pinError}>비밀방은 PIN 6자리를 반드시 설정해야 합니다.</Text>}</View>}</View><View style={s.field}><Text style={s.fieldLabel}>분류</Text><View style={s.radioList}>{types.map(([value,label,typeDisabled])=><Pressable key={value} disabled={typeDisabled} onPress={()=>setRoomType(value)} style={[s.radioRow,typeDisabled&&s.radioDisabled]}><View style={[s.radioCircle,roomType===value&&s.radioCircleActive]}>{roomType===value&&<View style={s.radioDot}/>}</View><Text style={[s.radioText,typeDisabled&&s.radioTextDisabled]}>{label}</Text>{typeDisabled&&<Text style={s.radioReason}>성인 인증 필요</Text>}</Pressable>)}</View>{roomType==='region'&&<View onLayout={(event)=>{regionFieldY.current=event.nativeEvent.layout.y;}} style={s.regionFieldWrap}><LimitedField label="지역 (선택사항)" value={region} onChange={(value)=>setRegion(value.slice(0,20))} placeholder="ex. 경기 남부, 서울" limit={20}/></View>}</View><View onLayout={(event)=>{capacityFieldY.current=event.nativeEvent.layout.y;}} style={s.field}><View style={s.capacityLine}><Text style={s.fieldLabel}>최대 인원</Text><Text style={s.capacityHintInline}>(최소 1명, 최대 80명)</Text></View><View style={s.stepper}><Pressable accessibilityLabel="인원 줄이기" onPress={()=>setCapacity(maxMembers-1)} style={s.stepperButton}><Ionicons name="remove" size={20} color={colors.textSubtle}/></Pressable><TextInput keyboardType="number-pad" value={`${maxMembers}`} onFocus={()=>scrollCreateField(capacityFieldY.current,true)} onChangeText={(value)=>setCapacity(Number(value.replace(/[^0-9]/g,'')))} style={[s.stepperInput,Platform.OS==='web'&&({outlineStyle:'none'} as object)]}/><Text style={s.stepperUnit}>명</Text><Pressable accessibilityLabel="인원 늘리기" onPress={()=>setCapacity(maxMembers+1)} style={s.stepperButton}><Ionicons name="add" size={20} color={colors.textSubtle}/></Pressable></View></View></ScrollView><View style={s.sticky}><Pressable disabled={disabled} onPress={submit} style={[s.primary,disabled&&s.disabled]}><Text style={s.primaryText}>{submitting?'생성 중...':'방 생성하기'}</Text></Pressable></View></KeyboardAvoidingView></SafeAreaView>;
 }
 
 function AdultVerificationScreen({verified,onBack,onRefresh}:{verified:boolean;onBack:()=>void;onRefresh:()=>Promise<boolean>}){
@@ -1882,7 +2099,7 @@ function Settings({ adultVerified, isSuperAdmin, onAdultVerification, onBack, on
   const performDelete=async()=>{if(processingAccount)return;setProcessingAccount(true);try{await requestAccountDeletion();try{await signOut();}catch{}onSignedOut();}catch(error){setProcessingAccount(false);Alert.alert('탈퇴 실패',serverErrorMessage(error));}};
   const deleteAccount=()=>{if(isSuperAdmin){Alert.alert('탈퇴 불가','슈퍼관리자 계정은 탈퇴할 수 없습니다.');return;}Alert.alert('계정 탈퇴','정말 탈퇴하시겠습니까?\n탈퇴 후 3일 간 계정 생성이 불가합니다.',[{text:'취소',style:'cancel'},{text:'탈퇴',style:'destructive',onPress:performDelete}]);};
   const openUrl=(url:string)=>Linking.openURL(url).catch(()=>Alert.alert('열기 실패','연결할 앱이나 브라우저를 확인해주세요.'));
-  return <SafeAreaView style={s.safe}><StatusBar style="light"/><TopBar title="설정" onBack={onBack}/><ScrollView contentContainerStyle={s.settings}><Text style={s.groupLabel}>알림</Text><View style={s.menuGroup}><Menu icon="notifications-outline" title="전체 알림" trailing={<Switch value={notifications} onValueChange={setNotifications} trackColor={{false:colors.gray200,true:colors.mint300}}/>}/></View><Text style={s.groupLabel}>계정 및 서비스</Text><View style={s.menuGroup}><Menu icon="call-outline" title="인증 전화번호" value="인증됨" onPress={()=>Alert.alert('인증 전화번호','보안을 위해 전화번호 전체는 표시하지 않습니다.')}/><Menu icon="shield-checkmark-outline" title="성인 인증" value={adultVerified?'인증됨':'미인증'} onPress={onAdultVerification}/><Menu icon="card-outline" title="결제 내역" onPress={()=>Alert.alert('결제 내역','아직 결제 내역이 없습니다.')}/><Menu icon="document-text-outline" title="개인정보 처리방침" onPress={()=>openUrl('https://mute.app/privacy')}/><Menu icon="mail-outline" title="피드백 보내기" onPress={()=>openUrl('mailto:support@mute.app?subject=Mute%20피드백')}/></View><View style={s.menuGroup}><Menu icon="log-out-outline" title="로그아웃" danger onPress={logout}/><Menu icon="trash-outline" title="계정 탈퇴" value={isSuperAdmin?'관리자 계정은 탈퇴 불가':undefined} danger onPress={deleteAccount}/></View><Text style={s.version}>Mute 0.1.0</Text></ScrollView></SafeAreaView>;
+  return <SafeAreaView style={s.safe}><StatusBar style="light"/><TopBar title="설정" onBack={onBack}/><ScrollView contentContainerStyle={s.settings}><Text style={s.groupLabel}>알림</Text><View style={s.menuGroup}><Menu icon="notifications-outline" title="전체 알림" trailing={<Switch style={s.smallSwitch} value={notifications} onValueChange={setNotifications} trackColor={{false:colors.gray200,true:colors.mint300}}/>}/></View><Text style={s.groupLabel}>계정 및 서비스</Text><View style={s.menuGroup}><Menu icon="call-outline" title="인증 전화번호" value="인증됨" onPress={()=>Alert.alert('인증 전화번호','보안을 위해 전화번호 전체는 표시하지 않습니다.')}/><Menu icon="card-outline" title="결제 내역" onPress={()=>Alert.alert('결제 내역','아직 결제 내역이 없습니다.')}/><Menu icon="document-text-outline" title="개인정보 처리방침" onPress={()=>openUrl('https://mute.app/privacy')}/><Menu icon="mail-outline" title="피드백 보내기" onPress={()=>openUrl('mailto:support@mute.app?subject=Mute%20피드백')}/></View><View style={s.menuGroup}><Menu icon="log-out-outline" title="로그아웃" danger onPress={logout}/><Menu icon="trash-outline" title="계정 탈퇴" value={isSuperAdmin?'관리자 계정은 탈퇴 불가':undefined} danger onPress={deleteAccount}/></View><Text style={s.version}>Mute 0.1.0</Text></ScrollView></SafeAreaView>;
 }
 
 function BottomNav({ selected,onSelect }: { selected: BottomTab; onSelect:(v:BottomTab)=>void }) {
@@ -1900,7 +2117,7 @@ function RoomImage({room,size,blurAdult=false}:{room?:Room;size:number;blurAdult
 function DefaultRoomCover({room}:{room?:Room}){return room?.coverUri?<ExpoImage source={{uri:room.coverUri}} contentFit="cover" style={s.defaultCover}/>:<View style={[s.defaultCover,s.defaultCoverLogo]}/>;}
 function ImageGrid({uris,onSave,onPress}:{uris:string[];onSave:(uri:string)=>void;onPress?:(uri:string)=>void}){return <View style={[s.imageGrid,uris.length===1&&s.imageGridSingle]}>{uris.map((uri,index)=><Pressable key={`${uri}-${index}`} onPress={()=>onPress?.(uri)} onLongPress={()=>onSave(uri)} style={[s.imageGridItem,uris.length===1&&s.imageGridItemSingle]}><ExpoImage source={{uri}} contentFit="cover" transition={120} style={s.imageGridImage}/>{uri.toLowerCase().includes('.gif')&&<View style={s.gifBadge}><Text style={s.gifBadgeText}>GIF</Text></View>}</Pressable>)}</View>;}
 function MuteLogo({variant='color',compact=false}:{symbolOnly?:boolean;variant?:'white'|'color';compact?:boolean}){return <View accessibilityLabel="뮤트" style={[s.muteLogo,compact&&s.muteLogoCompact]}><Image source={variant==='white'?require('./assets/mute-logo-white.png'):require('./assets/mute-logo-color.png')} resizeMode="contain" style={[s.muteLogoSymbol,compact&&s.muteLogoSymbolCompact]}/></View>;}
-function SectionLabel({title,action,onAction}:{title:string;action?:string;onAction?:()=>void}){return <View style={s.sectionLabel}><Text style={s.sectionTitle}>{title}</Text>{action&&<Pressable onPress={onAction} style={s.sectionActionButton}><Text style={s.sectionAction}>{action}</Text><Ionicons name="chevron-forward" size={13} color={colors.mint700}/></Pressable>}</View>;}
+function SectionLabel({title,action,onAction,compact=false}:{title:string;action?:string;onAction?:()=>void;compact?:boolean}){return <View style={s.sectionLabel}><Text style={[s.sectionTitle,compact&&s.sectionTitleCompact]}>{title}</Text>{action&&<Pressable onPress={onAction} style={s.sectionActionButton}><Text style={s.sectionAction}>{action}</Text><Ionicons name="chevron-forward" size={13} color={colors.mint700}/></Pressable>}</View>;}
 function NotificationBadge({inline=false,count=3}:{inline?:boolean;count?:number}){const label=count>99?'99+':`${count}`;return <View style={[s.notificationBadge,inline&&s.notificationBadgeInline]}><Text style={s.notificationBadgeText}>{label}</Text></View>;}
 function ComposerPanel({tool,onCamera,onGallery,onTopSpace,onPromotion,onNewStory,showPromotion,bubbleColor,textColor,backgroundColor,onBubbleColor,onTextColor,onBackgroundColor}:{tool:ComposerTool;onCamera:()=>void;onGallery:()=>void;onTopSpace:()=>void;onPromotion:()=>void;onNewStory:()=>void;showPromotion:boolean;secretDraft:string;onSecretDraft:(value:string)=>void;onSendSecret:()=>void;bubbleColor:string;textColor:string;backgroundColor:string;onBubbleColor:(value:string)=>void;onTextColor:(value:string)=>void;onBackgroundColor:(value:string)=>void}){
   if(!tool||tool==='secret')return null;
@@ -1914,7 +2131,7 @@ function SystemMessage({event,text}:{event:'join'|'heart'|'point'|'leave'|'room'
 function MemberActionSheet({member,readOnly=false,secretOpen,onClose,onHeart,onPoint=()=>undefined,onSecret,onProfile,onReport,secretDraft,onSecretDraft,onSendSecret}:{member:string|null;readOnly?:boolean;secretOpen:boolean;onClose:()=>void;onHeart:()=>void;onPoint?:()=>void;onSecret:()=>void;onProfile:()=>void;onReport:()=>void;secretDraft:string;onSecretDraft:(value:string)=>void;onSendSecret:()=>void}){
   if(!member)return null;
   const actions:[IconName,string,()=>void,boolean][]=readOnly?[['person-outline','프로필 보기',onProfile,false],['warning-outline','신고하기',onReport,true]]:[['heart','하트 보내기',onHeart,true],['cash-outline','포인트 보내기',onPoint,false],['mail-outline','비밀 쪽지',onSecret,false],['person-outline','프로필 보기',onProfile,false],['warning-outline','신고하기',onReport,true]];
-  return <View style={s.sheetLayer}><Pressable accessibilityLabel="멤버 메뉴 닫기" onPress={onClose} style={s.sheetDim}/><View style={s.memberSheet}><View style={s.sheetHandle}/><View style={s.sheetProfile}><DefaultAvatar size={58}/><Text style={s.sheetName}>{member}</Text></View>{secretOpen?<View style={s.secretComposer}><Text style={s.secretTitle}><Ionicons name="lock-closed" size={13}/> {member}님에게 비밀 쪽지</Text><TextInput autoFocus value={secretDraft} onChangeText={onSecretDraft} placeholder="쪽지 내용을 입력해주세요." placeholderTextColor={colors.textMuted} multiline style={[s.secretInput,Platform.OS==='web'&&({outlineStyle:'none'} as object)]}/><Pressable disabled={!secretDraft.trim()} onPress={onSendSecret} style={[s.secretSend,!secretDraft.trim()&&s.disabled]}><Text style={s.primaryText}>비밀 쪽지 보내기</Text></Pressable></View>:<View style={s.memberActions}>{actions.map(([icon,label,onPress,pink])=><Pressable key={label} onPress={onPress} style={s.memberAction}><View style={[s.memberActionIcon,pink&&s.heartAction]}><Ionicons name={icon} size={23} color={pink?colors.pink600:colors.mint700}/></View><Text style={s.memberActionText}>{label}</Text></Pressable>)}</View>}</View></View>;
+  return <View style={s.sheetLayer}><Pressable accessibilityLabel="멤버 메뉴 닫기" onPress={onClose} style={s.sheetDim}/><KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} style={s.sheetKeyboard}><View style={s.memberSheet}><View style={s.sheetHandle}/><View style={s.sheetProfile}><DefaultAvatar size={58}/><Text style={s.sheetName}>{member}</Text></View>{secretOpen?<View style={s.secretComposer}><Text style={s.secretTitle}><Ionicons name="lock-closed" size={13}/> {member}님에게 비밀 쪽지</Text><TextInput autoFocus value={secretDraft} onChangeText={onSecretDraft} placeholder="쪽지 내용을 입력해주세요." placeholderTextColor={colors.textMuted} multiline style={[s.secretInput,Platform.OS==='web'&&({outlineStyle:'none'} as object)]}/><Pressable disabled={!secretDraft.trim()} onPress={onSendSecret} style={[s.secretSend,!secretDraft.trim()&&s.disabled]}><Text style={s.primaryText}>비밀 쪽지 보내기</Text></Pressable></View>:<View style={s.memberActions}>{actions.map(([icon,label,onPress,pink])=><Pressable key={label} onPress={onPress} style={s.memberAction}><View style={[s.memberActionIcon,pink&&s.heartAction]}><Ionicons name={icon} size={23} color={pink?colors.pink600:colors.mint700}/></View><Text style={s.memberActionText}>{label}</Text></Pressable>)}</View>}</View></KeyboardAvoidingView></View>;
 }
 function ToolAction({icon,label,onPress}:{icon:IconName;label:string;onPress:()=>void}){return <Pressable onPress={onPress} style={s.toolAction}><View style={s.toolIcon}><Ionicons name={icon} size={23} color={colors.mint700}/></View><Text style={s.toolLabel}>{label}</Text></Pressable>;}
 function ColorPicker({label,values,selected,onSelect}:{label:string;values:ColorProduct[];selected:string;onSelect:(value:string)=>void}){
@@ -1924,7 +2141,7 @@ function ColorPicker({label,values,selected,onSelect}:{label:string;values:Color
   useEffect(()=>{setCustomSelection(selected);},[selected]);
   const choose=(item:ColorProduct,index:number)=>{
     if(item.price===0){onSelect(item.color);return;}
-    Alert.alert(item.name,`${item.price.toLocaleString()}원에 구매하시겠습니까?`,[{text:'취소',style:'cancel'},{text:'구매하기',onPress:async()=>{try{const prefix=label==='말풍선 색상'?'bubble':'text';await purchaseProduct(`mute_${prefix}_color_${String(index).padStart(2,'0')}`);onSelect(item.color);Alert.alert('구매 완료','색상이 적용되었습니다.');}catch(error){Alert.alert('구매 준비 필요',serverErrorMessage(error));}}}]);
+    Alert.alert(item.name,`${item.price.toLocaleString()}포인트로 구매하시겠습니까?`,[{text:'취소',style:'cancel'},{text:'구매하기',onPress:async()=>{try{const prefix=label==='말풍선 색상'?'bubble':'text';await purchaseProduct(`mute_${prefix}_color_${String(index).padStart(2,'0')}`);onSelect(item.color);Alert.alert('구매 완료','색상이 적용되었습니다.');}catch(error){Alert.alert('구매 실패',serverErrorMessage(error));}}}]);
   };
   const completeCustomPurchase=async()=>{
     try{
@@ -1932,7 +2149,7 @@ function ColorPicker({label,values,selected,onSelect}:{label:string;values:Color
       onSelect(customSelection);
       setCustomOpen(false);
       Alert.alert('구매 완료','커스텀 색상이 적용되었습니다.');
-    }catch(error){Alert.alert('구매 준비 필요',serverErrorMessage(error));}
+    }catch(error){Alert.alert('구매 실패',serverErrorMessage(error));}
   };
   return (
     <View style={s.colorLine}>
@@ -1962,40 +2179,42 @@ function ColorPicker({label,values,selected,onSelect}:{label:string;values:Color
       {customOpen&&
         <View style={s.sheetLayer}>
           <Pressable accessibilityLabel="커스텀 색상 닫기" onPress={()=>setCustomOpen(false)} style={s.sheetDim}/>
-          <View style={s.customColorSheet}>
-            <View style={s.sheetHandle}/>
-            <Text style={s.customColorTitle}>커스텀 색상 선택</Text>
-            <ExternalColorPicker
-              value={customSelection}
-              thumbShape="ring"
-              onChangeJS={(colors)=>setCustomSelection(colors.hex)}
-              onCompleteJS={(colors)=>setCustomSelection(colors.hex)}
-              style={s.customPickerRoot}
-            >
-              <View style={s.customPickerTopRow}>
-                <Panel3 style={s.customPickerWheel}/>
-                <View style={[s.customPickerPreviewBar,{backgroundColor:customSelection}]}/>
+          <View style={s.customColorCenter}>
+            <View style={s.customColorSheet}>
+              <View style={s.sheetHandle}/>
+              <Text style={s.customColorTitle}>커스텀 색상 선택</Text>
+              <ExternalColorPicker
+                value={customSelection}
+                thumbShape="ring"
+                onChangeJS={(colors)=>setCustomSelection(colors.hex)}
+                onCompleteJS={(colors)=>setCustomSelection(colors.hex)}
+                style={s.customPickerRoot}
+              >
+                <View style={s.customPickerTopRow}>
+                  <Panel3 style={s.customPickerWheel}/>
+                  <View style={[s.customPickerPreviewBar,{backgroundColor:customSelection}]}/>
+                </View>
+                <BrightnessSlider style={s.customPickerSlider}/>
+                <InputWidget
+                  defaultFormat="RGB"
+                  formats={['RGB','HEX']}
+                  disableAlphaChannel
+                  containerStyle={s.customInputWidget}
+                  inputStyle={s.customInput}
+                  inputTitleStyle={s.customInputTitle}
+                  iconColor={colors.textSubtle}
+                />
+              </ExternalColorPicker>
+              <View style={s.customColorActions}>
+                <Pressable onPress={()=>setCustomOpen(false)} style={s.pointSendCancel}>
+                  <Text style={s.pointSendCancelText}>취소</Text>
+                </Pressable>
+                <Pressable onPress={completeCustomPurchase} style={s.pointSendButton}>
+                  <LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.pointSendGradient}>
+                    <Text style={s.primaryText}>3,200P 구매</Text>
+                  </LinearGradient>
+                </Pressable>
               </View>
-              <BrightnessSlider style={s.customPickerSlider}/>
-              <InputWidget
-                defaultFormat="RGB"
-                formats={['RGB','HEX']}
-                disableAlphaChannel
-                containerStyle={s.customInputWidget}
-                inputStyle={s.customInput}
-                inputTitleStyle={s.customInputTitle}
-                iconColor={colors.textSubtle}
-              />
-            </ExternalColorPicker>
-            <View style={s.customColorActions}>
-              <Pressable onPress={()=>setCustomOpen(false)} style={s.pointSendCancel}>
-                <Text style={s.pointSendCancelText}>취소</Text>
-              </Pressable>
-              <Pressable onPress={completeCustomPurchase} style={s.pointSendButton}>
-                <LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.pointSendGradient}>
-                  <Text style={s.primaryText}>3,200원 결제</Text>
-                </LinearGradient>
-              </Pressable>
             </View>
           </View>
         </View>}
@@ -2007,7 +2226,7 @@ function TopSpaceSheet({open,room,points,result,onClose,onBoost}:{open:boolean;r
   if(!open)return null;
   return <View style={s.sheetLayer}><Pressable accessibilityLabel="탑스페이스 닫기" onPress={onClose} style={s.sheetDim}/><View style={s.topSpaceSheet}><View style={s.sheetHandle}/><View style={s.topSpaceTitleLine}><View style={s.topSpaceIcon}><Ionicons name="rocket" size={25} color={colors.mint700}/></View><Text style={s.topSpaceTitle}>{room.name} 탑스페이스</Text></View><View style={s.packageGrid}>{TOP_SPACE_PACKAGES.map((option)=><Pressable accessibilityLabel={`${option.points} 포인트`} key={option.points} onPress={()=>setSelected(option)} style={[s.packageOption,selected.points===option.points&&s.packageOptionActive]}><Text style={[s.packagePoints,selected.points===option.points&&s.packageTextActive]}>{option.points.toLocaleString()} P</Text></Pressable>)}</View>{result&&<Text style={[s.topSpaceResult,result==='shortage'&&s.topSpaceError]}>{result==='success'?'탑스페이스에 올렸습니다.':'포인트가 부족합니다.'}</Text>}<Pressable disabled={points<selected.points} onPress={()=>onBoost(selected)} style={[s.topSpaceButton,points<selected.points&&s.disabled]}><LinearGradient colors={points>=selected.points?['#82B9C1','#5DBB8C']:['#C9D8D5','#BFCAC7']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.topSpaceButtonGradient}><Text style={s.primaryText}>탑스페이스 올리기</Text></LinearGradient></Pressable></View></View>;
 }
-function ChatDrawer({open,isOwner,isStaff,onClose,onProfileEdit,onApplications,onStories,onOpenMembers,onBlocked,onRoomSettings,onDelete,onLeave}:{open:boolean;isOwner:boolean;isStaff:boolean;onClose:()=>void;onProfileEdit:()=>void;onApplications:()=>void;onStories:()=>void;onOpenMembers:()=>void;onBlocked:()=>void;onRoomSettings:()=>void;onDelete:()=>void;onLeave:()=>void}){
+function ChatDrawer({open,isOwner,isStaff,isSuperAdmin,readOnly,onClose,onProfileEdit,onApplications,onStories,onOpenMembers,onBlocked,onRoomSettings,onDelete,onLeave}:{open:boolean;isOwner:boolean;isStaff:boolean;isSuperAdmin:boolean;readOnly:boolean;onClose:()=>void;onProfileEdit:()=>void;onApplications:()=>void;onStories:()=>void;onOpenMembers:()=>void;onBlocked:()=>void;onRoomSettings:()=>void;onDelete:()=>void;onLeave:()=>void}){
   const slide=useRef(new Animated.Value(340)).current;
   const [visible,setVisible]=useState(open);
   const [notifications,setNotifications]=useState(true);
@@ -2022,15 +2241,15 @@ function ChatDrawer({open,isOwner,isStaff,onClose,onProfileEdit,onApplications,o
   },[open,slide,visible]);
   if(!visible)return null;
   return <View style={s.drawerLayer}><Pressable accessibilityLabel="채팅 메뉴 닫기" onPress={onClose} style={s.drawerDim}/><Animated.View style={[s.chatDrawer,{transform:[{translateX:slide}]}]}>
-    <Pressable onPress={onProfileEdit} style={s.drawerProfile}><View style={s.drawerAvatar}><DefaultAvatar size={72}/><View style={s.editDot}><Ionicons name="pencil" size={12} color="#FFF"/></View></View><Text style={s.drawerProfileName}>한걸음</Text><Text numberOfLines={2} style={s.drawerProfileIntro}>자기 소개가 들어가는 공간입니다. 편안한 대화를 좋아해요.</Text></Pressable>
+    {!readOnly&&<Pressable onPress={onProfileEdit} style={s.drawerProfile}><View style={s.drawerAvatar}><DefaultAvatar size={72}/><View style={s.editDot}><Ionicons name="pencil" size={12} color="#FFF"/></View></View><Text style={s.drawerProfileName}>내 프로필</Text><Text numberOfLines={2} style={s.drawerProfileIntro}>이 방에서 사용하는 프로필을 수정할 수 있습니다.</Text></Pressable>}
     <View style={s.chatDrawerMenu}>
-      <DrawerMenu icon="notifications-outline" title="알림 설정" trailing={<Switch value={notifications} onValueChange={setNotifications} trackColor={{false:colors.gray200,true:colors.mint300}}/>}/>
-      {isStaff&&<DrawerMenu icon="person-add-outline" title="가입 신청 목록" onPress={onApplications}/>}
+      <DrawerMenu icon="notifications-outline" title="알림 설정" trailing={<Switch style={s.smallSwitch} value={notifications} onValueChange={setNotifications} trackColor={{false:colors.gray200,true:colors.mint300}}/>}/>
+      {(isStaff||isSuperAdmin)&&<DrawerMenu icon="person-add-outline" title="가입 신청 목록" onPress={onApplications}/>}
       <DrawerMenu icon="people-outline" title="멤버 관리" onPress={onOpenMembers}/>
       <DrawerMenu icon="albums-outline" title="방 소개 및 스토리 보기" onPress={onStories}/>
-      {isOwner&&<DrawerMenu icon="lock-closed-outline" title="방 공개 설정" onPress={onRoomSettings}/>}
-      {isStaff&&<DrawerMenu icon="ban-outline" title="차단 멤버 목록" onPress={onBlocked}/>}
-      <Pressable onPress={isOwner?onDelete:onLeave} style={s.deleteRoomLink}><Text style={s.deleteRoomText}>{isOwner?'방 삭제하기':'방 나가기'}</Text></Pressable>
+      {(isOwner||isSuperAdmin)&&<DrawerMenu icon="lock-closed-outline" title="방 공개 설정" onPress={onRoomSettings}/>}
+      {(isStaff||isSuperAdmin)&&<DrawerMenu icon="ban-outline" title="차단 멤버 목록" onPress={onBlocked}/>}
+      <Pressable onPress={(isOwner||isSuperAdmin)?onDelete:onLeave} style={s.deleteRoomLink}><Text style={s.deleteRoomText}>{(isOwner||isSuperAdmin)?'방 삭제하기':'방 나가기'}</Text></Pressable>
     </View>
   </Animated.View></View>;
 }
@@ -2060,7 +2279,7 @@ function NotificationDrawer({open,onClose,onUnreadChange,onNavigate}:{open:boole
   return <View style={s.drawerLayer}><Pressable accessibilityLabel="알림 닫기" onPress={onClose} style={s.drawerDim}/><Animated.View style={[s.drawer,{transform:[{translateX:slide}]}]}><View style={s.drawerHead}><Text style={s.drawerTitle}>알림</Text><Pressable onPress={onClose} style={s.iconButton}><Ionicons name="close" size={24} color={colors.textSubtle}/></Pressable></View><Pressable onPress={()=>setConfirmAll(true)}><Text style={s.readAll}>모두 읽음</Text></Pressable><ScrollView>{notices.map((notice)=><Pressable key={notice.id} onPress={()=>openNotice(notice)} style={[s.drawerNotice,notice.read&&s.drawerNoticeRead]}><View style={[s.notifIcon,notice.read&&s.notifIconRead]}><Ionicons name={notice.icon} size={20} color={notice.read?colors.gray300:colors.mint700}/></View><View style={s.flex}><Text style={[s.notifTitle,notice.read&&s.notifTitleRead]}>{notice.title}</Text><Text style={s.notifBody}>{notice.body}</Text><Text style={s.notifTime}>{notice.time}</Text></View></Pressable>)}</ScrollView>{confirmAll&&<View style={s.confirmLayer}><View style={s.confirmCard}><Text style={s.confirmTitle}>모두 읽음 처리하시겠습니까?</Text><View style={s.confirmActions}><Pressable onPress={()=>setConfirmAll(false)} style={s.confirmCancel}><Text style={s.confirmCancelText}>아니요</Text></Pressable><Pressable onPress={()=>{setNotices((items)=>items.map((item)=>({...item,read:true})));setConfirmAll(false);}} style={s.confirmAccept}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.confirmAcceptGradient}><Text style={s.primaryText}>예</Text></LinearGradient></Pressable></View></View></View>}</Animated.View></View>;
 }
 function IconButton({name,color,onPress,size=23}:{name:IconName;color:string;onPress:()=>void;size?:number}){return <Pressable accessibilityLabel={name==='search'?'검색':name} onPress={onPress} style={size<23?s.headerIconButton:s.iconButton}><Ionicons name={name} size={size} color={color}/></Pressable>;}
-function IconCircle({name,onPress,active=false}:{name:IconName;onPress?:()=>void;active?:boolean}){return <Pressable accessibilityLabel={name} onPress={onPress} style={[s.iconCircle,active&&s.iconCircleActive]}><Ionicons name={name} size={22} color={active?colors.mint700:colors.textSubtle}/></Pressable>;}
+function IconCircle({name,onPress,active=false}:{name:IconName;onPress?:()=>void;active?:boolean}){return <Pressable hitSlop={10} accessibilityLabel={name} onPress={onPress} style={[s.iconCircle,active&&s.iconCircleActive]}><Ionicons name={name} size={22} color={active?colors.mint700:colors.textSubtle}/></Pressable>;}
 function Badge({text,pink}:{text:string;pink?:boolean}){return <Text style={[s.badge,pink&&s.badgePink]}>{text}</Text>;}
 function Count({value}:{value:number}){return <Text style={s.count}>{value}</Text>;}
 function Card({title,action,children}:{title:string;action?:string;children:React.ReactNode}){return <View style={s.card}><View style={s.cardHead}><Text style={s.cardTitle}>{title}</Text>{action&&<Text style={s.cardAction}>{action}</Text>}</View>{children}</View>;}
@@ -2120,7 +2339,8 @@ const s=StyleSheet.create({
   replyComposer:{minHeight:54,flexDirection:'row',alignItems:'center',gap:10,paddingHorizontal:15,paddingVertical:8,backgroundColor:'#FFF',borderTopWidth:StyleSheet.hairlineWidth,borderTopColor:colors.border},
   replyComposerName:{color:colors.mint700,fontSize:11,fontWeight:'800'},
   replyComposerText:{color:colors.textMuted,fontSize:11,marginTop:3},
-  pointSendSheet:{position:'absolute',left:18,right:18,bottom:24,borderRadius:24,backgroundColor:'#FFF',padding:18,...shadows.floating},
+  sheetKeyboard:{flex:1,justifyContent:'flex-end'},
+  pointSendSheet:{marginHorizontal:18,marginBottom:24+IOS_BOTTOM_SAFE_PADDING,borderRadius:24,backgroundColor:'#FFF',padding:18,...shadows.floating},
   pointSendTitle:{color:colors.text,fontSize:17,fontWeight:'800'},
   pointSendBody:{color:colors.textMuted,fontSize:11,lineHeight:17,marginTop:7},
   pointSendInput:{height:48,borderRadius:14,backgroundColor:colors.gray050,borderWidth:1,borderColor:colors.border,paddingHorizontal:14,color:colors.text,fontSize:15,fontWeight:'700',marginTop:16},
@@ -2164,14 +2384,17 @@ const s=StyleSheet.create({
   visibilityCardTitle:{color:colors.text,fontSize:12,fontWeight:'800'},
   visibilityCardText:{color:colors.textMuted,fontSize:9,marginTop:3},
   pinError:{color:colors.pink600,fontSize:10,marginTop:6},
-  authScreen:{flex:1,backgroundColor:'#FFF',justifyContent:'center'},
+  authScreen:{flex:1,backgroundColor:'#FFF',justifyContent:'flex-start'},
   authSplash:{flex:1,alignItems:'center',justifyContent:'center',gap:14},
   authSplashText:{color:'rgba(255,255,255,.86)',fontSize:13,fontWeight:'600'},
-  authCard:{marginHorizontal:24,padding:24,borderRadius:24,backgroundColor:'#FFF',gap:14,...shadows.floating},
+  authHeader:{height:52,flexDirection:'row',alignItems:'center',paddingHorizontal:10,backgroundColor:'#FFF'},
+  authHeaderBack:{width:42,height:42,alignItems:'center',justifyContent:'center'},
+  authHeaderTitle:{flex:1,color:colors.text,fontSize:16,fontWeight:'700',textAlign:'center'},
+  authCard:{marginHorizontal:24,paddingHorizontal:0,paddingVertical:24,backgroundColor:'#FFF',gap:14},
   authTitle:{marginTop:10,color:colors.text,fontSize:22,fontWeight:'800'},
   authBody:{color:colors.textSubtle,fontSize:13,lineHeight:20},
   authInput:{height:52,borderRadius:14,backgroundColor:colors.gray050,borderWidth:1,borderColor:colors.border,paddingHorizontal:16,color:colors.text,fontSize:17,letterSpacing:.4},
-  authScroll:{flexGrow:1,justifyContent:'center',paddingVertical:24},
+  authScroll:{flexGrow:1,justifyContent:'flex-start',paddingVertical:12},
   authPhoneRow:{flexDirection:'row',alignItems:'center',gap:8},
   authPhoneInput:{flex:1,minWidth:0},
   authInputVerified:{color:colors.textMuted,backgroundColor:colors.gray100},
@@ -2196,19 +2419,19 @@ const s=StyleSheet.create({
   authBackText:{color:colors.mint700,fontSize:12,fontWeight:'700'},
   safe:{flex:1,backgroundColor:colors.background,overflow:'hidden'},flex:{flex:1,minWidth:0},mainHeader:{height:48,paddingHorizontal:12,flexDirection:'row',alignItems:'center',justifyContent:'space-between',borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:'rgba(255,255,255,.25)'},headerActions:{flexDirection:'row',alignItems:'center'},searchArea:{paddingHorizontal:14,paddingVertical:9,backgroundColor:'#FFF'},muteLogo:{height:44,flexDirection:'row',alignItems:'center',gap:9},muteLogoSymbol:{width:38,height:28},muteLogoMark:{width:50,height:36},muteName:{color:colors.text,fontSize:16,fontWeight:'800',lineHeight:17,letterSpacing:-.3},muteEnglish:{color:colors.textMuted,fontSize:8,fontWeight:'700',letterSpacing:.8,marginTop:1},muteNameWhite:{color:'#FFF'},iconButton:{width:42,height:42,alignItems:'center',justifyContent:'center'},searchBox:{height:44,borderRadius:22,backgroundColor:'#FFF',flexDirection:'row',alignItems:'center',paddingHorizontal:15,gap:9,...shadows.soft},searchInput:{flex:1,color:colors.text,fontSize:14,paddingVertical:0},
   tabs:{height:48,flexDirection:'row',backgroundColor:'#FFF',borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},tab:{flex:1,alignItems:'center',justifyContent:'center'},tabText:{color:colors.textMuted,fontSize:12,fontWeight:'600'},tabTextActive:{color:colors.mint700,fontWeight:'700'},tabIndicator:{position:'absolute',bottom:0,width:26,height:3,borderRadius:2,backgroundColor:colors.mint600},
-  list:{paddingBottom:100},sectionLabel:{height:44,paddingHorizontal:20,flexDirection:'row',alignItems:'center',justifyContent:'space-between',backgroundColor:'#FFF'},sectionTitle:{color:colors.text,fontSize:17,fontWeight:'500'},sectionActionButton:{height:32,flexDirection:'row',alignItems:'center',gap:2},sectionAction:{color:colors.mint700,fontSize:11,fontWeight:'500'},listHeader:{paddingHorizontal:20,paddingTop:20,paddingBottom:10,flexDirection:'row',alignItems:'flex-end',justifyContent:'space-between'},listTitle:{color:colors.text,fontSize:18,fontWeight:'700'},listSub:{color:colors.textMuted,fontSize:11,marginTop:4},count:{color:colors.mint700,backgroundColor:colors.mint050,minWidth:28,height:28,borderRadius:14,textAlign:'center',lineHeight:28,fontSize:11,fontWeight:'700'},
+  list:{paddingBottom:100},sectionLabel:{height:44,paddingHorizontal:20,flexDirection:'row',alignItems:'center',justifyContent:'space-between',backgroundColor:'#FFF'},sectionTitle:{color:colors.text,fontSize:17,fontWeight:'500'},sectionTitleCompact:{fontSize:11,fontWeight:'600',letterSpacing:.05},sectionActionButton:{height:32,flexDirection:'row',alignItems:'center',gap:2},sectionAction:{color:colors.mint700,fontSize:11,fontWeight:'500'},listHeader:{paddingHorizontal:20,paddingTop:20,paddingBottom:10,flexDirection:'row',alignItems:'flex-end',justifyContent:'space-between'},listTitle:{color:colors.text,fontSize:18,fontWeight:'700'},listSub:{color:colors.textMuted,fontSize:11,marginTop:4},count:{color:colors.mint700,backgroundColor:colors.mint050,minWidth:28,height:28,borderRadius:14,textAlign:'center',lineHeight:28,fontSize:11,fontWeight:'700'},
   roomRow:{height:92,flexDirection:'row',alignItems:'center',backgroundColor:'#FFF',paddingHorizontal:20,borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},pressed:{backgroundColor:colors.gray050},roomImage:{backgroundColor:'#F0F1F1',alignItems:'center',justifyContent:'center',flexShrink:0},roomInfo:{flex:1,paddingHorizontal:13,paddingVertical:11},nameLine:{flexDirection:'row',alignItems:'center',gap:6},roomName:{maxWidth:'65%',color:colors.text,fontSize:15,fontWeight:'700'},roomDesc:{color:colors.textSubtle,fontSize:12,marginTop:4},metaLine:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginTop:7},metaGroup:{flexDirection:'row',alignItems:'center',gap:3},meta:{color:colors.textMuted,fontSize:10},topSpaceRemaining:{color:colors.mint700,fontWeight:'700'},topSpaceGaugeTrack:{width:72,height:7,borderRadius:4,overflow:'hidden',backgroundColor:colors.gray100},topSpaceGaugeFill:{height:'100%',borderRadius:4},joined:{color:colors.mint700,fontSize:10,fontWeight:'700'},hash:{color:colors.textMuted,fontSize:10},badge:{color:colors.mint700,backgroundColor:colors.mint050,borderRadius:6,paddingHorizontal:6,paddingVertical:3,overflow:'hidden',fontSize:9,fontWeight:'700'},badgePink:{color:colors.pink600,backgroundColor:colors.pink050},
   fab:{position:'absolute',right:20,bottom:126,width:52,height:52,borderRadius:26,alignItems:'center',justifyContent:'center',backgroundColor:colors.mint600,...shadows.floating},bottomNav:{position:'absolute',left:0,right:0,bottom:0,height:112,paddingBottom:28,flexDirection:'row',backgroundColor:'#FFF',borderTopWidth:StyleSheet.hairlineWidth,borderTopColor:colors.border,...shadows.nav},navItem:{flex:1,alignItems:'center',justifyContent:'flex-start',paddingTop:14,gap:3},navText:{color:colors.textMuted,fontSize:10},navActive:{color:colors.mint700,fontWeight:'700'},
   topBar:{height:58,flexDirection:'row',alignItems:'center',paddingHorizontal:8},topCenter:{flex:1,alignItems:'center'},topTitleLine:{flexDirection:'row',alignItems:'baseline',justifyContent:'center',gap:6},topTitle:{color:'#FFF',fontSize:16,fontWeight:'700',maxWidth:220},topInlineCount:{color:'rgba(255,255,255,.88)',fontSize:11,fontWeight:'600'},topSub:{color:'rgba(255,255,255,.82)',fontSize:10,marginTop:2},topSide:{width:44,height:44,alignItems:'center',justifyContent:'center'},profileTabs:{height:45,flexDirection:'row',backgroundColor:'#FFF',borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},profileTab:{flex:1,alignItems:'center',justifyContent:'center'},profileTabText:{color:colors.textMuted,fontSize:12,fontWeight:'600'},profileTabActive:{color:colors.mint700,fontWeight:'700'},profileTabLine:{position:'absolute',bottom:0,width:45,height:2,backgroundColor:colors.mint600},spaceProfile:{paddingBottom:116,backgroundColor:'#FFF'},defaultCover:{height:230,backgroundColor:'#DADDDC',alignItems:'center',justifyContent:'center'},coverMeta:{alignSelf:'center',marginTop:-15,height:30,borderRadius:15,paddingHorizontal:14,flexDirection:'row',alignItems:'center',gap:14,backgroundColor:'rgba(45,48,47,.76)'},coverMetaText:{color:'#FFF',fontSize:10},spaceIntro:{marginHorizontal:16,marginTop:16,padding:18,borderRadius:20,backgroundColor:'#FFF',borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border,...shadows.tiny},spaceEyebrow:{color:colors.mint700,fontSize:9,fontWeight:'800',letterSpacing:1.2},spaceTitle:{color:colors.text,fontSize:21,fontWeight:'800',marginTop:7},detailMetaRow:{flexDirection:'row',alignItems:'center',gap:14,marginTop:10,marginBottom:14},detailMetaItem:{flexDirection:'row',alignItems:'center',gap:5},detailMetaText:{color:colors.textMuted,fontSize:10,fontWeight:'600'},gradientTags:{color:colors.mint700,fontSize:12,fontWeight:'700',marginBottom:11},spaceBody:{color:colors.textSubtle,fontSize:13,lineHeight:21},memberSectionHead:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:20,paddingTop:23,paddingBottom:12},memberSectionTitle:{color:colors.text,fontSize:16,fontWeight:'800'},memberSectionCount:{color:colors.mint700,fontSize:11,fontWeight:'800'},hostBlock:{flexDirection:'row',alignItems:'center',marginHorizontal:16,padding:16,borderRadius:18,backgroundColor:'#FFF',borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border,...shadows.tiny},hostAvatar:{position:'relative'},hostCopy:{flex:1,marginLeft:15},hostNameLine:{flexDirection:'row',alignItems:'center',gap:7},crown:{position:'absolute',right:0,bottom:2,width:24,height:24,borderRadius:12,alignItems:'center',justifyContent:'center',backgroundColor:colors.mint600,borderWidth:2,borderColor:'#FFF'},hostName:{color:colors.text,fontSize:15,fontWeight:'800'},hostIntro:{color:colors.textMuted,fontSize:10,lineHeight:15,marginTop:6},memberPreview:{flexDirection:'row',justifyContent:'space-between',paddingHorizontal:20,paddingTop:18,paddingBottom:24},memberPreviewItem:{width:54,alignItems:'center'},memberMore:{width:48,height:48,borderRadius:24,backgroundColor:colors.gray100,alignItems:'center',justifyContent:'center'},memberMoreText:{color:colors.textMuted,fontSize:11,fontWeight:'800'},gridName:{color:colors.textSubtle,fontSize:10,marginTop:6},detailSticky:{position:'absolute',left:0,right:0,bottom:0,paddingHorizontal:20,paddingTop:12,paddingBottom:18,backgroundColor:'rgba(255,255,255,.96)',borderTopWidth:StyleSheet.hairlineWidth,borderTopColor:colors.border},detailJoinButton:{height:52,borderRadius:16,overflow:'hidden',...shadows.soft},detailJoinGradient:{flex:1,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8},pendingButton:{height:52,borderRadius:16,backgroundColor:colors.gray100,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:7},pendingText:{color:colors.textSubtle,fontSize:12,fontWeight:'700'},joinForm:{padding:20,paddingBottom:110},joinProfile:{alignSelf:'center',position:'relative',marginTop:8,marginBottom:8},editDot:{position:'absolute',right:0,bottom:0,width:26,height:26,borderRadius:13,alignItems:'center',justifyContent:'center',backgroundColor:colors.mint600,borderWidth:2,borderColor:'#FFF'},counter:{color:colors.textMuted,fontSize:10,textAlign:'right',marginTop:5},detailScroll:{padding:20,paddingBottom:130},hero:{alignItems:'center',paddingVertical:12},heroTitle:{color:colors.text,fontSize:22,fontWeight:'700',marginTop:14},heroMeta:{color:colors.textMuted,fontSize:11,marginTop:5},tagRow:{flexDirection:'row',flexWrap:'wrap',justifyContent:'center',gap:6,marginTop:12},tag:{color:colors.mint700,backgroundColor:colors.mint050,paddingHorizontal:9,paddingVertical:5,borderRadius:8,fontSize:11},
   card:{backgroundColor:'#FFF',borderRadius:18,padding:20,marginTop:14,borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border,...shadows.card},cardHead:{flexDirection:'row',justifyContent:'space-between',marginBottom:12},cardTitle:{color:colors.text,fontSize:14,fontWeight:'700'},cardAction:{color:colors.mint700,fontSize:11,fontWeight:'600'},body:{color:colors.textSubtle,fontSize:13,lineHeight:21,marginBottom:5},avatarRow:{flexDirection:'row'},avatar:{flexShrink:0,backgroundColor:'#E7E9E8',alignItems:'center',justifyContent:'flex-end',overflow:'hidden',borderWidth:2,borderColor:'#FFF'},avatarMore:{width:44,height:44,borderRadius:22,marginLeft:-9,alignItems:'center',justifyContent:'center',backgroundColor:colors.gray100,borderWidth:2,borderColor:'#FFF'},avatarMoreText:{color:colors.textMuted,fontSize:10,fontWeight:'700'},notice:{flexDirection:'row',gap:11,backgroundColor:colors.mint050,padding:15,borderRadius:13,marginTop:14},noticeTitle:{color:colors.mint800,fontSize:12,fontWeight:'700'},noticeText:{color:colors.textSubtle,fontSize:11,marginTop:3},sticky:{position:'absolute',left:0,right:0,bottom:0,padding:14,paddingHorizontal:20,backgroundColor:'rgba(250,250,250,.97)',borderTopWidth:StyleSheet.hairlineWidth,borderTopColor:colors.border},primary:{height:50,borderRadius:13,backgroundColor:colors.mint600,alignItems:'center',justifyContent:'center'},disabled:{backgroundColor:colors.gray200},primaryText:{color:'#FFF',fontSize:14,fontWeight:'700'},hint:{color:colors.textMuted,fontSize:10,textAlign:'center',marginTop:6},
-  chatTabs:{height:44,flexDirection:'row',backgroundColor:'#FFF',borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},chatTab:{flex:1,alignItems:'center',justifyContent:'center'},chatTabText:{color:colors.textMuted,fontSize:12,fontWeight:'600'},chatTabActive:{color:colors.mint700,fontWeight:'700'},chatIndicator:{position:'absolute',bottom:0,width:38,height:2,backgroundColor:colors.mint600},messages:{padding:20,paddingBottom:28,maxWidth:'100%'},date:{alignSelf:'center',color:colors.textMuted,fontSize:10,marginBottom:15},system:{alignSelf:'center',maxWidth:'90%',color:colors.textMuted,fontSize:10,backgroundColor:colors.gray100,borderRadius:12,paddingHorizontal:12,paddingVertical:6,overflow:'hidden',marginBottom:22},messageRow:{flexDirection:'row',alignItems:'flex-start',marginBottom:17,maxWidth:'100%',minWidth:0},mineRow:{justifyContent:'flex-end'},messageBlock:{maxWidth:'76%',minWidth:0,flexShrink:1,marginLeft:8},sender:{color:colors.textSubtle,fontSize:11,fontWeight:'600',marginBottom:5},bubbleLine:{flexDirection:'row',alignItems:'flex-end',gap:5,maxWidth:'100%',minWidth:0,flexShrink:1},bubble:{borderRadius:12,paddingHorizontal:13,paddingVertical:9,maxWidth:'100%',minWidth:0,flexShrink:1},imageBubble:{padding:0,overflow:'hidden'},mineBubble:{backgroundColor:'#F5F5F5',borderBottomRightRadius:4},otherBubble:{backgroundColor:'#F5F5F5',borderBottomLeftRadius:4},messageText:{color:colors.text,fontSize:14,lineHeight:20,flexShrink:1},mineText:{color:colors.text},chatImage:{width:140,height:140,borderRadius:12,resizeMode:'cover'},time:{minWidth:38,maxWidth:42,color:colors.textMuted,fontSize:9,marginBottom:2,flexShrink:0},composerPanel:{overflow:'hidden',backgroundColor:'#FFF',borderTopWidth:StyleSheet.hairlineWidth,borderTopColor:colors.border},toolRow:{flex:1,flexDirection:'row',alignItems:'center',paddingHorizontal:15,gap:18},toolAction:{alignItems:'center',gap:5},toolIcon:{width:48,height:48,borderRadius:24,backgroundColor:colors.mint050,alignItems:'center',justifyContent:'center'},toolLabel:{color:colors.textSubtle,fontSize:10,fontWeight:'600'},styleTools:{paddingHorizontal:18,paddingVertical:14,gap:15},colorLine:{gap:8},colorLabelLine:{flexDirection:'row',alignItems:'center',justifyContent:'space-between'},colorLabel:{color:colors.textSubtle,fontSize:11,fontWeight:'700'},customColorLink:{color:colors.mint700,fontSize:10,fontWeight:'800'},colorOptions:{flexDirection:'row',flexWrap:'wrap',gap:10},colorDot:{width:26,height:26,borderRadius:13,alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:colors.border},colorDotActive:{borderWidth:2,borderColor:colors.mint700},composer:{minHeight:58,flexDirection:'row',alignItems:'center',gap:6,backgroundColor:'#FFF',paddingHorizontal:9,paddingVertical:8,borderTopWidth:StyleSheet.hairlineWidth,borderTopColor:colors.border},iconCircle:{width:34,height:34,borderRadius:17,backgroundColor:colors.gray100,alignItems:'center',justifyContent:'center'},iconCircleActive:{backgroundColor:colors.mint050},composerInput:{flex:1,minWidth:0,height:40,borderRadius:20,backgroundColor:colors.gray050,paddingHorizontal:13,color:colors.text,fontSize:13},send:{width:36,height:36,borderRadius:18,overflow:'hidden'},sendGradient:{flex:1,alignItems:'center',justifyContent:'center'},
+  chatTabs:{height:44,flexDirection:'row',backgroundColor:'#FFF',borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},chatTab:{flex:1,alignItems:'center',justifyContent:'center'},chatTabText:{color:colors.textMuted,fontSize:12,fontWeight:'600'},chatTabActive:{color:colors.mint700,fontWeight:'700'},chatIndicator:{position:'absolute',bottom:0,width:38,height:2,backgroundColor:colors.mint600},messages:{padding:20,paddingBottom:28,maxWidth:'100%'},date:{alignSelf:'center',color:colors.textMuted,fontSize:10,marginBottom:15},system:{alignSelf:'center',maxWidth:'90%',color:colors.textMuted,fontSize:10,backgroundColor:colors.gray100,borderRadius:12,paddingHorizontal:12,paddingVertical:6,overflow:'hidden',marginBottom:22},messageRow:{flexDirection:'row',alignItems:'flex-start',marginBottom:17,maxWidth:'100%',minWidth:0},mineRow:{justifyContent:'flex-end'},messageBlock:{maxWidth:'76%',minWidth:0,flexShrink:1,marginLeft:8},mineMessageBlock:{maxWidth:'76%',minWidth:0,flexShrink:1,marginLeft:0,marginRight:8,alignItems:'flex-end'},sender:{color:colors.textSubtle,fontSize:11,fontWeight:'600',marginBottom:5},mineSender:{textAlign:'right'},bubbleLine:{flexDirection:'row',alignItems:'flex-end',gap:5,maxWidth:'100%',minWidth:0,flexShrink:1},mineBubbleLine:{justifyContent:'flex-end'},bubble:{borderRadius:12,paddingHorizontal:13,paddingVertical:9,maxWidth:'100%',minWidth:0,flexShrink:1},imageBubble:{padding:0,overflow:'hidden'},mineBubble:{backgroundColor:'#F5F5F5',borderBottomRightRadius:4},otherBubble:{backgroundColor:'#F5F5F5',borderBottomLeftRadius:4},messageText:{color:colors.text,fontSize:14,lineHeight:20,flexShrink:1},mineText:{color:colors.text},chatImage:{width:140,height:140,borderRadius:12,resizeMode:'cover'},time:{minWidth:50,maxWidth:58,color:colors.textMuted,fontSize:9,marginBottom:2,flexShrink:0,textAlign:'center'},composerPanel:{overflow:'hidden',backgroundColor:'#FFF',borderTopWidth:StyleSheet.hairlineWidth,borderTopColor:colors.border},toolRow:{flex:1,flexDirection:'row',alignItems:'center',paddingHorizontal:15,gap:18},toolAction:{alignItems:'center',gap:5},toolIcon:{width:48,height:48,borderRadius:24,backgroundColor:colors.mint050,alignItems:'center',justifyContent:'center'},toolLabel:{color:colors.textSubtle,fontSize:10,fontWeight:'600'},styleTools:{paddingHorizontal:18,paddingVertical:14,gap:15},colorLine:{gap:8},colorLabelLine:{flexDirection:'row',alignItems:'center',justifyContent:'space-between'},colorLabel:{color:colors.textSubtle,fontSize:11,fontWeight:'700'},customColorLink:{color:colors.mint700,fontSize:10,fontWeight:'800'},colorOptions:{flexDirection:'row',flexWrap:'wrap',gap:10},colorDot:{width:26,height:26,borderRadius:13,alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:colors.border},colorDotActive:{borderWidth:2,borderColor:colors.mint700},composer:{minHeight:58,flexDirection:'row',alignItems:'center',gap:6,backgroundColor:'#FFF',paddingHorizontal:9,paddingVertical:8,borderTopWidth:StyleSheet.hairlineWidth,borderTopColor:colors.border},iconCircle:{width:34,height:34,borderRadius:17,backgroundColor:colors.gray100,alignItems:'center',justifyContent:'center'},iconCircleActive:{backgroundColor:colors.mint050},composerInput:{flex:1,minWidth:0,height:40,borderRadius:20,backgroundColor:colors.gray050,paddingHorizontal:13,color:colors.text,fontSize:13},send:{width:36,height:36,borderRadius:18,overflow:'hidden'},sendGradient:{flex:1,alignItems:'center',justifyContent:'center'},
   panel:{padding:20,paddingBottom:40},panelHeader:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:15},panelTitle:{color:colors.text,fontSize:20,fontWeight:'700'},writeButton:{flexDirection:'row',alignItems:'center',gap:5,backgroundColor:colors.mint600,borderRadius:8,paddingHorizontal:11,paddingVertical:8},writeText:{color:'#FFF',fontSize:11,fontWeight:'700'},story:{backgroundColor:'#FFF',borderRadius:18,padding:16,marginBottom:11,borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border},storyTop:{flexDirection:'row',justifyContent:'space-between'},storyTime:{color:colors.textMuted,fontSize:10,lineHeight:16,marginTop:3},storyTitle:{color:colors.text,fontSize:15,fontWeight:'600',marginTop:10},storyBody:{color:colors.textSubtle,fontSize:12,lineHeight:18,marginTop:5},storyMeta:{color:colors.textMuted,fontSize:10,marginTop:13},myProfile:{flexDirection:'row',alignItems:'center',backgroundColor:colors.mint050,borderRadius:18,padding:14,marginBottom:20},memberPanel:{padding:16,paddingBottom:40},memberLabel:{color:colors.textMuted,fontSize:11,fontWeight:'700',marginHorizontal:4,marginBottom:10},memberCard:{minHeight:84,flexDirection:'row',alignItems:'center',backgroundColor:'#FFF',borderRadius:17,paddingHorizontal:16,paddingVertical:14,marginBottom:10,borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border,...shadows.tiny},memberCardBody:{flex:1,marginLeft:16},memberTitleLine:{flexDirection:'row',alignItems:'center',flexWrap:'wrap',gap:6},memberName:{color:colors.text,fontSize:13,fontWeight:'700'},memberIntro:{color:colors.textMuted,fontSize:10,lineHeight:15,marginTop:5},permissionTags:{flexDirection:'row',flexWrap:'wrap',gap:5,marginTop:9},permissionTag:{color:colors.mint700,backgroundColor:colors.mint050,borderRadius:7,paddingHorizontal:7,paddingVertical:4,overflow:'hidden',fontSize:9,fontWeight:'700'},
-  page:{padding:20,paddingBottom:100},pageTitle:{color:colors.text,fontSize:22,fontWeight:'700',marginBottom:16},notificationBadge:{position:'absolute',right:3,top:3,minWidth:17,height:17,borderRadius:9,paddingHorizontal:4,alignItems:'center',justifyContent:'center',backgroundColor:'#FF3D5A',borderWidth:0},notificationBadgeInline:{position:'relative',right:0,top:0,minWidth:19,height:19,borderRadius:10,borderWidth:0},notificationBadgeText:{color:'#FFF',fontSize:8,fontWeight:'800'},drawerLayer:{...StyleSheet.absoluteFill,zIndex:50,flexDirection:'row'},drawerDim:{flex:1,backgroundColor:'rgba(20,23,22,.28)'},drawer:{width:'84%',maxWidth:340,backgroundColor:'#FFF',...shadows.floating},chatDrawer:{width:'87%',maxWidth:340,backgroundColor:'#FFF',...shadows.floating},drawerProfile:{alignItems:'center',paddingHorizontal:24,paddingTop:52,paddingBottom:32,borderBottomWidth:8,borderBottomColor:colors.gray050},drawerAvatar:{position:'relative'},drawerProfileName:{color:colors.text,fontSize:16,fontWeight:'800',marginTop:11},drawerProfileIntro:{color:colors.textMuted,fontSize:11,lineHeight:17,textAlign:'center',marginTop:6},chatDrawerMenu:{paddingHorizontal:15,paddingTop:18},drawerMenu:{height:58,flexDirection:'row',alignItems:'center',gap:13,paddingHorizontal:10,borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},drawerMenuText:{flex:1,color:colors.text,fontSize:13,fontWeight:'600'},drawerHead:{height:58,paddingLeft:20,paddingRight:7,flexDirection:'row',alignItems:'center',justifyContent:'space-between',borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},drawerTitle:{color:colors.text,fontSize:18,fontWeight:'800'},readAll:{alignSelf:'flex-end',color:colors.mint700,fontSize:10,fontWeight:'700',paddingHorizontal:20,paddingTop:14},drawerNotice:{minHeight:86,flexDirection:'row',gap:12,paddingHorizontal:18,paddingVertical:15,borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},notification:{flexDirection:'row',alignItems:'center',gap:12,backgroundColor:'#FFF',paddingVertical:15,borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},notifIcon:{width:40,height:40,borderRadius:20,backgroundColor:colors.mint050,alignItems:'center',justifyContent:'center'},notifTitle:{color:colors.text,fontSize:13,fontWeight:'700'},notifBody:{color:colors.textMuted,fontSize:10,marginTop:4,lineHeight:15},notifTime:{color:colors.textMuted,fontSize:9,marginTop:7},profileHero:{alignItems:'center',paddingVertical:15},profileName:{color:colors.text,fontSize:20,fontWeight:'700',marginTop:12},profilePhone:{color:colors.textMuted,fontSize:11,marginTop:5},pointCard:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',borderRadius:18,padding:18,marginTop:10,backgroundColor:'#FFF',borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border,...shadows.tiny},pointLabel:{color:colors.textMuted,fontSize:10},pointValue:{color:colors.text,fontSize:20,fontWeight:'500',marginTop:4},pointButton:{backgroundColor:colors.mint050,borderRadius:10,paddingHorizontal:15,paddingVertical:9},pointButtonText:{color:colors.mint700,fontSize:11,fontWeight:'700'},settingsLink:{height:54,flexDirection:'row',alignItems:'center',gap:10,backgroundColor:'#FFF',borderRadius:13,paddingHorizontal:15,marginTop:13,borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border},settingsText:{flex:1,color:colors.text,fontSize:13,fontWeight:'600'},
+  page:{padding:20,paddingBottom:100},pageTitle:{color:colors.text,fontSize:22,fontWeight:'700',marginBottom:16},notificationBadge:{position:'absolute',right:3,top:3,minWidth:17,height:17,borderRadius:9,paddingHorizontal:4,alignItems:'center',justifyContent:'center',backgroundColor:'#FF3D5A',borderWidth:0},notificationBadgeInline:{position:'relative',right:0,top:0,minWidth:19,height:19,borderRadius:10,borderWidth:0},notificationBadgeText:{color:'#FFF',fontSize:8,fontWeight:'800'},drawerLayer:{...StyleSheet.absoluteFill,zIndex:50,flexDirection:'row'},drawerDim:{flex:1,backgroundColor:'rgba(20,23,22,.28)'},drawer:{width:'84%',maxWidth:340,backgroundColor:'#FFF',...shadows.floating},chatDrawer:{width:'87%',maxWidth:340,backgroundColor:'#FFF',...shadows.floating},drawerProfile:{alignItems:'center',paddingHorizontal:24,paddingTop:52,paddingBottom:32,borderBottomWidth:8,borderBottomColor:colors.gray050},drawerAvatar:{position:'relative'},drawerProfileName:{color:colors.text,fontSize:16,fontWeight:'800',marginTop:11},drawerProfileIntro:{color:colors.textMuted,fontSize:11,lineHeight:17,textAlign:'center',marginTop:6},chatDrawerMenu:{paddingHorizontal:15,paddingTop:34},drawerMenu:{height:58,flexDirection:'row',alignItems:'center',gap:13,paddingHorizontal:10,borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},drawerMenuText:{flex:1,color:colors.text,fontSize:13,fontWeight:'600'},drawerHead:{height:58,paddingLeft:20,paddingRight:7,flexDirection:'row',alignItems:'center',justifyContent:'space-between',borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},drawerTitle:{color:colors.text,fontSize:18,fontWeight:'800'},readAll:{alignSelf:'flex-end',color:colors.mint700,fontSize:10,fontWeight:'700',paddingHorizontal:20,paddingTop:14},drawerNotice:{minHeight:86,flexDirection:'row',gap:12,paddingHorizontal:18,paddingVertical:15,borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},notification:{flexDirection:'row',alignItems:'center',gap:12,backgroundColor:'#FFF',paddingVertical:15,borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},notifIcon:{width:40,height:40,borderRadius:20,backgroundColor:colors.mint050,alignItems:'center',justifyContent:'center'},notifTitle:{color:colors.text,fontSize:13,fontWeight:'700'},notifBody:{color:colors.textMuted,fontSize:10,marginTop:4,lineHeight:15},notifTime:{color:colors.textMuted,fontSize:9,marginTop:7},profileHero:{alignItems:'center',paddingVertical:15},profileName:{color:colors.text,fontSize:20,fontWeight:'700',marginTop:12},profilePhone:{color:colors.textMuted,fontSize:11,marginTop:5},pointCard:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',borderRadius:18,padding:18,marginTop:10,backgroundColor:'#FFF',borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border,...shadows.tiny},pointLabel:{color:colors.textMuted,fontSize:10},pointValue:{color:colors.text,fontSize:20,fontWeight:'500',marginTop:4},pointButton:{backgroundColor:colors.mint050,borderRadius:10,paddingHorizontal:15,paddingVertical:9},pointButtonText:{color:colors.mint700,fontSize:11,fontWeight:'700'},settingsLink:{height:54,flexDirection:'row',alignItems:'center',gap:10,backgroundColor:'#FFF',borderRadius:13,paddingHorizontal:15,marginTop:13,borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border},settingsText:{flex:1,color:colors.text,fontSize:13,fontWeight:'600'},
   form:{padding:20,paddingBottom:120},upload:{height:150,alignItems:'center',justifyContent:'center',backgroundColor:colors.gray100,borderRadius:18,borderWidth:1,borderStyle:'dashed',borderColor:colors.gray300},uploadTitle:{color:colors.textSubtle,fontSize:13,fontWeight:'700',marginTop:8},uploadHint:{color:colors.textMuted,fontSize:10,marginTop:4},field:{marginTop:20},fieldLabel:{color:colors.text,fontSize:12,fontWeight:'700',marginBottom:8},input:{height:48,borderRadius:13,backgroundColor:'#FFF',borderWidth:1,borderColor:colors.border,paddingHorizontal:14,color:colors.text,fontSize:13},textarea:{height:105,paddingTop:13,textAlignVertical:'top'},capacityRow:{flexDirection:'row',gap:8},capacity:{flex:1,height:42,borderRadius:11,backgroundColor:'#FFF',borderWidth:1,borderColor:colors.border,alignItems:'center',justifyContent:'center'},capacityActive:{backgroundColor:colors.mint050,borderColor:colors.mint600},capacityText:{color:colors.textMuted,fontSize:11,fontWeight:'600'},capacityTextActive:{color:colors.mint700,fontWeight:'800'},fakeField:{height:48,borderRadius:13,backgroundColor:'#FFF',borderWidth:1,borderColor:colors.border,paddingHorizontal:14,justifyContent:'center'},fakeText:{color:colors.mint700,fontSize:12},
-  settings:{padding:20,paddingBottom:40},groupLabel:{color:colors.textMuted,fontSize:10,fontWeight:'600',marginTop:12,marginBottom:7,marginLeft:3},menuGroup:{backgroundColor:'#FFF',borderRadius:18,paddingHorizontal:14,marginBottom:12,borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border},menu:{minHeight:55,flexDirection:'row',alignItems:'center',gap:11,borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},menuTitle:{flex:1,color:colors.text,fontSize:13,fontWeight:'600'},menuValue:{color:colors.textMuted,fontSize:10},danger:{color:colors.pink600},version:{color:colors.textMuted,fontSize:10,textAlign:'center',marginTop:18},empty:{alignItems:'center',paddingVertical:70},emptyTitle:{color:colors.text,fontSize:14,fontWeight:'700',marginTop:12},emptyBody:{color:colors.textMuted,fontSize:11,marginTop:4},
+  settings:{padding:20,paddingBottom:40},groupLabel:{color:colors.textMuted,fontSize:10,fontWeight:'600',marginTop:12,marginBottom:7,marginLeft:3},menuGroup:{backgroundColor:'#FFF',borderRadius:18,paddingHorizontal:14,marginBottom:12,borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border},menu:{minHeight:55,flexDirection:'row',alignItems:'center',gap:11,borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},menuTitle:{flex:1,color:colors.text,fontSize:13,fontWeight:'600'},menuValue:{marginLeft:'auto',color:colors.textMuted,fontSize:10,textAlign:'right'},smallSwitch:{transform:[{scaleX:.82},{scaleY:.82}]},danger:{color:colors.pink600},version:{color:colors.textMuted,fontSize:10,textAlign:'center',marginTop:18},empty:{alignItems:'center',paddingVertical:70},emptyTitle:{color:colors.text,fontSize:14,fontWeight:'700',marginTop:12},emptyBody:{color:colors.textMuted,fontSize:11,marginTop:4},
   searchHeader:{height:58,flexDirection:'row',alignItems:'center',paddingRight:14,backgroundColor:'#FFF',borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},searchPageBox:{flex:1,height:40,borderRadius:20,backgroundColor:colors.gray050,flexDirection:'row',alignItems:'center',paddingHorizontal:15},searchResults:{paddingBottom:40},searchResultHead:{height:52,paddingHorizontal:20,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},searchResultTitle:{color:colors.text,fontSize:14,fontWeight:'800'},searchResultCount:{color:colors.mint700,fontSize:12,fontWeight:'800'},fabGradient:{width:'100%',height:'100%',borderRadius:26,alignItems:'center',justifyContent:'center'},
   continuousRow:{marginTop:-11},avatarSpacer:{width:46},imagePlaceholder:{width:140,height:140,borderRadius:12,backgroundColor:colors.gray100,alignItems:'center',justifyContent:'center'},secretContent:{maxWidth:210},secretLabel:{flexDirection:'row',alignItems:'center',gap:4,marginBottom:7},secretLabelText:{color:colors.pink600,fontSize:9,fontWeight:'700'},systemRow:{flexDirection:'row',alignItems:'center',gap:10,marginTop:15,marginBottom:24},systemLine:{flex:1,height:StyleSheet.hairlineWidth,backgroundColor:colors.border},systemContent:{maxWidth:'82%',flexDirection:'row',alignItems:'center',justifyContent:'center',gap:6,paddingVertical:2},systemText:{color:colors.textMuted,fontSize:10,textAlign:'center',lineHeight:16},
-  sheetLayer:{...StyleSheet.absoluteFill,zIndex:60,justifyContent:'flex-end'},sheetDim:{...StyleSheet.absoluteFill,backgroundColor:'rgba(20,23,22,.3)'},memberSheet:{backgroundColor:'#FFF',borderTopLeftRadius:24,borderTopRightRadius:24,paddingHorizontal:20,paddingTop:10,paddingBottom:28,...shadows.floating},privatePinSheet:{backgroundColor:'#FFF',borderTopLeftRadius:24,borderTopRightRadius:24,paddingHorizontal:20,paddingTop:10,paddingBottom:28,...shadows.floating},privatePinTitle:{color:colors.text,fontSize:17,fontWeight:'800',marginBottom:6},privatePinBody:{color:colors.textMuted,fontSize:11,lineHeight:16,marginBottom:16},coHostSheet:{backgroundColor:'#FFF',borderTopLeftRadius:24,borderTopRightRadius:24,paddingHorizontal:20,paddingTop:10,paddingBottom:22,...shadows.floating},sheetHandle:{alignSelf:'center',width:38,height:4,borderRadius:2,backgroundColor:colors.gray200,marginBottom:18},sheetProfile:{flexDirection:'row',alignItems:'center',gap:13,paddingBottom:18,borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},sheetName:{color:colors.text,fontSize:15,fontWeight:'800'},sheetIntro:{color:colors.textMuted,fontSize:10,marginTop:4},memberActions:{flexDirection:'row',flexWrap:'wrap',justifyContent:'space-around',paddingTop:20,rowGap:18},memberAction:{width:'25%',alignItems:'center',gap:8},memberActionIcon:{width:52,height:52,borderRadius:26,backgroundColor:colors.mint050,alignItems:'center',justifyContent:'center'},heartAction:{backgroundColor:colors.pink050},memberActionText:{color:colors.textSubtle,fontSize:10,fontWeight:'700'},secretComposer:{paddingTop:18},secretTitle:{color:colors.text,fontSize:12,fontWeight:'800',marginBottom:10},secretInput:{height:88,borderRadius:13,backgroundColor:colors.gray050,borderWidth:1,borderColor:colors.border,padding:13,color:colors.text,fontSize:13,textAlignVertical:'top'},secretSend:{height:46,borderRadius:13,backgroundColor:colors.mint600,alignItems:'center',justifyContent:'center',marginTop:10},coHostToggle:{minHeight:76,flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingVertical:14},coHostToggleTitle:{color:colors.text,fontSize:14,fontWeight:'800'},coHostToggleText:{color:colors.textMuted,fontSize:10,marginTop:5},permissionCheck:{width:24,height:24,borderRadius:8,backgroundColor:colors.gray100,alignItems:'center',justifyContent:'center'},permissionCheckOn:{backgroundColor:colors.mint600},permissionHint:{color:colors.textMuted,fontSize:9,lineHeight:14,marginTop:8},
+  sheetLayer:{...StyleSheet.absoluteFill,zIndex:60,justifyContent:'flex-end'},sheetDim:{...StyleSheet.absoluteFill,backgroundColor:'rgba(20,23,22,.3)'},memberSheet:{backgroundColor:'#FFF',borderTopLeftRadius:24,borderTopRightRadius:24,paddingHorizontal:20,paddingTop:10,paddingBottom:28+IOS_BOTTOM_SAFE_PADDING,...shadows.floating},privatePinSheet:{backgroundColor:'#FFF',borderTopLeftRadius:24,borderTopRightRadius:24,paddingHorizontal:20,paddingTop:10,paddingBottom:28,...shadows.floating},privatePinTitle:{color:colors.text,fontSize:17,fontWeight:'800',marginBottom:6},privatePinBody:{color:colors.textMuted,fontSize:11,lineHeight:16,marginBottom:16},coHostSheet:{backgroundColor:'#FFF',borderTopLeftRadius:24,borderTopRightRadius:24,paddingHorizontal:20,paddingTop:10,paddingBottom:22,...shadows.floating},sheetHandle:{alignSelf:'center',width:38,height:4,borderRadius:2,backgroundColor:colors.gray200,marginBottom:18},sheetProfile:{flexDirection:'row',alignItems:'center',gap:13,paddingBottom:18,borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},sheetName:{color:colors.text,fontSize:15,fontWeight:'800'},sheetIntro:{color:colors.textMuted,fontSize:10,marginTop:4},memberActions:{flexDirection:'row',flexWrap:'wrap',justifyContent:'space-around',paddingTop:20,rowGap:18},memberAction:{width:'25%',alignItems:'center',gap:8},memberActionIcon:{width:52,height:52,borderRadius:26,backgroundColor:colors.mint050,alignItems:'center',justifyContent:'center'},heartAction:{backgroundColor:colors.pink050},memberActionText:{color:colors.textSubtle,fontSize:10,fontWeight:'700'},secretComposer:{paddingTop:18,paddingBottom:8},secretTitle:{color:colors.text,fontSize:12,fontWeight:'800',marginBottom:10},secretInput:{minHeight:104,borderRadius:13,backgroundColor:colors.gray050,borderWidth:1,borderColor:colors.border,padding:13,color:colors.text,fontSize:13,textAlignVertical:'top'},secretSend:{height:46,borderRadius:13,backgroundColor:colors.mint600,alignItems:'center',justifyContent:'center',marginTop:10},coHostToggle:{minHeight:76,flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingVertical:14},coHostToggleTitle:{color:colors.text,fontSize:14,fontWeight:'800'},coHostToggleText:{color:colors.textMuted,fontSize:10,marginTop:5},permissionCheck:{width:24,height:24,borderRadius:8,backgroundColor:colors.gray100,alignItems:'center',justifyContent:'center'},permissionCheckOn:{backgroundColor:colors.mint600},permissionHint:{color:colors.textMuted,fontSize:9,lineHeight:14,marginTop:8},
   rankingList:{paddingBottom:40},rankingIntro:{paddingHorizontal:20,paddingVertical:18,backgroundColor:colors.gray050},rankingIntroTitle:{color:colors.text,fontSize:17,fontWeight:'800'},rankingIntroText:{color:colors.textMuted,fontSize:10,marginTop:5},rankingRow:{height:82,flexDirection:'row',alignItems:'center',paddingHorizontal:16,backgroundColor:'#FFF',borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},rankNumber:{width:28,color:colors.textMuted,fontSize:14,fontWeight:'800',textAlign:'center',marginRight:8},rankNumberTop:{color:colors.mint700,fontSize:18},rankingBody:{flex:1,marginLeft:12},rankingName:{color:colors.text,fontSize:14,fontWeight:'800'},rankingDesc:{color:colors.textMuted,fontSize:10,marginTop:5},rankingCount:{flexDirection:'row',alignItems:'center',gap:4,backgroundColor:colors.mint050,borderRadius:12,paddingHorizontal:9,paddingVertical:6},rankingCountText:{color:colors.mint700,fontSize:10,fontWeight:'800'},topSpaceSheet:{backgroundColor:'#FFF',borderTopLeftRadius:24,borderTopRightRadius:24,paddingHorizontal:20,paddingTop:10,paddingBottom:22,...shadows.floating},topSpaceTitleLine:{flexDirection:'row',alignItems:'center',gap:12},topSpaceIcon:{width:50,height:50,borderRadius:25,backgroundColor:colors.mint050,alignItems:'center',justifyContent:'center'},topSpaceTitle:{color:colors.text,fontSize:17,fontWeight:'800'},topSpaceBody:{color:colors.textMuted,fontSize:10,lineHeight:15,marginTop:4},topSpaceStats:{flexDirection:'row',justifyContent:'space-around',backgroundColor:colors.gray050,borderRadius:15,paddingVertical:13,marginTop:16},topSpaceStatLabel:{color:colors.textMuted,fontSize:9,textAlign:'center'},topSpaceStatValue:{color:colors.text,fontSize:14,fontWeight:'800',textAlign:'center',marginTop:5},packageLabel:{color:colors.text,fontSize:11,fontWeight:'800',marginTop:17,marginBottom:9},packageGrid:{flexDirection:'row',flexWrap:'wrap',justifyContent:'space-between',rowGap:8},packageOption:{width:'24%',minHeight:54,borderRadius:12,backgroundColor:colors.gray050,borderWidth:1,borderColor:colors.border,alignItems:'center',justifyContent:'center'},packageOptionActive:{backgroundColor:colors.mint050,borderColor:colors.mint600},packagePoints:{color:colors.textSubtle,fontSize:11,fontWeight:'800'},packageDuration:{color:colors.textMuted,fontSize:9,marginTop:4},packageTextActive:{color:colors.mint700},topSpaceResult:{color:colors.mint700,fontSize:10,fontWeight:'700',textAlign:'center',marginTop:11},topSpaceError:{color:colors.pink600},topSpaceButton:{height:48,borderRadius:14,overflow:'hidden',marginTop:13},topSpaceButtonGradient:{flex:1,alignItems:'center',justifyContent:'center'},
   uploadImage:{width:'100%',height:'100%',borderRadius:18,resizeMode:'cover'},
   uploadRound:{width:108,height:108,borderRadius:54,alignSelf:'center',alignItems:'center',justifyContent:'center',backgroundColor:'#FFF',borderWidth:1,borderColor:colors.border,overflow:'hidden',marginBottom:10,...shadows.tiny},
@@ -2216,7 +2439,7 @@ const s=StyleSheet.create({
   detailMemberGrid:{flexDirection:'row',flexWrap:'wrap',paddingHorizontal:14,paddingBottom:26},detailMemberItem:{width:'33.333%',alignItems:'center',paddingVertical:12},detailMemberAvatar:{position:'relative'},detailMemberNameLine:{minHeight:22,justifyContent:'center'},unreadMarker:{flexDirection:'row',alignItems:'center',gap:10,marginVertical:14,maxWidth:'100%'},unreadLine:{flex:1,height:1,backgroundColor:'#D7DDD9'},unreadText:{color:colors.textMuted,fontSize:10,fontWeight:'400'},
   storyAuthor:{flexDirection:'row',alignItems:'center',gap:14},storyAuthorName:{color:colors.text,fontSize:12,fontWeight:'800'},storyComment:{flexDirection:'row',gap:9,backgroundColor:colors.gray050,borderRadius:13,padding:11,marginTop:14},storyCommentName:{color:colors.text,fontSize:10,fontWeight:'800',marginRight:4},storyCommentTime:{color:colors.textMuted,fontSize:10,fontWeight:'400'},storyCommentBody:{color:colors.textSubtle,fontSize:14,lineHeight:21,marginTop:4},storyFab:{position:'absolute',right:20,bottom:22,width:52,height:52,borderRadius:26,...shadows.floating},memberManage:{width:42,height:42,alignItems:'center',justifyContent:'center'},
   storyChatButton:{position:'absolute',left:20,right:84,bottom:22,height:52,borderRadius:16,backgroundColor:colors.mint600,alignItems:'center',justifyContent:'center',...shadows.floating},
-  storyDetailHeader:{height:58,flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:8},storyDetailHeaderTitle:{color:'#FFF',fontSize:16,fontWeight:'700'},storyHeaderRight:{minWidth:44,flexDirection:'row',justifyContent:'flex-end'},storyHeaderAction:{width:44,height:44,alignItems:'center',justifyContent:'center'},storyMenuLayer:{...StyleSheet.absoluteFill,zIndex:70},storyHeaderMenu:{position:'absolute',top:58,right:12,zIndex:40},storyHeaderMenuList:{minWidth:144,backgroundColor:'#FFF',borderRadius:16,paddingVertical:6,borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border,...shadows.floating},storyHeaderMenuRow:{minHeight:42,justifyContent:'center',paddingHorizontal:14},storyHeaderMenuText:{color:colors.text,fontSize:12,fontWeight:'500'},storyDetail:{padding:20,paddingBottom:100},storyDetailTitle:{color:colors.text,fontSize:19,fontWeight:'700',lineHeight:25,marginBottom:24},storyLinkedRoom:{flexDirection:'row',alignItems:'center',gap:11,backgroundColor:'#FFF',borderRadius:15,padding:11,marginTop:18,marginBottom:24},storyLinkedLabel:{color:colors.textMuted,fontSize:8},storyLinkedName:{color:colors.textSubtle,fontSize:10,fontWeight:'400',marginTop:2},storyDetailText:{color:colors.text,fontSize:15,lineHeight:25,marginTop:18,marginBottom:18},storyDetailImage:{width:'100%',height:260,borderRadius:16,backgroundColor:colors.gray100,marginBottom:20},commentSection:{borderTopWidth:StyleSheet.hairlineWidth,borderTopColor:colors.border,paddingTop:20,marginTop:12},commentCount:{color:colors.text,fontSize:14,fontWeight:'800',marginBottom:8},commentMetaLine:{flexDirection:'row',alignItems:'center',gap:18},storyDetailComment:{flexDirection:'row',gap:12,paddingVertical:12,borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},commentComposer:{minHeight:66,flexDirection:'row',alignItems:'center',gap:9,paddingHorizontal:14,paddingVertical:10,backgroundColor:'#FFF',borderTopWidth:StyleSheet.hairlineWidth,borderTopColor:colors.border},commentInput:{flex:1,height:44,borderRadius:22,backgroundColor:colors.gray050,paddingHorizontal:16,color:colors.text,fontSize:13},commentSend:{width:42,height:42,borderRadius:21,backgroundColor:colors.mint600,alignItems:'center',justifyContent:'center'},
+  storyDetailHeader:{height:58,flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:8},storyDetailHeaderTitle:{color:'#FFF',fontSize:16,fontWeight:'700'},storyHeaderRight:{minWidth:44,flexDirection:'row',justifyContent:'flex-end'},storyHeaderAction:{width:44,height:44,alignItems:'center',justifyContent:'center'},storyMenuLayer:{...StyleSheet.absoluteFill,zIndex:70},storyHeaderMenu:{position:'absolute',top:58,right:12,zIndex:40},storyHeaderMenuList:{minWidth:144,backgroundColor:'#FFF',borderRadius:16,paddingVertical:6,borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border,...shadows.floating},storyHeaderMenuRow:{minHeight:42,justifyContent:'center',paddingHorizontal:14},storyHeaderMenuText:{color:colors.text,fontSize:12,fontWeight:'500'},storyDetail:{padding:20,paddingBottom:100},storyDetailTitle:{color:colors.text,fontSize:19,fontWeight:'700',lineHeight:25,marginBottom:24},storyLinkedRoom:{flexDirection:'row',alignItems:'center',gap:11,backgroundColor:'#FFF',borderRadius:15,padding:11,marginTop:18,marginBottom:24},storyLinkedLabel:{color:colors.textMuted,fontSize:8},storyLinkedName:{color:colors.textSubtle,fontSize:10,fontWeight:'400',marginTop:2},storyDetailText:{color:colors.text,fontSize:15,lineHeight:25,marginTop:18,marginBottom:18},storyDetailImage:{width:'100%',height:260,borderRadius:16,backgroundColor:colors.gray100,marginBottom:20},commentSection:{borderTopWidth:StyleSheet.hairlineWidth,borderTopColor:colors.border,paddingTop:20,marginTop:12},commentCount:{color:colors.text,fontSize:14,fontWeight:'800',marginBottom:8},commentMetaLine:{flexDirection:'row',alignItems:'center',gap:18},storyDetailComment:{flexDirection:'row',gap:12,paddingVertical:12,borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:colors.border},commentComposer:{minHeight:66,flexDirection:'row',alignItems:'center',gap:9,paddingHorizontal:14,paddingTop:10,paddingBottom:10+IOS_BOTTOM_SAFE_PADDING,backgroundColor:'#FFF',borderTopWidth:StyleSheet.hairlineWidth,borderTopColor:colors.border},commentInput:{flex:1,height:44,borderRadius:22,backgroundColor:colors.gray050,paddingHorizontal:16,color:colors.text,fontSize:13},commentSend:{width:42,height:42,borderRadius:21,backgroundColor:colors.mint600,alignItems:'center',justifyContent:'center'},
   storyEditor:{padding:20,paddingBottom:60},storyTitleInput:{height:50,borderBottomWidth:1,borderBottomColor:colors.border,color:colors.text,fontSize:19,fontWeight:'800',marginBottom:18},storyEditorVisibility:{flexDirection:'row',gap:8,marginTop:18,marginBottom:12},storyBlockInput:{minHeight:180,color:colors.text,fontSize:15,lineHeight:24,textAlignVertical:'top',paddingVertical:18},storyEditorImageWrap:{position:'relative',marginVertical:10},storyEditorImage:{width:'100%',height:250,borderRadius:15,backgroundColor:colors.gray100},storyImageRemove:{position:'absolute',right:10,top:10,width:30,height:30,borderRadius:15,backgroundColor:'rgba(0,0,0,.5)',alignItems:'center',justifyContent:'center'},storyInsertRow:{flexDirection:'row',gap:9,marginVertical:18},storyInsert:{flex:1,height:48,borderRadius:13,backgroundColor:colors.mint050,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:7},storyInsertText:{color:colors.mint700,fontSize:12,fontWeight:'700'},storyEditorToolbar:{height:54,flexDirection:'row',alignItems:'center',gap:8,borderTopWidth:StyleSheet.hairlineWidth,borderTopColor:colors.border,marginTop:16},storyToolbarButton:{width:40,height:40,borderRadius:20,alignItems:'center',justifyContent:'center',backgroundColor:colors.gray050},storyEditorCancel:{height:38,paddingHorizontal:13,alignItems:'center',justifyContent:'center'},storyEditorCancelText:{color:colors.textMuted,fontSize:12,fontWeight:'700'},storyEditorSubmit:{height:38,borderRadius:12,backgroundColor:colors.mint600,paddingHorizontal:16,alignItems:'center',justifyContent:'center'},
   memberProfilePage:{alignItems:'center',padding:28},memberProfileNameLine:{flexDirection:'row',alignItems:'center',gap:8,marginTop:15},memberProfileName:{color:colors.text,fontSize:20,fontWeight:'800'},memberProfileRoom:{color:colors.textMuted,fontSize:10,marginTop:7},memberProfileCard:{alignSelf:'stretch',backgroundColor:'#FFF',borderRadius:18,padding:18,marginTop:26,borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border,...shadows.tiny},memberProfileLabel:{color:colors.textMuted,fontSize:10,fontWeight:'700'},memberProfileIntro:{color:colors.text,fontSize:13,lineHeight:20,marginTop:9},
   overviewPage:{paddingBottom:40},overviewIntro:{padding:20,backgroundColor:'#FFF'},overviewSection:{color:colors.text,fontSize:16,fontWeight:'800',paddingHorizontal:20,paddingTop:22,paddingBottom:10},overviewStory:{backgroundColor:'#FFF',borderRadius:17,padding:16,marginHorizontal:16,marginBottom:10,borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border},
@@ -2225,14 +2448,14 @@ const s=StyleSheet.create({
   capacityLine:{flexDirection:'row',alignItems:'center',gap:8,marginBottom:10},
   capacityHintInline:{color:colors.textMuted,fontSize:11},
   deleteRoomLink:{alignSelf:'flex-end',marginTop:20,marginRight:10,padding:8},deleteRoomText:{color:colors.mint700,fontSize:10,fontWeight:'700',textDecorationLine:'underline'},drawerNoticeRead:{backgroundColor:colors.gray050},notifIconRead:{backgroundColor:colors.gray100},notifTitleRead:{color:colors.textMuted},confirmLayer:{...StyleSheet.absoluteFill,backgroundColor:'rgba(20,23,22,.24)',alignItems:'center',justifyContent:'center',padding:24},confirmCard:{width:'100%',backgroundColor:'#FFF',borderRadius:20,padding:20,...shadows.floating},confirmTitle:{color:colors.text,fontSize:15,fontWeight:'800',textAlign:'center'},confirmActions:{flexDirection:'row',gap:9,marginTop:20},confirmCancel:{flex:1,height:44,borderRadius:12,backgroundColor:colors.gray100,alignItems:'center',justifyContent:'center'},confirmCancelText:{color:colors.textSubtle,fontSize:12,fontWeight:'700'},confirmAccept:{flex:1,height:44,borderRadius:12,overflow:'hidden'},confirmAcceptGradient:{flex:1,alignItems:'center',justifyContent:'center'},
-  toast:{position:'absolute',left:24,right:24,bottom:90,minHeight:44,borderRadius:14,backgroundColor:'rgba(35,39,37,.9)',alignItems:'center',justifyContent:'center',paddingHorizontal:16,zIndex:80,...shadows.floating},toastText:{color:'#FFF',fontSize:11,fontWeight:'700',textAlign:'center'},photoViewer:{...StyleSheet.absoluteFill,zIndex:80,alignItems:'center',justifyContent:'center'},photoViewerDim:{...StyleSheet.absoluteFill,backgroundColor:'rgba(15,17,16,.82)'},photoViewerImage:{width:280,height:280,borderRadius:22,resizeMode:'cover'},photoViewerClose:{position:'absolute',right:22,top:22,width:42,height:42,borderRadius:21,backgroundColor:'rgba(255,255,255,.16)',alignItems:'center',justifyContent:'center'},
+  toast:{position:'absolute',left:24,right:24,bottom:90,minHeight:44,borderRadius:14,backgroundColor:'rgba(35,39,37,.9)',alignItems:'center',justifyContent:'center',paddingHorizontal:16,zIndex:80},toastText:{color:'#FFF',fontSize:11,fontWeight:'700',textAlign:'center'},photoViewer:{...StyleSheet.absoluteFill,zIndex:80,alignItems:'center',justifyContent:'center'},photoViewerDim:{...StyleSheet.absoluteFill,backgroundColor:'rgba(15,17,16,.82)'},photoViewerImage:{width:280,height:280,borderRadius:22,resizeMode:'cover'},photoViewerClose:{position:'absolute',right:22,top:22,width:42,height:42,borderRadius:21,backgroundColor:'rgba(255,255,255,.16)',alignItems:'center',justifyContent:'center'},
   photoViewerExpandedImage:{width:'100%',height:'100%'},
   photoViewerCloseLeft:{position:'absolute',left:18,top:56,width:42,height:42,borderRadius:21,backgroundColor:'rgba(255,255,255,.16)',alignItems:'center',justifyContent:'center'},
   photoViewerMore:{position:'absolute',right:18,top:56,width:42,height:42,borderRadius:21,backgroundColor:'rgba(255,255,255,.16)',alignItems:'center',justifyContent:'center'},
   photoViewerMenu:{position:'absolute',right:18,top:106,minWidth:132,backgroundColor:'#FFF',borderRadius:16,paddingVertical:6,borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border,...shadows.floating},
   photoViewerMenuItem:{minHeight:42,justifyContent:'center',paddingHorizontal:14},
   photoViewerMenuText:{color:colors.text,fontSize:12,fontWeight:'500'},
-  joinSubmitStatus:{flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,marginTop:20},joinSubmitStatusText:{color:colors.textMuted,fontSize:11},joinSubmitError:{color:colors.pink600,fontSize:11,lineHeight:17,textAlign:'center',marginTop:18},joinSuccessToast:{position:'absolute',left:20,right:20,bottom:92,minHeight:52,borderRadius:16,backgroundColor:'rgba(35,39,37,.94)',flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,paddingHorizontal:16,zIndex:200,elevation:20,...shadows.floating},
+  joinSubmitStatus:{flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,marginTop:20},joinSubmitStatusText:{color:colors.textMuted,fontSize:11},joinSubmitError:{color:colors.pink600,fontSize:11,lineHeight:17,textAlign:'center',marginTop:18},joinSuccessToast:{position:'absolute',left:20,right:20,bottom:92,minHeight:52,borderRadius:16,backgroundColor:'rgba(35,39,37,.94)',flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,paddingHorizontal:16,zIndex:200,elevation:20},
   profileMenuGroup:{backgroundColor:'#FFF',borderRadius:18,paddingHorizontal:14,marginTop:14,borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border},profileMenu:{minHeight:55,flexDirection:'row',alignItems:'center',gap:11},menuTrailing:{marginLeft:'auto',alignSelf:'stretch',minWidth:44,alignItems:'flex-end',justifyContent:'center'},
   defaultRoomImage:{backgroundColor:'#E9ECEA',borderWidth:StyleSheet.hairlineWidth,borderColor:colors.border},
   adultBlurMask:{...StyleSheet.absoluteFill,backgroundColor:'rgba(255,255,255,.38)'},
@@ -2285,7 +2508,8 @@ const s=StyleSheet.create({
   customColorDot:{backgroundColor:'#FFF',borderStyle:'dashed',borderColor:colors.gray300},
   pinFieldWrap:{marginTop:16},
   regionFieldWrap:{marginTop:16},
-  customColorSheet:{marginHorizontal:18,maxHeight:'86%',borderRadius:24,backgroundColor:'#FFF',padding:18,...shadows.floating},
+  customColorCenter:{flex:1,justifyContent:'center',paddingHorizontal:18,paddingVertical:24},
+  customColorSheet:{alignSelf:'center',width:'100%',maxWidth:390,maxHeight:'86%',borderRadius:24,backgroundColor:'#FFF',padding:18,...shadows.floating},
   customColorTitle:{color:colors.text,fontSize:17,fontWeight:'800',textAlign:'center',marginBottom:14},
   customPickerRoot:{gap:16},
   customPickerTopRow:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:16},
@@ -2301,6 +2525,6 @@ const s=StyleSheet.create({
   newMessagePreview:{position:'absolute',left:22,right:22,bottom:126,minHeight:38,borderRadius:19,backgroundColor:'rgba(35,39,37,.92)',flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,paddingHorizontal:14,zIndex:30,...shadows.floating},
   newMessagePreviewText:{flex:1,color:'#FFF',fontSize:12,fontWeight:'700',textAlign:'center'},
   roomRowTop:{backgroundColor:'#F4FBF7'},
-  topInlineLabel:{position:'absolute',left:14,top:8,color:colors.mint700,fontSize:10,fontWeight:'600'},
+  topInlineLabel:{position:'absolute',left:14,top:8,color:colors.mint700,fontSize:9,fontWeight:'700'},
   edgeBackLayer:{position:'absolute',left:0,top:0,bottom:0,width:32,zIndex:120},
 });

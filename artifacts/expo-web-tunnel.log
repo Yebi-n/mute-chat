@@ -615,3 +615,45 @@ Import stack:
 
 Tunnel connected.
 Tunnel connected.
+Web Bundling failed 2030ms index.ts (1 module)
+Unable to resolve "./init" from "node_modules\react-native-gesture-handler\lib\module\index.js"
+[0m [90m 2 |[39m
+ [90m 3 |[39m [36mimport[39m [32m'./globals'[39m[33m;[39m
+[31m[1m>[22m[39m[90m 4 |[39m [36mimport[39m { initialize } [36mfrom[39m [32m'./init'[39m[33m;[39m
+ [90m   |[39m                             [31m[1m^[22m[39m
+ [90m 5 |[39m [36mexport[39m { [33mLegacyBaseButton[39m[33m,[39m [33mLegacyBorderlessButton[39m[33m,[39m [33mLegacyRawButton[39m[33m,[39m [33mLegacyRectButton[39m } [36mfrom[39m [32m'./components/GestureButtons'[39m[33m;[39m
+ [90m 6 |[39m [36mexport[39m { [33mLegacyDrawerLayoutAndroid[39m[33m,[39m [33mLegacyFlatList[39m[33m,[39m [33mLegacyRefreshControl[39m[33m,[39m [33mLegacyScrollView[39m[33m,[39m [33mLegacySwitch[39m[33m,[39m [33mLegacyTextInput[39m } [36mfrom[39m [32m'./components/GestureComponents'[39m[33m;[39m
+ [90m 7 |[39m [36mexport[39m { [36mdefault[39m [36mas[39m [33mGestureHandlerRootView[39m } [36mfrom[39m [32m'./components/GestureHandlerRootView'[39m[33m;[39m[0m
+
+Import stack:
+
+ node_modules\react-native-gesture-handler\lib\module\index.js
+ | import "./init"
+
+ index.ts
+ | import "react-native-gesture-handler"
+
+ 
+ | import "./index.ts"
+
+Web Bundling failed 388ms index.ts (1 module)
+Unable to resolve "./init" from "node_modules\react-native-gesture-handler\lib\module\index.js"
+[0m [90m 2 |[39m
+ [90m 3 |[39m [36mimport[39m [32m'./globals'[39m[33m;[39m
+[31m[1m>[22m[39m[90m 4 |[39m [36mimport[39m { initialize } [36mfrom[39m [32m'./init'[39m[33m;[39m
+ [90m   |[39m                             [31m[1m^[22m[39m
+ [90m 5 |[39m [36mexport[39m { [33mLegacyBaseButton[39m[33m,[39m [33mLegacyBorderlessButton[39m[33m,[39m [33mLegacyRawButton[39m[33m,[39m [33mLegacyRectButton[39m } [36mfrom[39m [32m'./components/GestureButtons'[39m[33m;[39m
+ [90m 6 |[39m [36mexport[39m { [33mLegacyDrawerLayoutAndroid[39m[33m,[39m [33mLegacyFlatList[39m[33m,[39m [33mLegacyRefreshControl[39m[33m,[39m [33mLegacyScrollView[39m[33m,[39m [33mLegacySwitch[39m[33m,[39m [33mLegacyTextInput[39m } [36mfrom[39m [32m'./components/GestureComponents'[39m[33m;[39m
+ [90m 7 |[39m [36mexport[39m { [36mdefault[39m [36mas[39m [33mGestureHandlerRootView[39m } [36mfrom[39m [32m'./components/GestureHandlerRootView'[39m[33m;[39m[0m
+
+Import stack:
+
+ node_modules\react-native-gesture-handler\lib\module\index.js
+ | import "./init"
+
+ index.ts
+ | import "react-native-gesture-handler"
+
+ 
+ | import "./index.ts"
+

@@ -29,6 +29,7 @@ export type ServerRoomMember = {
   intro: string;
   role: 'owner' | 'cohost' | 'member';
   avatarUrl?: string;
+  mutedUntil?: string | null;
 };
 
 function requireClient() {
@@ -84,7 +85,11 @@ export async function listRooms() {
 
 export async function listRoomMembers(roomId: string) {
   const client = requireClient();
-  const [{ data: membershipRows, error: membershipError }, { data: profileRows, error: profileError }] = await Promise.all([
+  const [
+    { data: membershipRows, error: membershipError },
+    { data: profileRows, error: profileError },
+    { data: muteRows, error: muteError },
+  ] = await Promise.all([
     client
       .from('room_memberships')
       .select('user_id,role')
@@ -94,9 +99,16 @@ export async function listRoomMembers(roomId: string) {
       .from('room_profiles')
       .select('user_id,display_name,introduction,avatar_asset_path')
       .eq('room_id', roomId),
+    client
+      .from('room_member_mutes')
+      .select('user_id,muted_until')
+      .eq('room_id', roomId)
+      .is('cleared_at', null)
+      .gt('muted_until', new Date().toISOString()),
   ]);
   if (membershipError) throw membershipError;
   if (profileError) throw profileError;
+  if (muteError) throw muteError;
 
   const avatarPaths = (profileRows ?? [])
     .map((row) => row.avatar_asset_path as string | null)
@@ -122,6 +134,9 @@ export async function listRoomMembers(roomId: string) {
       },
     ]),
   );
+  const mutedUntilByUserId = new Map(
+    (muteRows ?? []).map((row) => [row.user_id as string, row.muted_until as string]),
+  );
 
   return (membershipRows ?? []).map((row) => {
     const profile = profileByUserId.get(row.user_id as string);
@@ -131,6 +146,7 @@ export async function listRoomMembers(roomId: string) {
       name: profile?.name ?? '멤버',
       intro: profile?.intro ?? '',
       avatarUrl: profile?.avatarUrl,
+      mutedUntil: mutedUntilByUserId.get(row.user_id as string) ?? null,
     } satisfies ServerRoomMember;
   });
 }

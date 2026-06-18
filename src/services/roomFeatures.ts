@@ -87,3 +87,21 @@ export async function transferRoomOwnership(roomId: string, userId: string) {
   });
   if (error) throw error;
 }
+
+export async function setRoomMemberMute(roomId: string, userId: string, durationSeconds: number) {
+  const { data, error } = await requireClient().rpc('set_room_member_mute', {
+    p_room_id: roomId,
+    p_target_user_id: userId,
+    p_duration_seconds: durationSeconds,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
+export async function clearRoomMemberMute(roomId: string, userId: string) {
+  const { error } = await requireClient().rpc('clear_room_member_mute', {
+    p_room_id: roomId,
+    p_target_user_id: userId,
+  });
+  if (error) throw error;
+}
