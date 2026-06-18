@@ -1,0 +1,617 @@
+env: load .env
+env: export EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY EXPO_PUBLIC_SUPABASE_URL
+Starting project at C:\Users\trudy\mute-chat
+Starting Metro Bundler
+
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+Tunnel connected.
+Tunnel ready.
+Waiting on http://localhost:8083
+An update for expo is available: 56.0.11 → ~56.0.12
+4 other packages may need updating. Run npx expo install --check for details.
+Logs for your project will appear below.
+Web Bundled 6603ms index.ts (615 modules)
+Web Bundled 4356ms index.ts (600 modules)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  WARN  [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  An error occurred in the <ChatRoom> component.
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries.
+Web  ERROR  [TypeError: Image.default.resolveAssetSource is not a function] 
+
+Code: App.tsx
+[0m [90m  997 |[39m   [36mconst[39m [pendingJoinRequests[33m,[39msetPendingJoinRequests][33m=[39museState[33m<[39m{id[33m:[39mstring[33m;[39mname[33m:[39mstring}[][33m>[39m([])[33m;[39m
+ [90m  998 |[39m   [36mconst[39m [roomSystemMessages[33m,[39msetRoomSystemMessages][33m=[39museState[33m<[39m[33mChatMessage[39m[][33m>[39m([])[33m;[39m
+[31m[1m>[22m[39m[90m  999 |[39m   [36mconst[39m demoImageUri[33m=[39m[33mImage[39m[33m.[39mresolveAssetSource(require([32m'./assets/default-profile.png'[39m))[33m.[39muri[33m;[39m
+ [90m      |[39m                            [31m[1m^[22m[39m
+ [90m 1000 |[39m   [36mconst[39m [messages[33m,[39m setMessages] [33m=[39m useState[33m<[39m[33mChatMessage[39m[][33m>[39m([
+ [90m 1001 |[39m     { id[33m:[39m [32m'1'[39m[33m,[39m kind[33m:[39m [32m'text'[39m[33m,[39m mine[33m:[39m [36mfalse[39m[33m,[39m name[33m:[39m [32m'초록윤'[39m[33m,[39m text[33m:[39m [32m'오늘 저녁 산책할 사람 있나요?'[39m[33m,[39m time[33m:[39m [32m'오후 9:21'[39m }[33m,[39m
+ [90m 1002 |[39m     { id[33m:[39m [32m'2'[39m[33m,[39m kind[33m:[39m [32m'text'[39m[33m,[39m mine[33m:[39m [36mfalse[39m[33m,[39m name[33m:[39m [32m'초록윤'[39m[33m,[39m text[33m:[39m [32m'날씨가 좋아서 천천히 걸으면 좋겠어요. 산책 코스는 지난번에 갔던 공원 입구에서 시작해서 강변을 따라 천천히 걷고, 중간에 편의점 앞 벤치에서 잠깐 쉬었다가 돌아오는 방향이면 좋을 것 같아요. 늦게 합류하는 분도 찾기 쉽도록 출발 전에 위치를 한 번 더 공유할게요.'[39m[33m,[39m time[33m:[39m [32m'오후 9:22'[39m }[33m,[39m[0m
+Call Stack
+  ChatRoom (App.tsx:999:28) 
+
+Code: App.tsx
+[0m [90m 374 |[39m     [36mreturn[39m [32m`${selectedRoom.name}에 가입 신청을 보냈습니다.`[39m[33m;[39m
+ [90m 375 |[39m   }} [33m/[39m[33m>[39m[33m;[39m
+[31m[1m>[22m[39m[90m 376 |[39m   [36mif[39m (screen [33m===[39m [32m'chat'[39m) [36mreturn[39m [33m<[39m[33mChatRoom[39m room[33m=[39m{selectedRoom} readOnly[33m=[39m{effectiveAdminReadOnly} isKnownOwner[33m=[39m{ownedRoomIds[33m.[39mincludes(selectedRoom[33m.[39mid)} isSuperAdmin[33m=[39m{isSuperAdmin} onAdminReportUser[33m=[39m{(id[33m,[39mlabel)[33m=>[39madminReport([32m'user'[39m[33m,[39mid[33m,[39mlabel)} initialPanel[33m=[39m{chatInitialPanel} points[33m=[39m{points} topSpaceExpiresAt[33m=[39m{topSpaceExpiresAt[selectedRoom[33m.[39mid]} topSpaceRemaining[33m=[39m{formatTopSpaceRemaining(topSpaceExpiresAt[selectedRoom[33m.[39mid][33m,[39mnow)} onBoost[33m=[39m{(option)[33m=>[39mboostRoom(selectedRoom[33m,[39moption)} onBack[33m=[39m{() [33m=>[39m {setChatInitialPanel([36mnull[39m)[33m;[39msetScreen([32m'main'[39m)[33m;[39m}} [33m/[39m[33m>[39m[33m;[39m
+ [90m     |[39m                                 [31m[1m^[22m[39m
+ [90m 377 |[39m   [36mif[39m (screen [33m===[39m [32m'settings'[39m) [36mreturn[39m [33m<[39m[33mSettings[39m adultVerified[33m=[39m{adultVerified} isSuperAdmin[33m=[39m{isSuperAdmin} onAdultVerification[33m=[39m{()[33m=>[39msetScreen([32m'adultVerification'[39m)} onBack[33m=[39m{() [33m=>[39m setScreen([32m'main'[39m)} onSignedOut[33m=[39m{onSignedOut} [33m/[39m[33m>[39m[33m;[39m
+ [90m 378 |[39m   [36mif[39m (screen [33m===[39m [32m'adultVerification'[39m) [36mreturn[39m [33m<[39m[33mAdultVerificationScreen[39m verified[33m=[39m{adultVerified} onBack[33m=[39m{()[33m=>[39msetScreen([32m'settings'[39m)} onRefresh[33m=[39m{[36masync[39m()[33m=>[39m{[36mconst[39m status[33m=[39m[36mawait[39m getVerificationStatus()[33m;[39msetAdultVerified(status[33m.[39madultVerified)[33m;[39m[36mreturn[39m status[33m.[39madultVerified[33m;[39m}}[33m/[39m[33m>[39m[33m;[39m
+ [90m 379 |[39m   [36mif[39m (screen [33m===[39m [32m'create'[39m) [36mreturn[39m [33m<[39m[33mCreateRoom[39m adultVerified[33m=[39m{adultVerified} onBack[33m=[39m{() [33m=>[39m setScreen([32m'main'[39m)} onCreated[33m=[39m{(room) [33m=>[39m {[0m
+Call Stack
+  AuthenticatedApp (App.tsx:376:33)
+  App (App.tsx:203:10)
+Web Bundled 35ms index.ts (1 module)
+Web Bundled 23ms index.ts (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  WARN  [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  Animated: `useNativeDriver` is not supported because the native animated module is missing. Falling back to JS-based animation. To resolve this, add `RCTAnimation` module to this app, or remove `useNativeDriver`. Make sure to run `bundle exec pod install` first. Read more about autolinking: https://github.com/react-native-community/cli/blob/master/docs/autolinking.md
+Web Bundled 17ms index.ts (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  WARN  [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web Bundled 19ms index.ts (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  WARN  [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  Animated: `useNativeDriver` is not supported because the native animated module is missing. Falling back to JS-based animation. To resolve this, add `RCTAnimation` module to this app, or remove `useNativeDriver`. Make sure to run `bundle exec pod install` first. Read more about autolinking: https://github.com/react-native-community/cli/blob/master/docs/autolinking.md
+Web Bundled 29ms index.ts (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  WARN  [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  Animated: `useNativeDriver` is not supported because the native animated module is missing. Falling back to JS-based animation. To resolve this, add `RCTAnimation` module to this app, or remove `useNativeDriver`. Make sure to run `bundle exec pod install` first. Read more about autolinking: https://github.com/react-native-community/cli/blob/master/docs/autolinking.md
+ ERROR  SyntaxError: C:\Users\trudy\mute-chat\App.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (1638:1395)
+
+  1636 |     }catch(error){Alert.alert('구매 준비 필요',serverErrorMessage(error));}
+  1637 |   };
+> 1638 |   return <View style={s.colorLine}><View style={s.colorLabelLine}><Text style={s.colorLabel}>{label}</Text></View><View style={s.colorOptions}>{values.map((item,index)=><Pressable accessibilityLabel={`${item.name} ${item.price}원`} key={`${label}-${item.color}`} onPress={()=>choose(item,index)} style={[s.colorDot,{backgroundColor:item.color},selected===item.color&&s.colorDotActive]}>{selected===item.color&&<Ionicons name="checkmark" size={14} color={item.color==='#FFFFFF'?'#1C1C1C':'#FFF'}/>}</Pressable>)}{customEnabled&&<Pressable accessibilityLabel={`${label} 커스텀 색상`} onPress={()=>{setCustomSelection(selected);setCustomOpen(true);}} style={[s.colorDot,s.customColorDot]}><Ionicons name="add" size={15} color={colors.textMuted}/></Pressable>}</View>{customOpen&&<View style={s.sheetLayer}><Pressable accessibilityLabel="커스텀 색상 닫기" onPress={()=>setCustomOpen(false)} style={s.sheetDim}/><View style={s.customColorSheet}><View style={s.sheetHandle}/><Text style={s.customColorTitle}>커스텀 색상 선택</Text><View style={[s.customColorPreview,{backgroundColor:customSelection}]}/><View style={s.customSwatchGrid}>{CUSTOM_COLOR_SWATCHES.map((color)=><Pressable key={`${label}-${color}`} onPress={()=>setCustomSelection(color)} style={[s.customSwatch,{backgroundColor:color},customSelection===color&&s.customSwatchActive]}>{customSelection===color&&<Ionicons name="checkmark" size={13} color="#FFF"/></Pressable>)}</View><View style={s.customColorActions}><Pressable onPress={()=>setCustomOpen(false)} style={s.pointSendCancel}><Text style={s.pointSendCancelText}>취소</Text></Pressable><Pressable onPress={completeCustomPurchase} style={s.pointSendButton}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.pointSendGradient}><Text style={s.primaryText}>3,200원 결제</Text></LinearGradient></Pressable></View></View></View>}</View>;
+       |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ^
+  1639 | }
+  1640 | function TopSpaceSheet({open,room,points,result,onClose,onBoost}:{open:boolean;room:Room;points:number;expiresAt?:number;remaining:string;result:'success'|'shortage'|null;onClose:()=>void;onBoost:(option:TopSpacePackage)=>Promise<void>}){
+  1641 |   const [selected,setSelected]=useState(TOP_SPACE_PACKAGES[0]);
+    at constructor (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:365:19)
+    at TypeScriptParserMixin.raise (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:6616:19)
+    at TypeScriptParserMixin.jsxParseElementAt (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4754:18)
+    at TypeScriptParserMixin.jsxParseElement (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4761:17)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4771:19)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOpBaseRightExpr (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11003:34)
+    at TypeScriptParserMixin.parseExprOpRightExpr (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10998:21)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10964:27)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9323:18)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10970:21)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9323:18)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10925:17)
+    at TypeScriptParserMixin.parseMaybeConditional (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10898:23)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10848:21)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9803:20)
+    at TypeScriptParserMixin.parseExpressionBase (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10801:23)
+    at C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10797:39
+    at TypeScriptParserMixin.allowInAnd (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12443:12)
+    at TypeScriptParserMixin.parseExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10797:17)
+    at TypeScriptParserMixin.jsxParseExpressionContainer (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4644:31)
+    at TypeScriptParserMixin.jsxParseElementAt (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4723:36)
+    at TypeScriptParserMixin.jsxParseElement (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4761:17)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4771:19)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10921:23)
+    at TypeScriptParserMixin.parseMaybeConditional (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10898:23)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10848:21)
+    at C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9792:39
+    at TypeScriptParserMixin.tryParse (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:6924:20)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9792:18)
+    at TypeScriptParserMixin.parseFunctionBody (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12110:24)
+    at TypeScriptParserMixin.parseArrowExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12092:10)
+    at TypeScriptParserMixin.parseParenAndDistinguishExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11704:12)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11348:23)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4776:20)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10921:23)
+Web  ERROR  [TransformError: SyntaxError: C:\Users\trudy\mute-chat\App.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (1638:1395)
+
+  1636 |     }catch(error){Alert.alert('구매 준비 필요',serverErrorMessage(error));}
+  1637 |   };
+> 1638 |   return <View style={s.colorLine}><View style={s.colorLabelLine}><Text style={s.colorLabel}>{label}</Text></View><View style={s.colorOptions}>{values.map((item,index)=><Pressable accessibilityLabel={`${item.name} ${item.price}원`} key={`${label}-${item.color}`} onPress={()=>choose(item,index)} style={[s.colorDot,{backgroundColor:item.color},selected===item.color&&s.colorDotActive]}>{selected===item.color&&<Ionicons name="checkmark" size={14} color={item.color==='#FFFFFF'?'#1C1C1C':'#FFF'}/>}</Pressable>)}{customEnabled&&<Pressable accessibilityLabel={`${label} 커스텀 색상`} onPress={()=>{setCustomSelection(selected);setCustomOpen(true);}} style={[s.colorDot,s.customColorDot]}><Ionicons name="add" size={15} color={colors.textMuted}/></Pressable>}</View>{customOpen&&<View style={s.sheetLayer}><Pressable accessibilityLabel="커스텀 색상 닫기" onPress={()=>setCustomOpen(false)} style={s.sheetDim}/><View style={s.customColorSheet}><View style={s.sheetHandle}/><Text style={s.customColorTitle}>커스텀 색상 선택</Text><View style={[s.customColorPreview,{backgroundColor:customSelection}]}/><View style={s.customSwatchGrid}>{CUSTOM_COLOR_SWATCHES.map((color)=><Pressable key={`${label}-${color}`} onPress={()=>setCustomSelection(color)} style={[s.customSwatch,{backgroundColor:color},customSelection===color&&s.customSwatchActive]}>{customSelection===color&&<Ionicons name="checkmark" size={13} color="#FFF"/></Pressable>)}</View><View style={s.customColorActions}><Pressable onPress={()=>setCustomOpen(false)} style={s.pointSendCancel}><Text style={s.pointSendCancelText}>취소</Text></Pressable><Pressable onPress={completeCustomPurchase} style={s.pointSendButton}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.pointSendGradient}><Text style={s.primaryText}>3,200원 결제</Text></LinearGradient></Pressable></View></View></View>}</View>;
+       |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ^
+  1639 | }
+  1640 | function TopSpaceSheet({open,room,points,result,onClose,onBoost}:{open:boolean;room:Room;points:number;expiresAt?:number;remaining:string;result:'success'|'shortage'|null;onClose:()=>void;onBoost:(option:TopSpacePackage)=>Promise<void>}){
+  1641 |   const [selected,setSelected]=useState(TOP_SPACE_PACKAGES[0]);]
+ ERROR  SyntaxError: C:\Users\trudy\mute-chat\App.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (1638:1395)
+
+  1636 |     }catch(error){Alert.alert('구매 준비 필요',serverErrorMessage(error));}
+  1637 |   };
+> 1638 |   return <View style={s.colorLine}><View style={s.colorLabelLine}><Text style={s.colorLabel}>{label}</Text></View><View style={s.colorOptions}>{values.map((item,index)=><Pressable accessibilityLabel={`${item.name} ${item.price}원`} key={`${label}-${item.color}`} onPress={()=>choose(item,index)} style={[s.colorDot,{backgroundColor:item.color},selected===item.color&&s.colorDotActive]}>{selected===item.color&&<Ionicons name="checkmark" size={14} color={item.color==='#FFFFFF'?'#1C1C1C':'#FFF'}/>}</Pressable>)}{customEnabled&&<Pressable accessibilityLabel={`${label} 커스텀 색상`} onPress={()=>{setCustomSelection(selected);setCustomOpen(true);}} style={[s.colorDot,s.customColorDot]}><Ionicons name="add" size={15} color={colors.textMuted}/></Pressable>}</View>{customOpen&&<View style={s.sheetLayer}><Pressable accessibilityLabel="커스텀 색상 닫기" onPress={()=>setCustomOpen(false)} style={s.sheetDim}/><View style={s.customColorSheet}><View style={s.sheetHandle}/><Text style={s.customColorTitle}>커스텀 색상 선택</Text><View style={[s.customColorPreview,{backgroundColor:customSelection}]}/><View style={s.customSwatchGrid}>{CUSTOM_COLOR_SWATCHES.map((color)=><Pressable key={`${label}-${color}`} onPress={()=>setCustomSelection(color)} style={[s.customSwatch,{backgroundColor:color},customSelection===color&&s.customSwatchActive]}>{customSelection===color&&<Ionicons name="checkmark" size={13} color="#FFF"/></Pressable>)}</View><View style={s.customColorActions}><Pressable onPress={()=>setCustomOpen(false)} style={s.pointSendCancel}><Text style={s.pointSendCancelText}>취소</Text></Pressable><Pressable onPress={completeCustomPurchase} style={s.pointSendButton}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.pointSendGradient}><Text style={s.primaryText}>3,200원 결제</Text></LinearGradient></Pressable></View></View></View>}</View>;
+       |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ^
+  1639 | }
+  1640 | function TopSpaceSheet({open,room,points,result,onClose,onBoost}:{open:boolean;room:Room;points:number;expiresAt?:number;remaining:string;result:'success'|'shortage'|null;onClose:()=>void;onBoost:(option:TopSpacePackage)=>Promise<void>}){
+  1641 |   const [selected,setSelected]=useState(TOP_SPACE_PACKAGES[0]);
+    at constructor (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:365:19)
+    at TypeScriptParserMixin.raise (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:6616:19)
+    at TypeScriptParserMixin.jsxParseElementAt (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4754:18)
+    at TypeScriptParserMixin.jsxParseElement (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4761:17)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4771:19)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOpBaseRightExpr (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11003:34)
+    at TypeScriptParserMixin.parseExprOpRightExpr (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10998:21)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10964:27)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9323:18)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10970:21)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9323:18)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10925:17)
+    at TypeScriptParserMixin.parseMaybeConditional (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10898:23)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10848:21)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9803:20)
+    at TypeScriptParserMixin.parseExpressionBase (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10801:23)
+    at C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10797:39
+    at TypeScriptParserMixin.allowInAnd (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12443:12)
+    at TypeScriptParserMixin.parseExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10797:17)
+    at TypeScriptParserMixin.jsxParseExpressionContainer (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4644:31)
+    at TypeScriptParserMixin.jsxParseElementAt (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4723:36)
+    at TypeScriptParserMixin.jsxParseElement (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4761:17)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4771:19)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10921:23)
+    at TypeScriptParserMixin.parseMaybeConditional (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10898:23)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10848:21)
+    at C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9792:39
+    at TypeScriptParserMixin.tryParse (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:6924:20)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9792:18)
+    at TypeScriptParserMixin.parseFunctionBody (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12110:24)
+    at TypeScriptParserMixin.parseArrowExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12092:10)
+    at TypeScriptParserMixin.parseParenAndDistinguishExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11704:12)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11348:23)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4776:20)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10921:23)
+Web  ERROR  [TransformError: SyntaxError: C:\Users\trudy\mute-chat\App.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (1638:1395)
+
+  1636 |     }catch(error){Alert.alert('구매 준비 필요',serverErrorMessage(error));}
+  1637 |   };
+> 1638 |   return <View style={s.colorLine}><View style={s.colorLabelLine}><Text style={s.colorLabel}>{label}</Text></View><View style={s.colorOptions}>{values.map((item,index)=><Pressable accessibilityLabel={`${item.name} ${item.price}원`} key={`${label}-${item.color}`} onPress={()=>choose(item,index)} style={[s.colorDot,{backgroundColor:item.color},selected===item.color&&s.colorDotActive]}>{selected===item.color&&<Ionicons name="checkmark" size={14} color={item.color==='#FFFFFF'?'#1C1C1C':'#FFF'}/>}</Pressable>)}{customEnabled&&<Pressable accessibilityLabel={`${label} 커스텀 색상`} onPress={()=>{setCustomSelection(selected);setCustomOpen(true);}} style={[s.colorDot,s.customColorDot]}><Ionicons name="add" size={15} color={colors.textMuted}/></Pressable>}</View>{customOpen&&<View style={s.sheetLayer}><Pressable accessibilityLabel="커스텀 색상 닫기" onPress={()=>setCustomOpen(false)} style={s.sheetDim}/><View style={s.customColorSheet}><View style={s.sheetHandle}/><Text style={s.customColorTitle}>커스텀 색상 선택</Text><View style={[s.customColorPreview,{backgroundColor:customSelection}]}/><View style={s.customSwatchGrid}>{CUSTOM_COLOR_SWATCHES.map((color)=><Pressable key={`${label}-${color}`} onPress={()=>setCustomSelection(color)} style={[s.customSwatch,{backgroundColor:color},customSelection===color&&s.customSwatchActive]}>{customSelection===color&&<Ionicons name="checkmark" size={13} color="#FFF"/></Pressable>)}</View><View style={s.customColorActions}><Pressable onPress={()=>setCustomOpen(false)} style={s.pointSendCancel}><Text style={s.pointSendCancelText}>취소</Text></Pressable><Pressable onPress={completeCustomPurchase} style={s.pointSendButton}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.pointSendGradient}><Text style={s.primaryText}>3,200원 결제</Text></LinearGradient></Pressable></View></View></View>}</View>;
+       |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ^
+  1639 | }
+  1640 | function TopSpaceSheet({open,room,points,result,onClose,onBoost}:{open:boolean;room:Room;points:number;expiresAt?:number;remaining:string;result:'success'|'shortage'|null;onClose:()=>void;onBoost:(option:TopSpacePackage)=>Promise<void>}){
+  1641 |   const [selected,setSelected]=useState(TOP_SPACE_PACKAGES[0]);]
+ ERROR  SyntaxError: C:\Users\trudy\mute-chat\App.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (1638:1395)
+
+  1636 |     }catch(error){Alert.alert('구매 준비 필요',serverErrorMessage(error));}
+  1637 |   };
+> 1638 |   return <View style={s.colorLine}><View style={s.colorLabelLine}><Text style={s.colorLabel}>{label}</Text></View><View style={s.colorOptions}>{values.map((item,index)=><Pressable accessibilityLabel={`${item.name} ${item.price}원`} key={`${label}-${item.color}`} onPress={()=>choose(item,index)} style={[s.colorDot,{backgroundColor:item.color},selected===item.color&&s.colorDotActive]}>{selected===item.color&&<Ionicons name="checkmark" size={14} color={item.color==='#FFFFFF'?'#1C1C1C':'#FFF'}/>}</Pressable>)}{customEnabled&&<Pressable accessibilityLabel={`${label} 커스텀 색상`} onPress={()=>{setCustomSelection(selected);setCustomOpen(true);}} style={[s.colorDot,s.customColorDot]}><Ionicons name="add" size={15} color={colors.textMuted}/></Pressable>}</View>{customOpen&&<View style={s.sheetLayer}><Pressable accessibilityLabel="커스텀 색상 닫기" onPress={()=>setCustomOpen(false)} style={s.sheetDim}/><View style={s.customColorSheet}><View style={s.sheetHandle}/><Text style={s.customColorTitle}>커스텀 색상 선택</Text><View style={[s.customColorPreview,{backgroundColor:customSelection}]}/><View style={s.customSwatchGrid}>{CUSTOM_COLOR_SWATCHES.map((color)=><Pressable key={`${label}-${color}`} onPress={()=>setCustomSelection(color)} style={[s.customSwatch,{backgroundColor:color},customSelection===color&&s.customSwatchActive]}>{customSelection===color&&<Ionicons name="checkmark" size={13} color="#FFF"/></Pressable>)}</View><View style={s.customColorActions}><Pressable onPress={()=>setCustomOpen(false)} style={s.pointSendCancel}><Text style={s.pointSendCancelText}>취소</Text></Pressable><Pressable onPress={completeCustomPurchase} style={s.pointSendButton}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.pointSendGradient}><Text style={s.primaryText}>3,200원 결제</Text></LinearGradient></Pressable></View></View></View>}</View>;
+       |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ^
+  1639 | }
+  1640 | function TopSpaceSheet({open,room,points,result,onClose,onBoost}:{open:boolean;room:Room;points:number;expiresAt?:number;remaining:string;result:'success'|'shortage'|null;onClose:()=>void;onBoost:(option:TopSpacePackage)=>Promise<void>}){
+  1641 |   const [selected,setSelected]=useState(TOP_SPACE_PACKAGES[0]);
+    at constructor (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:365:19)
+    at TypeScriptParserMixin.raise (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:6616:19)
+    at TypeScriptParserMixin.jsxParseElementAt (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4754:18)
+    at TypeScriptParserMixin.jsxParseElement (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4761:17)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4771:19)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOpBaseRightExpr (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11003:34)
+    at TypeScriptParserMixin.parseExprOpRightExpr (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10998:21)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10964:27)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9323:18)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10970:21)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9323:18)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10925:17)
+    at TypeScriptParserMixin.parseMaybeConditional (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10898:23)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10848:21)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9803:20)
+    at TypeScriptParserMixin.parseExpressionBase (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10801:23)
+    at C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10797:39
+    at TypeScriptParserMixin.allowInAnd (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12443:12)
+    at TypeScriptParserMixin.parseExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10797:17)
+    at TypeScriptParserMixin.jsxParseExpressionContainer (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4644:31)
+    at TypeScriptParserMixin.jsxParseElementAt (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4723:36)
+    at TypeScriptParserMixin.jsxParseElement (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4761:17)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4771:19)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10921:23)
+    at TypeScriptParserMixin.parseMaybeConditional (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10898:23)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10848:21)
+    at C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9792:39
+    at TypeScriptParserMixin.tryParse (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:6924:20)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9792:18)
+    at TypeScriptParserMixin.parseFunctionBody (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12110:24)
+    at TypeScriptParserMixin.parseArrowExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12092:10)
+    at TypeScriptParserMixin.parseParenAndDistinguishExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11704:12)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11348:23)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4776:20)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10921:23)
+Web  ERROR  [TransformError: SyntaxError: C:\Users\trudy\mute-chat\App.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (1638:1395)
+
+  1636 |     }catch(error){Alert.alert('구매 준비 필요',serverErrorMessage(error));}
+  1637 |   };
+> 1638 |   return <View style={s.colorLine}><View style={s.colorLabelLine}><Text style={s.colorLabel}>{label}</Text></View><View style={s.colorOptions}>{values.map((item,index)=><Pressable accessibilityLabel={`${item.name} ${item.price}원`} key={`${label}-${item.color}`} onPress={()=>choose(item,index)} style={[s.colorDot,{backgroundColor:item.color},selected===item.color&&s.colorDotActive]}>{selected===item.color&&<Ionicons name="checkmark" size={14} color={item.color==='#FFFFFF'?'#1C1C1C':'#FFF'}/>}</Pressable>)}{customEnabled&&<Pressable accessibilityLabel={`${label} 커스텀 색상`} onPress={()=>{setCustomSelection(selected);setCustomOpen(true);}} style={[s.colorDot,s.customColorDot]}><Ionicons name="add" size={15} color={colors.textMuted}/></Pressable>}</View>{customOpen&&<View style={s.sheetLayer}><Pressable accessibilityLabel="커스텀 색상 닫기" onPress={()=>setCustomOpen(false)} style={s.sheetDim}/><View style={s.customColorSheet}><View style={s.sheetHandle}/><Text style={s.customColorTitle}>커스텀 색상 선택</Text><View style={[s.customColorPreview,{backgroundColor:customSelection}]}/><View style={s.customSwatchGrid}>{CUSTOM_COLOR_SWATCHES.map((color)=><Pressable key={`${label}-${color}`} onPress={()=>setCustomSelection(color)} style={[s.customSwatch,{backgroundColor:color},customSelection===color&&s.customSwatchActive]}>{customSelection===color&&<Ionicons name="checkmark" size={13} color="#FFF"/></Pressable>)}</View><View style={s.customColorActions}><Pressable onPress={()=>setCustomOpen(false)} style={s.pointSendCancel}><Text style={s.pointSendCancelText}>취소</Text></Pressable><Pressable onPress={completeCustomPurchase} style={s.pointSendButton}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.pointSendGradient}><Text style={s.primaryText}>3,200원 결제</Text></LinearGradient></Pressable></View></View></View>}</View>;
+       |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ^
+  1639 | }
+  1640 | function TopSpaceSheet({open,room,points,result,onClose,onBoost}:{open:boolean;room:Room;points:number;expiresAt?:number;remaining:string;result:'success'|'shortage'|null;onClose:()=>void;onBoost:(option:TopSpacePackage)=>Promise<void>}){
+  1641 |   const [selected,setSelected]=useState(TOP_SPACE_PACKAGES[0]);]
+ ERROR  SyntaxError: C:\Users\trudy\mute-chat\App.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (1638:1395)
+
+  1636 |     }catch(error){Alert.alert('구매 준비 필요',serverErrorMessage(error));}
+  1637 |   };
+> 1638 |   return <View style={s.colorLine}><View style={s.colorLabelLine}><Text style={s.colorLabel}>{label}</Text></View><View style={s.colorOptions}>{values.map((item,index)=><Pressable accessibilityLabel={`${item.name} ${item.price}원`} key={`${label}-${item.color}`} onPress={()=>choose(item,index)} style={[s.colorDot,{backgroundColor:item.color},selected===item.color&&s.colorDotActive]}>{selected===item.color&&<Ionicons name="checkmark" size={14} color={item.color==='#FFFFFF'?'#1C1C1C':'#FFF'}/>}</Pressable>)}{customEnabled&&<Pressable accessibilityLabel={`${label} 커스텀 색상`} onPress={()=>{setCustomSelection(selected);setCustomOpen(true);}} style={[s.colorDot,s.customColorDot]}><Ionicons name="add" size={15} color={colors.textMuted}/></Pressable>}</View>{customOpen&&<View style={s.sheetLayer}><Pressable accessibilityLabel="커스텀 색상 닫기" onPress={()=>setCustomOpen(false)} style={s.sheetDim}/><View style={s.customColorSheet}><View style={s.sheetHandle}/><Text style={s.customColorTitle}>커스텀 색상 선택</Text><View style={[s.customColorPreview,{backgroundColor:customSelection}]}/><View style={s.customSwatchGrid}>{CUSTOM_COLOR_SWATCHES.map((color)=><Pressable key={`${label}-${color}`} onPress={()=>setCustomSelection(color)} style={[s.customSwatch,{backgroundColor:color},customSelection===color&&s.customSwatchActive]}>{customSelection===color&&<Ionicons name="checkmark" size={13} color="#FFF"/></Pressable>)}</View><View style={s.customColorActions}><Pressable onPress={()=>setCustomOpen(false)} style={s.pointSendCancel}><Text style={s.pointSendCancelText}>취소</Text></Pressable><Pressable onPress={completeCustomPurchase} style={s.pointSendButton}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.pointSendGradient}><Text style={s.primaryText}>3,200원 결제</Text></LinearGradient></Pressable></View></View></View>}</View>;
+       |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ^
+  1639 | }
+  1640 | function TopSpaceSheet({open,room,points,result,onClose,onBoost}:{open:boolean;room:Room;points:number;expiresAt?:number;remaining:string;result:'success'|'shortage'|null;onClose:()=>void;onBoost:(option:TopSpacePackage)=>Promise<void>}){
+  1641 |   const [selected,setSelected]=useState(TOP_SPACE_PACKAGES[0]);
+    at constructor (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:365:19)
+    at TypeScriptParserMixin.raise (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:6616:19)
+    at TypeScriptParserMixin.jsxParseElementAt (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4754:18)
+    at TypeScriptParserMixin.jsxParseElement (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4761:17)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4771:19)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOpBaseRightExpr (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11003:34)
+    at TypeScriptParserMixin.parseExprOpRightExpr (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10998:21)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10964:27)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9323:18)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10970:21)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9323:18)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10925:17)
+    at TypeScriptParserMixin.parseMaybeConditional (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10898:23)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10848:21)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9803:20)
+    at TypeScriptParserMixin.parseExpressionBase (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10801:23)
+    at C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10797:39
+    at TypeScriptParserMixin.allowInAnd (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12443:12)
+    at TypeScriptParserMixin.parseExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10797:17)
+    at TypeScriptParserMixin.jsxParseExpressionContainer (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4644:31)
+    at TypeScriptParserMixin.jsxParseElementAt (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4723:36)
+    at TypeScriptParserMixin.jsxParseElement (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4761:17)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4771:19)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10921:23)
+    at TypeScriptParserMixin.parseMaybeConditional (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10898:23)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10848:21)
+    at C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9792:39
+    at TypeScriptParserMixin.tryParse (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:6924:20)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9792:18)
+    at TypeScriptParserMixin.parseFunctionBody (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12110:24)
+    at TypeScriptParserMixin.parseArrowExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12092:10)
+    at TypeScriptParserMixin.parseParenAndDistinguishExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11704:12)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11348:23)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4776:20)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10921:23)
+Web  ERROR  [TransformError: SyntaxError: C:\Users\trudy\mute-chat\App.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (1638:1395)
+
+  1636 |     }catch(error){Alert.alert('구매 준비 필요',serverErrorMessage(error));}
+  1637 |   };
+> 1638 |   return <View style={s.colorLine}><View style={s.colorLabelLine}><Text style={s.colorLabel}>{label}</Text></View><View style={s.colorOptions}>{values.map((item,index)=><Pressable accessibilityLabel={`${item.name} ${item.price}원`} key={`${label}-${item.color}`} onPress={()=>choose(item,index)} style={[s.colorDot,{backgroundColor:item.color},selected===item.color&&s.colorDotActive]}>{selected===item.color&&<Ionicons name="checkmark" size={14} color={item.color==='#FFFFFF'?'#1C1C1C':'#FFF'}/>}</Pressable>)}{customEnabled&&<Pressable accessibilityLabel={`${label} 커스텀 색상`} onPress={()=>{setCustomSelection(selected);setCustomOpen(true);}} style={[s.colorDot,s.customColorDot]}><Ionicons name="add" size={15} color={colors.textMuted}/></Pressable>}</View>{customOpen&&<View style={s.sheetLayer}><Pressable accessibilityLabel="커스텀 색상 닫기" onPress={()=>setCustomOpen(false)} style={s.sheetDim}/><View style={s.customColorSheet}><View style={s.sheetHandle}/><Text style={s.customColorTitle}>커스텀 색상 선택</Text><View style={[s.customColorPreview,{backgroundColor:customSelection}]}/><View style={s.customSwatchGrid}>{CUSTOM_COLOR_SWATCHES.map((color)=><Pressable key={`${label}-${color}`} onPress={()=>setCustomSelection(color)} style={[s.customSwatch,{backgroundColor:color},customSelection===color&&s.customSwatchActive]}>{customSelection===color&&<Ionicons name="checkmark" size={13} color="#FFF"/></Pressable>)}</View><View style={s.customColorActions}><Pressable onPress={()=>setCustomOpen(false)} style={s.pointSendCancel}><Text style={s.pointSendCancelText}>취소</Text></Pressable><Pressable onPress={completeCustomPurchase} style={s.pointSendButton}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.pointSendGradient}><Text style={s.primaryText}>3,200원 결제</Text></LinearGradient></Pressable></View></View></View>}</View>;
+       |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ^
+  1639 | }
+  1640 | function TopSpaceSheet({open,room,points,result,onClose,onBoost}:{open:boolean;room:Room;points:number;expiresAt?:number;remaining:string;result:'success'|'shortage'|null;onClose:()=>void;onBoost:(option:TopSpacePackage)=>Promise<void>}){
+  1641 |   const [selected,setSelected]=useState(TOP_SPACE_PACKAGES[0]);]
+ ERROR  SyntaxError: C:\Users\trudy\mute-chat\App.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (1638:1395)
+
+  1636 |     }catch(error){Alert.alert('구매 준비 필요',serverErrorMessage(error));}
+  1637 |   };
+> 1638 |   return <View style={s.colorLine}><View style={s.colorLabelLine}><Text style={s.colorLabel}>{label}</Text></View><View style={s.colorOptions}>{values.map((item,index)=><Pressable accessibilityLabel={`${item.name} ${item.price}원`} key={`${label}-${item.color}`} onPress={()=>choose(item,index)} style={[s.colorDot,{backgroundColor:item.color},selected===item.color&&s.colorDotActive]}>{selected===item.color&&<Ionicons name="checkmark" size={14} color={item.color==='#FFFFFF'?'#1C1C1C':'#FFF'}/>}</Pressable>)}{customEnabled&&<Pressable accessibilityLabel={`${label} 커스텀 색상`} onPress={()=>{setCustomSelection(selected);setCustomOpen(true);}} style={[s.colorDot,s.customColorDot]}><Ionicons name="add" size={15} color={colors.textMuted}/></Pressable>}</View>{customOpen&&<View style={s.sheetLayer}><Pressable accessibilityLabel="커스텀 색상 닫기" onPress={()=>setCustomOpen(false)} style={s.sheetDim}/><View style={s.customColorSheet}><View style={s.sheetHandle}/><Text style={s.customColorTitle}>커스텀 색상 선택</Text><View style={[s.customColorPreview,{backgroundColor:customSelection}]}/><View style={s.customSwatchGrid}>{CUSTOM_COLOR_SWATCHES.map((color)=><Pressable key={`${label}-${color}`} onPress={()=>setCustomSelection(color)} style={[s.customSwatch,{backgroundColor:color},customSelection===color&&s.customSwatchActive]}>{customSelection===color&&<Ionicons name="checkmark" size={13} color="#FFF"/></Pressable>)}</View><View style={s.customColorActions}><Pressable onPress={()=>setCustomOpen(false)} style={s.pointSendCancel}><Text style={s.pointSendCancelText}>취소</Text></Pressable><Pressable onPress={completeCustomPurchase} style={s.pointSendButton}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.pointSendGradient}><Text style={s.primaryText}>3,200원 결제</Text></LinearGradient></Pressable></View></View></View>}</View>;
+       |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ^
+  1639 | }
+  1640 | function TopSpaceSheet({open,room,points,result,onClose,onBoost}:{open:boolean;room:Room;points:number;expiresAt?:number;remaining:string;result:'success'|'shortage'|null;onClose:()=>void;onBoost:(option:TopSpacePackage)=>Promise<void>}){
+  1641 |   const [selected,setSelected]=useState(TOP_SPACE_PACKAGES[0]);
+    at constructor (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:365:19)
+    at TypeScriptParserMixin.raise (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:6616:19)
+    at TypeScriptParserMixin.jsxParseElementAt (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4754:18)
+    at TypeScriptParserMixin.jsxParseElement (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4761:17)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4771:19)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOpBaseRightExpr (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11003:34)
+    at TypeScriptParserMixin.parseExprOpRightExpr (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10998:21)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10964:27)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9323:18)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10970:21)
+    at TypeScriptParserMixin.parseExprOp (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9323:18)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10925:17)
+    at TypeScriptParserMixin.parseMaybeConditional (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10898:23)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10848:21)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9803:20)
+    at TypeScriptParserMixin.parseExpressionBase (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10801:23)
+    at C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10797:39
+    at TypeScriptParserMixin.allowInAnd (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12443:12)
+    at TypeScriptParserMixin.parseExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10797:17)
+    at TypeScriptParserMixin.jsxParseExpressionContainer (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4644:31)
+    at TypeScriptParserMixin.jsxParseElementAt (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4723:36)
+    at TypeScriptParserMixin.jsxParseElement (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4761:17)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4771:19)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10921:23)
+    at TypeScriptParserMixin.parseMaybeConditional (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10898:23)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10848:21)
+    at C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9792:39
+    at TypeScriptParserMixin.tryParse (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:6924:20)
+    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9792:18)
+    at TypeScriptParserMixin.parseFunctionBody (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12110:24)
+    at TypeScriptParserMixin.parseArrowExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:12092:10)
+    at TypeScriptParserMixin.parseParenAndDistinguishExpression (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11704:12)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11348:23)
+    at TypeScriptParserMixin.parseExprAtom (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:4776:20)
+    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11098:23)
+    at TypeScriptParserMixin.parseUpdate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11083:21)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:11063:23)
+    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:9854:18)
+    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10916:61)
+    at TypeScriptParserMixin.parseExprOps (C:\Users\trudy\mute-chat\node_modules\@babel\parser\lib\index.js:10921:23)
+Web  ERROR  [TransformError: SyntaxError: C:\Users\trudy\mute-chat\App.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (1638:1395)
+
+  1636 |     }catch(error){Alert.alert('구매 준비 필요',serverErrorMessage(error));}
+  1637 |   };
+> 1638 |   return <View style={s.colorLine}><View style={s.colorLabelLine}><Text style={s.colorLabel}>{label}</Text></View><View style={s.colorOptions}>{values.map((item,index)=><Pressable accessibilityLabel={`${item.name} ${item.price}원`} key={`${label}-${item.color}`} onPress={()=>choose(item,index)} style={[s.colorDot,{backgroundColor:item.color},selected===item.color&&s.colorDotActive]}>{selected===item.color&&<Ionicons name="checkmark" size={14} color={item.color==='#FFFFFF'?'#1C1C1C':'#FFF'}/>}</Pressable>)}{customEnabled&&<Pressable accessibilityLabel={`${label} 커스텀 색상`} onPress={()=>{setCustomSelection(selected);setCustomOpen(true);}} style={[s.colorDot,s.customColorDot]}><Ionicons name="add" size={15} color={colors.textMuted}/></Pressable>}</View>{customOpen&&<View style={s.sheetLayer}><Pressable accessibilityLabel="커스텀 색상 닫기" onPress={()=>setCustomOpen(false)} style={s.sheetDim}/><View style={s.customColorSheet}><View style={s.sheetHandle}/><Text style={s.customColorTitle}>커스텀 색상 선택</Text><View style={[s.customColorPreview,{backgroundColor:customSelection}]}/><View style={s.customSwatchGrid}>{CUSTOM_COLOR_SWATCHES.map((color)=><Pressable key={`${label}-${color}`} onPress={()=>setCustomSelection(color)} style={[s.customSwatch,{backgroundColor:color},customSelection===color&&s.customSwatchActive]}>{customSelection===color&&<Ionicons name="checkmark" size={13} color="#FFF"/></Pressable>)}</View><View style={s.customColorActions}><Pressable onPress={()=>setCustomOpen(false)} style={s.pointSendCancel}><Text style={s.pointSendCancelText}>취소</Text></Pressable><Pressable onPress={completeCustomPurchase} style={s.pointSendButton}><LinearGradient colors={['#82B9C1','#5DBB8C']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.pointSendGradient}><Text style={s.primaryText}>3,200원 결제</Text></LinearGradient></Pressable></View></View></View>}</View>;
+       |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ^
+  1639 | }
+  1640 | function TopSpaceSheet({open,room,points,result,onClose,onBoost}:{open:boolean;room:Room;points:number;expiresAt?:number;remaining:string;result:'success'|'shortage'|null;onClose:()=>void;onBoost:(option:TopSpacePackage)=>Promise<void>}){
+  1641 |   const [selected,setSelected]=useState(TOP_SPACE_PACKAGES[0]);]
+Web Bundled 20ms index.ts (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  WARN  [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  Animated: `useNativeDriver` is not supported because the native animated module is missing. Falling back to JS-based animation. To resolve this, add `RCTAnimation` module to this app, or remove `useNativeDriver`. Make sure to run `bundle exec pod install` first. Read more about autolinking: https://github.com/react-native-community/cli/blob/master/docs/autolinking.md
+Web Bundled 17ms index.ts (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  WARN  [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  Animated: `useNativeDriver` is not supported because the native animated module is missing. Falling back to JS-based animation. To resolve this, add `RCTAnimation` module to this app, or remove `useNativeDriver`. Make sure to run `bundle exec pod install` first. Read more about autolinking: https://github.com/react-native-community/cli/blob/master/docs/autolinking.md
+Unable to resolve "./utils" from "node_modules\reanimated-color-picker\lib\module\ColorPicker.js"
+[0m [90m  5 |[39m [36mimport[39m colorKit [36mfrom[39m [32m'./colorKit/index'[39m[33m;[39m
+ [90m  6 |[39m [36mimport[39m { [33mPickerContextProvider[39m } [36mfrom[39m [32m'./AppContext'[39m[33m;[39m
+[31m[1m>[22m[39m[90m  7 |[39m [36mimport[39m { isWeb } [36mfrom[39m [32m'./utils'[39m[33m;[39m
+ [90m    |[39m                        [31m[1m^[22m[39m
+ [90m  8 |[39m [90m// @ts-expect-error no global[39m
+ [90m  9 |[39m [36mif[39m (isWeb [33m&&[39m [33m![39mglobal[33m.[39msetImmediate) {
+ [90m 10 |[39m   [90m// @ts-expect-error no global[39m[0m
+
+Import stack:
+
+ node_modules\reanimated-color-picker\lib\module\ColorPicker.js
+ | import "./utils"
+
+ node_modules\reanimated-color-picker\lib\module\index.js
+ | import "./ColorPicker"
+
+ App.tsx
+ | import "reanimated-color-picker"
+
+ index.ts
+ | import "./App"
+
+ 
+ | import "./index.ts"
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module ./utils from C:\Users\trudy\mute-chat\node_modules\reanimated-color-picker\lib\module\ColorPicker.js: 
+
+None of these files exist:
+  * node_modules\reanimated-color-picker\lib\module\utils(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * node_modules\reanimated-color-picker\lib\module\utils
+   5 | import colorKit from './colorKit/index';
+   6 | import { PickerContextProvider } from './AppContext';
+>  7 | import { isWeb } from './utils';
+     |                        ^
+   8 | // @ts-expect-error no global
+   9 | if (isWeb && !global.setImmediate) {
+  10 |   // @ts-expect-error no global]
+Unable to resolve "./utils" from "node_modules\reanimated-color-picker\lib\module\ColorPicker.js"
+[0m [90m  5 |[39m [36mimport[39m colorKit [36mfrom[39m [32m'./colorKit/index'[39m[33m;[39m
+ [90m  6 |[39m [36mimport[39m { [33mPickerContextProvider[39m } [36mfrom[39m [32m'./AppContext'[39m[33m;[39m
+[31m[1m>[22m[39m[90m  7 |[39m [36mimport[39m { isWeb } [36mfrom[39m [32m'./utils'[39m[33m;[39m
+ [90m    |[39m                        [31m[1m^[22m[39m
+ [90m  8 |[39m [90m// @ts-expect-error no global[39m
+ [90m  9 |[39m [36mif[39m (isWeb [33m&&[39m [33m![39mglobal[33m.[39msetImmediate) {
+ [90m 10 |[39m   [90m// @ts-expect-error no global[39m[0m
+
+Import stack:
+
+ node_modules\reanimated-color-picker\lib\module\ColorPicker.js
+ | import "./utils"
+
+ node_modules\reanimated-color-picker\lib\module\index.js
+ | import "./ColorPicker"
+
+ App.tsx
+ | import "reanimated-color-picker"
+
+ index.ts
+ | import "./App"
+
+ 
+ | import "./index.ts"
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module ./utils from C:\Users\trudy\mute-chat\node_modules\reanimated-color-picker\lib\module\ColorPicker.js: 
+
+None of these files exist:
+  * node_modules\reanimated-color-picker\lib\module\utils(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * node_modules\reanimated-color-picker\lib\module\utils
+   5 | import colorKit from './colorKit/index';
+   6 | import { PickerContextProvider } from './AppContext';
+>  7 | import { isWeb } from './utils';
+     |                        ^
+   8 | // @ts-expect-error no global
+   9 | if (isWeb && !global.setImmediate) {
+  10 |   // @ts-expect-error no global]
+Unable to resolve "./utils" from "node_modules\reanimated-color-picker\lib\module\ColorPicker.js"
+[0m [90m  5 |[39m [36mimport[39m colorKit [36mfrom[39m [32m'./colorKit/index'[39m[33m;[39m
+ [90m  6 |[39m [36mimport[39m { [33mPickerContextProvider[39m } [36mfrom[39m [32m'./AppContext'[39m[33m;[39m
+[31m[1m>[22m[39m[90m  7 |[39m [36mimport[39m { isWeb } [36mfrom[39m [32m'./utils'[39m[33m;[39m
+ [90m    |[39m                        [31m[1m^[22m[39m
+ [90m  8 |[39m [90m// @ts-expect-error no global[39m
+ [90m  9 |[39m [36mif[39m (isWeb [33m&&[39m [33m![39mglobal[33m.[39msetImmediate) {
+ [90m 10 |[39m   [90m// @ts-expect-error no global[39m[0m
+
+Import stack:
+
+ node_modules\reanimated-color-picker\lib\module\ColorPicker.js
+ | import "./utils"
+
+ node_modules\reanimated-color-picker\lib\module\index.js
+ | import "./ColorPicker"
+
+ App.tsx
+ | import "reanimated-color-picker"
+
+ index.ts
+ | import "./App"
+
+ 
+ | import "./index.ts"
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module ./utils from C:\Users\trudy\mute-chat\node_modules\reanimated-color-picker\lib\module\ColorPicker.js: 
+
+None of these files exist:
+  * node_modules\reanimated-color-picker\lib\module\utils(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * node_modules\reanimated-color-picker\lib\module\utils
+   5 | import colorKit from './colorKit/index';
+   6 | import { PickerContextProvider } from './AppContext';
+>  7 | import { isWeb } from './utils';
+     |                        ^
+   8 | // @ts-expect-error no global
+   9 | if (isWeb && !global.setImmediate) {
+  10 |   // @ts-expect-error no global]
+Unable to resolve "./utils" from "node_modules\reanimated-color-picker\lib\module\ColorPicker.js"
+[0m [90m  5 |[39m [36mimport[39m colorKit [36mfrom[39m [32m'./colorKit/index'[39m[33m;[39m
+ [90m  6 |[39m [36mimport[39m { [33mPickerContextProvider[39m } [36mfrom[39m [32m'./AppContext'[39m[33m;[39m
+[31m[1m>[22m[39m[90m  7 |[39m [36mimport[39m { isWeb } [36mfrom[39m [32m'./utils'[39m[33m;[39m
+ [90m    |[39m                        [31m[1m^[22m[39m
+ [90m  8 |[39m [90m// @ts-expect-error no global[39m
+ [90m  9 |[39m [36mif[39m (isWeb [33m&&[39m [33m![39mglobal[33m.[39msetImmediate) {
+ [90m 10 |[39m   [90m// @ts-expect-error no global[39m[0m
+
+Import stack:
+
+ node_modules\reanimated-color-picker\lib\module\ColorPicker.js
+ | import "./utils"
+
+ node_modules\reanimated-color-picker\lib\module\index.js
+ | import "./ColorPicker"
+
+ App.tsx
+ | import "reanimated-color-picker"
+
+ index.ts
+ | import "./App"
+
+ 
+ | import "./index.ts"
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module ./utils from C:\Users\trudy\mute-chat\node_modules\reanimated-color-picker\lib\module\ColorPicker.js: 
+
+None of these files exist:
+  * node_modules\reanimated-color-picker\lib\module\utils(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * node_modules\reanimated-color-picker\lib\module\utils
+   5 | import colorKit from './colorKit/index';
+   6 | import { PickerContextProvider } from './AppContext';
+>  7 | import { isWeb } from './utils';
+     |                        ^
+   8 | // @ts-expect-error no global
+   9 | if (isWeb && !global.setImmediate) {
+  10 |   // @ts-expect-error no global]
+Web Bundling failed 214ms index.ts (1 module)
+Unable to resolve "./utils" from "node_modules\reanimated-color-picker\lib\module\ColorPicker.js"
+[0m [90m  5 |[39m [36mimport[39m colorKit [36mfrom[39m [32m'./colorKit/index'[39m[33m;[39m
+ [90m  6 |[39m [36mimport[39m { [33mPickerContextProvider[39m } [36mfrom[39m [32m'./AppContext'[39m[33m;[39m
+[31m[1m>[22m[39m[90m  7 |[39m [36mimport[39m { isWeb } [36mfrom[39m [32m'./utils'[39m[33m;[39m
+ [90m    |[39m                        [31m[1m^[22m[39m
+ [90m  8 |[39m [90m// @ts-expect-error no global[39m
+ [90m  9 |[39m [36mif[39m (isWeb [33m&&[39m [33m![39mglobal[33m.[39msetImmediate) {
+ [90m 10 |[39m   [90m// @ts-expect-error no global[39m[0m
+
+Import stack:
+
+ node_modules\reanimated-color-picker\lib\module\ColorPicker.js
+ | import "./utils"
+
+ node_modules\reanimated-color-picker\lib\module\index.js
+ | import "./ColorPicker"
+
+ App.tsx
+ | import "reanimated-color-picker"
+
+ index.ts
+ | import "./App"
+
+ 
+ | import "./index.ts"
+
+Tunnel connected.
+Tunnel connected.

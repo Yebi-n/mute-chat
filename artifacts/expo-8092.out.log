@@ -1,0 +1,56 @@
+
+> mute@1.0.0 web
+> expo start --web --port 8092
+
+env: load .env.local .env
+env: export EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY EXPO_PUBLIC_SUPABASE_URL EXPO_PUBLIC_DEMO_MODE
+Starting project at C:\Users\trudy\mute-chat
+Starting Metro Bundler
+
+Waiting on http://localhost:8092
+Logs for your project will appear below.
+Web Bundled 7984ms index.ts (591 modules)
+Web Bundled 6321ms index.ts (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  WARN  [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  WARN  [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  Animated: `useNativeDriver` is not supported because the native animated module is missing. Falling back to JS-based animation. To resolve this, add `RCTAnimation` module to this app, or remove `useNativeDriver`. Make sure to run `bundle exec pod install` first. Read more about autolinking: https://github.com/react-native-community/cli/blob/master/docs/autolinking.md
+Web  ERROR  Unexpected text node:  . A text node cannot be a child of a <View>. 
+
+Code: App.tsx
+[0m [90m 713 |[39m   [36mreturn[39m [33m<[39m[33mView[39m style[33m=[39m{s[33m.[39mdrawerLayer}[33m>[39m[33m<[39m[33mPressable[39m accessibilityLabel[33m=[39m[32m"채팅 메뉴 닫기"[39m onPress[33m=[39m{onClose} style[33m=[39m{s[33m.[39mdrawerDim}[33m/[39m[33m>[39m[33m<[39m[33mAnimated[39m[33m.[39m[33mView[39m style[33m=[39m{[s[33m.[39mchatDrawer[33m,[39m{transform[33m:[39m[{translateX[33m:[39mslide}]}]}[33m>[39m
+ [90m 714 |[39m     [33m<[39m[33mView[39m style[33m=[39m{s[33m.[39mdrawerProfile}[33m>[39m[33m<[39m[33mView[39m style[33m=[39m{s[33m.[39mdrawerAvatar}[33m>[39m[33m<[39m[33mDefaultAvatar[39m size[33m=[39m{[35m72[39m}[35m/><View style={s.editDot}><Ionicons name="pencil" size={12} color="#FFF"/[39m[33m>[39m[33m<[39m[33m/[39m[33mView[39m[33m>[39m[33m<[39m[33m/[39m[33mView[39m[33m>[39m[33m<[39m[33mText[39m style[33m=[39m{s[33m.[39mdrawerProfileName}[33m>[39m한걸음[33m<[39m[33m/[39m[33mText[39m[33m>[39m[33m<[39m[33mText[39m numberOfLines[33m=[39m{[35m2[39m} style[33m=[39m{s[33m.[39mdrawerProfileIntro}[33m>[39m자기 소개가 들어가는 공간입니다[33m.[39m 편안한 대화를 좋아해요[33m.[39m[33m<[39m[33m/[39m[33mText[39m[33m>[39m[33m<[39m[33m/[39m[33mView[39m[33m>[39m
+[31m[1m>[22m[39m[90m 715 |[39m     [33m<[39m[33mView[39m style[33m=[39m{s[33m.[39mchatDrawerMenu}[33m>[39m[33m<[39m[33mDrawerMenu[39m icon[33m=[39m[32m"notifications-outline"[39m title[33m=[39m[32m"알림 설정"[39m trailing[33m=[39m{[33m<[39m[33mSwitch[39m value[33m=[39m{notifications} onValueChange[33m=[39m{setNotifications} trackColor[33m=[39m{{[36mfalse[39m[33m:[39mcolors[33m.[39mgray200[33m,[39m[36mtrue[39m[33m:[39mcolors[33m.[39mmint300}}[35m/>}/[39m[33m>[39m[33m<[39m[33mDrawerMenu[39m icon[33m=[39m[32m"person-add-outline"[39m title[33m=[39m[32m"가입 신청 목록"[39m onPress[33m=[39m{onApplications}[35m/><DrawerMenu icon="people-outline" title="멤버 관리" onPress={onOpenMembers}/[39m[33m>[39m[33m<[39m[33mDrawerMenu[39m icon[33m=[39m[32m"albums-outline"[39m title[33m=[39m[32m"멤버 및 스토리"[39m onPress[33m=[39m{onOverview}[35m/>{isOwner&&<DrawerMenu icon="lock-closed-outline" title="방 공개 설정" onPress={onRoomSettings}/[39m[33m>[39m} {isOwner[33m&&[39m[33m<[39m[33mPressable[39m onPress[33m=[39m{onDelete} style[33m=[39m{s[33m.[39mdeleteRoomLink}[33m>[39m[33m<[39m[33mText[39m style[33m=[39m{s[33m.[39mdeleteRoomText}[33m>[39m방 삭제하기[33m<[39m[33m/[39m[33mText[39m[33m>[39m[33m<[39m[33m/[39m[33mPressable[39m[33m>[39m}[33m<[39m[33m/[39m[33mView[39m[33m>[39m
+ [90m     |[39m     [31m[1m^[22m[39m
+ [90m 716 |[39m   [33m<[39m[33m/[39m[33mAnimated[39m[33m.[39m[33mView[39m[33m>[39m[33m<[39m[33m/[39m[33mView[39m[33m>[39m[33m;[39m
+ [90m 717 |[39m }
+ [90m 718 |[39m [36mfunction[39m [33mDrawerMenu[39m({icon[33m,[39mtitle[33m,[39monPress[33m,[39mtrailing}[33m:[39m{icon[33m:[39m[33mIconName[39m[33m;[39mtitle[33m:[39mstring[33m;[39monPress[33m?[39m[33m:[39m()[33m=>[39m[36mvoid[39m[33m;[39mtrailing[33m?[39m[33m:[39m[33mReact[39m[33m.[39m[33mReactNode[39m}){[36mreturn[39m [33m<[39m[33mPressable[39m onPress[33m=[39m{onPress} disabled[33m=[39m{[33m![39monPress[33m&&[39m[33m![39mtrailing} style[33m=[39m{({pressed})[33m=>[39m[s[33m.[39mdrawerMenu[33m,[39mpressed[33m&&[39ms[33m.[39mpressed]}[33m>[39m[33m<[39m[33mIonicons[39m name[33m=[39m{icon} size[33m=[39m{[35m20[39m} color[33m=[39m{colors[33m.[39mtextSubtle}[33m/[39m[33m>[39m[33m<[39m[33mText[39m style[33m=[39m{s[33m.[39mdrawerMenuText}[33m>[39m{title}[33m<[39m[35m/Text>{trailing??<Ionicons name="chevron-forward" size={17} color={colors.gray300}/[39m[33m>[39m}[33m<[39m[33m/[39m[33mPressable[39m[33m>[39m[33m;[39m}[0m
+Call Stack
+  ChatDrawer (App.tsx:715:5)
+  ChatRoom (App.tsx:563:5)
+  AuthenticatedApp (App.tsx:230:33)
+  App (App.tsx:145:10)
+Web  ERROR  Unexpected text node:  . A text node cannot be a child of a <View>. 
+
+Code: App.tsx
+[0m [90m 713 |[39m   [36mreturn[39m [33m<[39m[33mView[39m style[33m=[39m{s[33m.[39mdrawerLayer}[33m>[39m[33m<[39m[33mPressable[39m accessibilityLabel[33m=[39m[32m"채팅 메뉴 닫기"[39m onPress[33m=[39m{onClose} style[33m=[39m{s[33m.[39mdrawerDim}[33m/[39m[33m>[39m[33m<[39m[33mAnimated[39m[33m.[39m[33mView[39m style[33m=[39m{[s[33m.[39mchatDrawer[33m,[39m{transform[33m:[39m[{translateX[33m:[39mslide}]}]}[33m>[39m
+ [90m 714 |[39m     [33m<[39m[33mView[39m style[33m=[39m{s[33m.[39mdrawerProfile}[33m>[39m[33m<[39m[33mView[39m style[33m=[39m{s[33m.[39mdrawerAvatar}[33m>[39m[33m<[39m[33mDefaultAvatar[39m size[33m=[39m{[35m72[39m}[35m/><View style={s.editDot}><Ionicons name="pencil" size={12} color="#FFF"/[39m[33m>[39m[33m<[39m[33m/[39m[33mView[39m[33m>[39m[33m<[39m[33m/[39m[33mView[39m[33m>[39m[33m<[39m[33mText[39m style[33m=[39m{s[33m.[39mdrawerProfileName}[33m>[39m한걸음[33m<[39m[33m/[39m[33mText[39m[33m>[39m[33m<[39m[33mText[39m numberOfLines[33m=[39m{[35m2[39m} style[33m=[39m{s[33m.[39mdrawerProfileIntro}[33m>[39m자기 소개가 들어가는 공간입니다[33m.[39m 편안한 대화를 좋아해요[33m.[39m[33m<[39m[33m/[39m[33mText[39m[33m>[39m[33m<[39m[33m/[39m[33mView[39m[33m>[39m
+[31m[1m>[22m[39m[90m 715 |[39m     [33m<[39m[33mView[39m style[33m=[39m{s[33m.[39mchatDrawerMenu}[33m>[39m[33m<[39m[33mDrawerMenu[39m icon[33m=[39m[32m"notifications-outline"[39m title[33m=[39m[32m"알림 설정"[39m trailing[33m=[39m{[33m<[39m[33mSwitch[39m value[33m=[39m{notifications} onValueChange[33m=[39m{setNotifications} trackColor[33m=[39m{{[36mfalse[39m[33m:[39mcolors[33m.[39mgray200[33m,[39m[36mtrue[39m[33m:[39mcolors[33m.[39mmint300}}[35m/>}/[39m[33m>[39m[33m<[39m[33mDrawerMenu[39m icon[33m=[39m[32m"person-add-outline"[39m title[33m=[39m[32m"가입 신청 목록"[39m onPress[33m=[39m{onApplications}[35m/><DrawerMenu icon="people-outline" title="멤버 관리" onPress={onOpenMembers}/[39m[33m>[39m[33m<[39m[33mDrawerMenu[39m icon[33m=[39m[32m"albums-outline"[39m title[33m=[39m[32m"멤버 및 스토리"[39m onPress[33m=[39m{onOverview}[35m/>{isOwner&&<DrawerMenu icon="lock-closed-outline" title="방 공개 설정" onPress={onRoomSettings}/[39m[33m>[39m} {isOwner[33m&&[39m[33m<[39m[33mPressable[39m onPress[33m=[39m{onDelete} style[33m=[39m{s[33m.[39mdeleteRoomLink}[33m>[39m[33m<[39m[33mText[39m style[33m=[39m{s[33m.[39mdeleteRoomText}[33m>[39m방 삭제하기[33m<[39m[33m/[39m[33mText[39m[33m>[39m[33m<[39m[33m/[39m[33mPressable[39m[33m>[39m}[33m<[39m[33m/[39m[33mView[39m[33m>[39m
+ [90m     |[39m     [31m[1m^[22m[39m
+ [90m 716 |[39m   [33m<[39m[33m/[39m[33mAnimated[39m[33m.[39m[33mView[39m[33m>[39m[33m<[39m[33m/[39m[33mView[39m[33m>[39m[33m;[39m
+ [90m 717 |[39m }
+ [90m 718 |[39m [36mfunction[39m [33mDrawerMenu[39m({icon[33m,[39mtitle[33m,[39monPress[33m,[39mtrailing}[33m:[39m{icon[33m:[39m[33mIconName[39m[33m;[39mtitle[33m:[39mstring[33m;[39monPress[33m?[39m[33m:[39m()[33m=>[39m[36mvoid[39m[33m;[39mtrailing[33m?[39m[33m:[39m[33mReact[39m[33m.[39m[33mReactNode[39m}){[36mreturn[39m [33m<[39m[33mPressable[39m onPress[33m=[39m{onPress} disabled[33m=[39m{[33m![39monPress[33m&&[39m[33m![39mtrailing} style[33m=[39m{({pressed})[33m=>[39m[s[33m.[39mdrawerMenu[33m,[39mpressed[33m&&[39ms[33m.[39mpressed]}[33m>[39m[33m<[39m[33mIonicons[39m name[33m=[39m{icon} size[33m=[39m{[35m20[39m} color[33m=[39m{colors[33m.[39mtextSubtle}[33m/[39m[33m>[39m[33m<[39m[33mText[39m style[33m=[39m{s[33m.[39mdrawerMenuText}[33m>[39m{title}[33m<[39m[35m/Text>{trailing??<Ionicons name="chevron-forward" size={17} color={colors.gray300}/[39m[33m>[39m}[33m<[39m[33m/[39m[33mPressable[39m[33m>[39m[33m;[39m}[0m
+Call Stack
+  ChatDrawer (App.tsx:715:5)
+  ChatRoom (App.tsx:563:5)
+  AuthenticatedApp (App.tsx:230:33)
+  App (App.tsx:145:10)
