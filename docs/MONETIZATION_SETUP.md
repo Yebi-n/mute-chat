@@ -2,15 +2,13 @@
 
 ## Store products
 
-- `mute_bubble_color_01` ... `mute_bubble_color_15`: non-consumable, KRW 1,200-3,200
-- `mute_text_color_01` ... `mute_text_color_15`: non-consumable, KRW 1,200-3,200
-- `mute_custom_bubble_color`: non-consumable, KRW 3,200
-- `mute_custom_text_color`: non-consumable, KRW 3,200
-- `mute_ad_free_monthly`: auto-renewing subscription, KRW 4,900/month
+- Point packages are App Store / Play Store consumables.
+- App themes are non-consumables.
+- `mute_ad_free_monthly`: auto-renewing subscription, KRW 5,900/month.
 
-Index `00` is the free default color and must not be registered as a store product.
+Chat bubble, text color, and custom background items are point purchases inside the app. They are not separate App Store products.
 
-Digital colors and ad-free subscriptions must use Apple In-App Purchase and Google Play Billing. The app uses RevenueCat as the cross-platform receipt and entitlement adapter.
+The app uses `expo-iap` to open the native purchase sheet. Supabase `verify-store-purchase` verifies purchases directly against Apple App Store Server API before crediting points or entitlements.
 
 ## AdMob
 
@@ -28,14 +26,16 @@ Reward rules:
 
 The server credits points only through `claim_point_reward`. Production should additionally verify AdMob server-side verification callbacks before crediting rewarded-ad points.
 
-## RevenueCat
+## StoreKit direct verification
 
-Set:
+Current iOS secrets:
 
-- `EXPO_PUBLIC_REVENUECAT_IOS_KEY`
-- `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY`
+- `APP_STORE_IAP_KEY_ID`
+- `APP_STORE_ISSUER_ID`
+- `APP_STORE_BUNDLE_ID`
+- `APP_STORE_IAP_PRIVATE_KEY`
 
-Create matching products in App Store Connect and Google Play Console, import them into RevenueCat, and map `mute_ad_free_monthly` to an `ad_free` entitlement.
+See `docs/STOREKIT_REVENUECAT_SETUP.md` for exact product IDs and deployment steps. The filename is kept for continuity, but the current decision is no RevenueCat.
 
 ## Adult verification
 

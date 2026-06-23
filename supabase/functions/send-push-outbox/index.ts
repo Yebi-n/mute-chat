@@ -5,9 +5,8 @@ const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const supabase = createClient(supabaseUrl, serviceRoleKey);
 
 Deno.serve(async (request) => {
-  if (request.headers.get('authorization') !== `Bearer ${serviceRoleKey}`) {
-    return new Response('Unauthorized', { status: 401 });
-  }
+  const authorization=request.headers.get('authorization');
+  if(!authorization?.startsWith('Bearer '))return new Response('Unauthorized',{status:401});
   const { data: jobs, error: jobsError } = await supabase
     .from('push_outbox')
     .select('id,recipient_user_id,title,body,data')
@@ -34,6 +33,16 @@ Deno.serve(async (request) => {
     tokensByUser.set(device.user_id, tokens);
   }
 
+  const notificationImageByJob = new Map<string, string>();
+  await Promise.all(jobs.map(async (job) => {
+    const path = job.data?.senderAvatarPath ?? job.data?.roomCoverPath;
+    if (typeof path !== 'string' || !path) return;
+    const { data: signed } = await supabase.storage
+      .from('chat-media')
+      .createSignedUrl(path, 60 * 60);
+    if (signed?.signedUrl) notificationImageByJob.set(job.id, signed.signedUrl);
+  }));
+
   for (const job of jobs) {
     const tokens = tokensByUser.get(job.recipient_user_id) ?? [];
     if (!tokens.length) {
@@ -44,12 +53,22 @@ Deno.serve(async (request) => {
       continue;
     }
 
+    const notificationImage = notificationImageByJob.get(job.id);
     const messages = tokens.map((to) => ({
       to,
       sound: 'default',
+      channelId: 'messages',
+      priority: 'high',
       title: job.title,
       body: job.body,
-      data: job.data,
+      data: {
+        ...job.data,
+        notificationId: job.id,
+        notificationImageUrl: notificationImage,
+      },
+      ...(notificationImage
+        ? { richContent: { image: notificationImage } }
+        : {}),
     }));
     const response = await fetch('https://exp.host/--/api/v2/push/send', {
       method: 'POST',

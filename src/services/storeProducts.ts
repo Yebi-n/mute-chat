@@ -1,5 +1,17 @@
 export const STORE_PRODUCTS = {
   customBubbleColor: 'mute_custom_bubble_color',
   customTextColor: 'mute_custom_text_color',
+  customBackground: 'mute_custom_background',
   adFreeMonthly: 'mute_ad_free_monthly',
+  point5000: 'mute_points_5000',
+  point11000: 'mute_points_11000',
+  point28000: 'mute_points_28000',
+  point60000: 'mute_points_60000',
+  point200000: 'mute_points_200000',
+  point390000: 'mute_points_390000',
+  themeMint: 'mute_theme_mint',
+  themeOcean: 'mute_theme_ocean',
+  themeLavender: 'mute_theme_lavender',
+  themeSunset: 'mute_theme_sunset',
+  themeMono: 'mute_theme_mono',
 } as const;

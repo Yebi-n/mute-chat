@@ -1,4 +1,5 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { dispatchPendingPushes } from './notifications';
 
 export type MediaPurpose = 'room-cover' | 'chat' | 'story' | 'profile-avatar';
 
@@ -66,8 +67,10 @@ export async function uploadValidatedImage(input: UploadInput) {
   const { data, error: validationError } = await client.functions.invoke('validate-media', {
     body: { uploadId: ticket.upload_id },
   });
-  if (validationError) throw validationError;
-  if (!data?.valid) throw new Error('Media validation failed.');
+  if (validationError) {
+    throw new Error(`MEDIA_VALIDATION_FAILED: ${validationError.message}`);
+  }
+  if (!data?.valid) throw new Error('MEDIA_VALIDATION_REJECTED');
 
   return data as {
     valid: true;
@@ -92,5 +95,6 @@ export async function sendUploadedImages(input: {
     p_reply_to_message_id: input.replyToMessageId ?? null,
   });
   if (error) throw error;
+  dispatchPendingPushes().catch(() => undefined);
   return data as string;
 }

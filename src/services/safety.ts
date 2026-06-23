@@ -48,7 +48,12 @@ export async function submitReport(input: {
     p_detail: input.detail ?? '',
   });
   if (error) throw error;
-  return data as string;
+  const reportId = data as string;
+  requireClient().functions.invoke('send-report-email', {
+    method: 'POST',
+    body: { reportId },
+  }).catch(() => undefined);
+  return reportId;
 }
 
 export async function requestAccountDeletion() {

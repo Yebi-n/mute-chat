@@ -8,6 +8,19 @@ function requireClient() {
   return supabase;
 }
 
+function authError(error: unknown) {
+  if (!error) return new Error('알 수 없는 인증 오류가 발생했습니다.');
+  if (error instanceof Error && error.message && error.message !== '[object Object]') return error;
+  if (typeof error === 'object') {
+    const record = error as Record<string, unknown>;
+    const nested = record.error as Record<string, unknown> | undefined;
+    const message = record.message ?? record.error_description ?? record.code ?? nested?.message ?? nested?.code;
+    if (typeof message === 'string' && message && message !== '[object Object]') return new Error(message);
+  }
+  if (typeof error === 'string' && error && error !== '[object Object]') return new Error(error);
+  return new Error('인증 요청에 실패했습니다. 잠시 후 다시 시도해주세요.');
+}
+
 export function normalizeKoreanPhoneNumber(value: string) {
   const digits = value.replace(/\D/g, '');
   if (digits.startsWith('82')) return `+${digits}`;
@@ -15,24 +28,12 @@ export function normalizeKoreanPhoneNumber(value: string) {
   return `+82${digits}`;
 }
 
-function generateTemporaryPassword() {
-  const bytes = new Uint8Array(24);
-  if (globalThis.crypto?.getRandomValues) {
-    globalThis.crypto.getRandomValues(bytes);
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = Math.floor(Math.random() * 256);
-    }
-  }
-  return `Mute!${Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('')}`;
-}
-
 export async function signInWithPhonePassword(phoneNumber: string, password: string) {
   const { data, error } = await requireClient().auth.signInWithPassword({
     phone: normalizeKoreanPhoneNumber(phoneNumber),
     password,
   });
-  if (error) throw error;
+  if (error) throw authError(error);
   return data.session;
 }
 
@@ -44,15 +45,36 @@ export function adminIdToEmail(adminId: string) {
   return `${normalized}@admin.mute.app`;
 }
 
+export function testIdToEmail(testId: string) {
+  const normalized = testId.trim().toLowerCase();
+  if (!/^[a-z][a-z0-9-]{2,31}$/.test(normalized)) {
+    throw new Error('Invalid test user ID.');
+  }
+  return `${normalized}@user.mute.app`;
+}
+
 export async function signInWithAdminId(adminId: string, password: string) {
   const { data, error } = await requireClient().auth.signInWithPassword({
     email: adminIdToEmail(adminId),
     password,
   });
-  if (error) throw error;
+  if (error) throw authError(error);
   if (data.user.app_metadata?.admin_role !== 'super_admin') {
     await requireClient().auth.signOut();
     throw new Error('Administrator permission is required.');
+  }
+  return data.session;
+}
+
+export async function signInWithTestId(testId: string, password: string) {
+  const { data, error } = await requireClient().auth.signInWithPassword({
+    email: testIdToEmail(testId),
+    password,
+  });
+  if (error) throw authError(error);
+  if (data.user.app_metadata?.admin_role === 'super_admin') {
+    await requireClient().auth.signOut();
+    throw new Error('Use administrator login.');
   }
   return data.session;
 }
@@ -64,20 +86,21 @@ export async function signUpWithPhonePassword(phoneNumber: string, password: str
     password,
     options: { channel: 'sms' },
   });
-  if (error) throw error;
+  if (error) throw authError(error);
   return { phone, session: data.session };
 }
 
 export async function requestSignUpPhoneOtp(phoneNumber: string, temporaryPassword?: string) {
   const phone = normalizeKoreanPhoneNumber(phoneNumber);
-  const signupPassword = temporaryPassword ?? generateTemporaryPassword();
-  const { data, error } = await requireClient().auth.signUp({
+  const { data, error } = await requireClient().auth.signInWithOtp({
     phone,
-    password: signupPassword,
-    options: { channel: 'sms' },
+    options: {
+      shouldCreateUser: true,
+      channel: 'sms',
+    },
   });
-  if (error) throw error;
-  return { phone, session: data.session, temporaryPassword: signupPassword };
+  if (error) throw authError(error);
+  return { phone, session: data.session, temporaryPassword: temporaryPassword ?? '' };
 }
 
 export async function checkPhoneSignUpStatus(phoneNumber: string) {
@@ -85,7 +108,7 @@ export async function checkPhoneSignUpStatus(phoneNumber: string) {
   const { data, error } = await requireClient().rpc('check_phone_signup_status', {
     p_phone: phone,
   });
-  if (error) throw error;
+  if (error) throw authError(error);
   const row = Array.isArray(data) ? data[0] : data;
   return {
     phone,
@@ -100,7 +123,7 @@ export async function requestPasswordRecoveryOtp(phoneNumber: string) {
     phone,
     options: { shouldCreateUser: false },
   });
-  if (error) throw error;
+  if (error) throw authError(error);
   return phone;
 }
 
@@ -109,7 +132,7 @@ export async function resendPhoneOtp(phone: string) {
     phone,
     options: { shouldCreateUser: false },
   });
-  if (error) throw error;
+  if (error) throw authError(error);
 }
 
 export async function verifyPhoneOtp(phone: string, token: string) {
@@ -118,25 +141,25 @@ export async function verifyPhoneOtp(phone: string, token: string) {
     token,
     type: 'sms',
   });
-  if (error) throw error;
+  if (error) throw authError(error);
   return data.session;
 }
 
 export async function updateCurrentUserPassword(password: string) {
   const { data, error } = await requireClient().auth.updateUser({ password });
-  if (error) throw error;
+  if (error) throw authError(error);
   return data.user;
 }
 
 export async function getCurrentSession(): Promise<Session | null> {
   if (!supabase) return null;
   const { data, error } = await supabase.auth.getSession();
-  if (error) throw error;
+  if (error) throw authError(error);
   return data.session;
 }
 
 export async function signOut() {
   if (!supabase) return;
   const { error } = await supabase.auth.signOut({ scope: 'local' });
-  if (error) throw error;
+  if (error) throw authError(error);
 }

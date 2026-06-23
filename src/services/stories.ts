@@ -72,9 +72,10 @@ export async function addStoryComment(storyId: string, body: string) {
   return data as string;
 }
 
-export async function updateStoryContent(storyId: string, title: string, blocks: StoryBlockInput[]) {
-  const { error } = await requireClient().rpc('update_story_content', {
+export async function updateStoryContent(storyId: string, title: string, blocks: StoryBlockInput[], visibility?: 'room' | 'public') {
+  const { error } = await requireClient().rpc('update_story_content_v2', {
     p_story_id: storyId,
+    p_visibility: visibility ?? null,
     p_title: title,
     p_blocks: blocks,
   });

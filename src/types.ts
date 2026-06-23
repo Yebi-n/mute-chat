@@ -4,6 +4,7 @@ export type Room = {
   id: string;
   name: string;
   description: string;
+  lastMessage?: string;
   tags: string[];
   memberCount: number;
   maxMembers: number;
@@ -17,5 +18,7 @@ export type Room = {
   emoji: string;
   imageColor: string;
   coverUri?: string;
+  createdAt?: number;
   updatedAt?: number;
+  isSample?: boolean;
 };

@@ -11,7 +11,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "app.mute.chat",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIViewControllerBasedStatusBarAppearance": true
       }
     },
     "android": {
@@ -61,7 +62,8 @@
           "iosAppId": "ca-app-pub-3940256099942544~1458002511",
           "userTrackingUsageDescription": "맞춤형 광고 제공 여부를 선택하기 위해 기기 광고 식별자 접근 권한을 요청합니다."
         }
-      ]
+      ],
+      "expo-iap"
     ],
     "extra": {
       "brand": {

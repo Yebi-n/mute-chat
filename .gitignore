@@ -39,7 +39,6 @@ yarn-error.*
 *.tsbuildinfo
 
 # generated native folders
-/ios
 /android
 
 # local credentials and bootstrap artifacts

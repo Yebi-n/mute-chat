@@ -45,7 +45,8 @@ Deno.serve(async (request) => {
   const mime = detectedMime(bytes);
   const allowed = mime === upload.expected_mime_type &&
     bytes.byteLength === upload.expected_byte_size &&
-    !(upload.bucket_id === 'profile-avatars' && mime === 'image/gif');
+    !(upload.bucket_id === 'profile-avatars' && mime === 'image/gif') &&
+    !(mime === 'image/gif' && bytes.byteLength > 5 * 1024 * 1024);
 
   if (!allowed) {
     await supabase.storage.from(upload.bucket_id).remove([upload.object_path]);

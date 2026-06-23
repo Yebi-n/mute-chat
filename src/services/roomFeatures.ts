@@ -1,4 +1,5 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { dispatchPendingPushes } from './notifications';
 
 function requireClient() {
   if (!isSupabaseConfigured || !supabase) {
@@ -20,6 +21,7 @@ export async function kickOrBanRoomMember(input: {
     p_reason: input.reason ?? '',
   });
   if (error) throw error;
+  dispatchPendingPushes().catch(() => undefined);
 }
 
 export async function unbanRoomMember(roomId: string, userId: string) {
@@ -41,6 +43,32 @@ export async function listBlockedRoomMembers(roomId:string){
   return data??[];
 }
 
+export async function listDepartedRoomMembers(roomId: string) {
+  const client = requireClient();
+  const { data, error } = await client.rpc('list_departed_room_members', {
+    p_room_id: roomId,
+  });
+  if (error) throw error;
+  const rows = (data ?? []) as {
+    user_id: string;
+    display_name: string;
+    avatar_asset_path: string | null;
+    left_at: string | null;
+  }[];
+  const paths = [...new Set(rows.map((row) => row.avatar_asset_path).filter((value): value is string => Boolean(value)))];
+  const signedByPath = new Map<string, string>();
+  await Promise.all(paths.map(async (path) => {
+    const { data: signed } = await client.storage.from('chat-media').createSignedUrl(path, 3600);
+    if (signed?.signedUrl) signedByPath.set(path, signed.signedUrl);
+  }));
+  return rows.map((row) => ({
+    userId: row.user_id as string,
+    name: row.display_name as string,
+    avatarUri: row.avatar_asset_path ? signedByPath.get(row.avatar_asset_path as string) : undefined,
+    leftAt: row.left_at as string | null,
+  }));
+}
+
 export async function configureRoomAccess(input: {
   roomId: string;
   visibility: 'public' | 'private';
@@ -52,6 +80,7 @@ export async function configureRoomAccess(input: {
     p_pin: input.pin || null,
   });
   if (error) throw error;
+  dispatchPendingPushes().catch(() => undefined);
 }
 
 export async function verifyRoomPin(roomId: string, pin: string) {
@@ -71,6 +100,34 @@ export async function setRoomPinned(roomId: string, pinned: boolean) {
   if (error) throw error;
 }
 
+export async function listPinnedRoomIds() {
+  const { data, error } = await requireClient()
+    .from('room_user_preferences')
+    .select('room_id')
+    .eq('pinned', true);
+  if (error) throw error;
+  return (data ?? []).map((row) => row.room_id as string);
+}
+
+export async function leaveRoom(roomId:string) {
+  const { error } = await requireClient().rpc('leave_room', { p_room_id: roomId });
+  if (error) throw error;
+}
+
+export async function getRoomNotificationsEnabled(roomId:string) {
+  const {data,error}=await requireClient().rpc('get_room_notifications_enabled',{p_room_id:roomId});
+  if(error)throw error;
+  return data!==false;
+}
+
+export async function setRoomNotificationsEnabled(roomId:string,enabled:boolean) {
+  const {error}=await requireClient().rpc('set_room_notifications_enabled',{
+    p_room_id:roomId,
+    p_enabled:enabled,
+  });
+  if(error)throw error;
+}
+
 export async function setRoomMemberRole(roomId: string, userId: string, role: 'member' | 'cohost') {
   const { error } = await requireClient().rpc('set_room_member_role', {
     p_room_id: roomId,
@@ -78,6 +135,7 @@ export async function setRoomMemberRole(roomId: string, userId: string, role: 'm
     p_role: role,
   });
   if (error) throw error;
+  dispatchPendingPushes().catch(() => undefined);
 }
 
 export async function transferRoomOwnership(roomId: string, userId: string) {
@@ -86,6 +144,7 @@ export async function transferRoomOwnership(roomId: string, userId: string) {
     p_target_user_id: userId,
   });
   if (error) throw error;
+  dispatchPendingPushes().catch(() => undefined);
 }
 
 export async function setRoomMemberMute(roomId: string, userId: string, durationSeconds: number) {
@@ -95,6 +154,7 @@ export async function setRoomMemberMute(roomId: string, userId: string, duration
     p_duration_seconds: durationSeconds,
   });
   if (error) throw error;
+  dispatchPendingPushes().catch(() => undefined);
   return data as string;
 }
 
@@ -104,4 +164,5 @@ export async function clearRoomMemberMute(roomId: string, userId: string) {
     p_target_user_id: userId,
   });
   if (error) throw error;
+  dispatchPendingPushes().catch(() => undefined);
 }

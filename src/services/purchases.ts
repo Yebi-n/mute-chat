@@ -13,3 +13,25 @@ export async function purchaseProduct(productId: string) {
   if (error) throw error;
   return Array.isArray(data) ? data[0] : data;
 }
+
+export async function purchaseStoreProduct(_productId: string): Promise<{
+  pointBalance: number;
+  credited: boolean;
+  transactionId: string;
+}> {
+  throw new Error('STORE_PURCHASE_PLATFORM_NOT_AVAILABLE');
+}
+
+export async function listStoreEntitlements() {
+  if (!isSupabaseConfigured || !supabase) return [];
+  const { data, error } = await supabase
+    .from('user_entitlements')
+    .select('product_id,entitlement_type,expires_at')
+    .in('entitlement_type', ['app_theme', 'ad_free']);
+  if (error) throw error;
+  return (data ?? []).map((row) => ({
+    productId: row.product_id as string,
+    type: row.entitlement_type as string,
+    expiresAt: row.expires_at as string | null,
+  }));
+}

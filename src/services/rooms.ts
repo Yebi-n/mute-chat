@@ -52,6 +52,18 @@ export async function createRoom(input: CreateRoomInput) {
   return data as string;
 }
 
+export async function updateRoom(input: CreateRoomInput & { roomId:string }) {
+  const { error } = await requireClient().rpc('update_room_details', {
+    p_room_id: input.roomId,
+    p_name: input.name,
+    p_description: input.description,
+    p_category: input.category,
+    p_max_members: input.maxMembers,
+    p_region: input.region ?? null,
+  });
+  if (error) throw error;
+}
+
 export async function listRooms() {
   const client = requireClient();
   const { data, error } = await client
@@ -64,21 +76,16 @@ export async function listRooms() {
   const rows=(data ?? []) as ServerRoom[];
   const roomIds=rows.map((row)=>row.id);
   const { data: membershipRows, error: membershipError } = roomIds.length
-    ? await client
-        .from('room_memberships')
-        .select('room_id')
-        .in('room_id', roomIds)
-        .eq('status', 'active')
+    ? await client.rpc('get_room_member_counts', { p_room_ids: roomIds })
     : { data: [], error: null };
   if (membershipError) throw membershipError;
   const memberCountByRoom = new Map<string, number>();
-  (membershipRows ?? []).forEach((row) => {
-    memberCountByRoom.set(row.room_id as string, (memberCountByRoom.get(row.room_id as string) ?? 0) + 1);
-  });
+  (membershipRows ?? []).forEach((row: { room_id: string; member_count: number | string }) => memberCountByRoom.set(row.room_id, Number(row.member_count ?? 0)));
   return Promise.all(rows.map(async(row)=>{
     const baseRow = { ...row, member_count: memberCountByRoom.get(row.id) ?? 0 };
     if(!row.cover_asset_path)return baseRow;
-    const {data:signed}=await client.storage.from('room-covers').createSignedUrl(row.cover_asset_path,3600);
+    const {data:signed,error:signedError}=await client.storage.from('room-covers').createSignedUrl(row.cover_asset_path,3600);
+    if(signedError)return baseRow;
     return {...baseRow,cover_url:signed?.signedUrl};
   }));
 }
@@ -143,7 +150,7 @@ export async function listRoomMembers(roomId: string) {
     return {
       userId: row.user_id as string,
       role: row.role as 'owner' | 'cohost' | 'member',
-      name: profile?.name ?? '멤버',
+      name: profile?.name?.trim() || '멤버',
       intro: profile?.intro ?? '',
       avatarUrl: profile?.avatarUrl,
       mutedUntil: mutedUntilByUserId.get(row.user_id as string) ?? null,
@@ -159,6 +166,13 @@ export async function setRoomCover(roomId:string,uploadId:string){
   if(error)throw error;
 }
 
+export async function clearRoomCover(roomId:string){
+  const {error}=await requireClient().rpc('clear_room_cover',{
+    p_room_id:roomId,
+  });
+  if(error)throw error;
+}
+
 export async function setRoomOwnerProfile(input:{
   roomId:string;
   displayName:string;
@@ -170,6 +184,13 @@ export async function setRoomOwnerProfile(input:{
     p_display_name:input.displayName,
     p_introduction:input.introduction,
     p_avatar_upload_id:input.avatarUploadId??null,
+  });
+  if(error)throw error;
+}
+
+export async function clearRoomProfileAvatar(roomId:string){
+  const {error}=await requireClient().rpc('clear_room_profile_avatar',{
+    p_room_id:roomId,
   });
   if(error)throw error;
 }

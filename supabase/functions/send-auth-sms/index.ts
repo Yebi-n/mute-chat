@@ -118,7 +118,7 @@ Deno.serve(async (request) => {
     await sendSolapiSms(
       normalizeKoreanRecipient(phone),
       normalizeSenderNumber(requiredSecret('SOLAPI_SENDER_NUMBER')),
-      `[뮤트] 인증번호는 ${otp}입니다. 타인에게 공유하지 마세요.`,
+      `[\uBBA4\uD2B8] \uC778\uC99D\uBC88\uD638\uB294 ${otp}\uC785\uB2C8\uB2E4. \uD0C0\uC778\uC5D0\uAC8C \uACF5\uC720\uD558\uC9C0 \uB9C8\uC138\uC694.`,
     );
 
     return Response.json({ message: 'Message sent successfully.' });
@@ -126,6 +126,6 @@ Deno.serve(async (request) => {
     console.error('send-auth-sms failed', {
       message: error instanceof Error ? error.message : 'Unknown error',
     });
-    return errorResponse(500, '인증번호 발송에 실패했습니다. 잠시 후 다시 시도해 주세요.');
+    return errorResponse(500, '\uC778\uC99D\uBC88\uD638 \uBC1C\uC1A1\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4. \uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uC8FC\uC138\uC694.');
   }
 });

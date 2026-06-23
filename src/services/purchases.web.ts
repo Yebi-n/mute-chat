@@ -5,3 +5,15 @@ export async function configurePurchases(_appUserId: string) {}
 export async function purchaseProduct(_productId: string): Promise<never> {
   throw new Error('NATIVE_PURCHASE_REQUIRED');
 }
+
+export async function purchaseStoreProduct(_productId: string): Promise<{
+  pointBalance: number;
+  credited: boolean;
+  transactionId: string;
+}> {
+  throw new Error('NATIVE_PURCHASE_REQUIRED');
+}
+
+export async function listStoreEntitlements() {
+  return [];
+}

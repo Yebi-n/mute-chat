@@ -11,6 +11,15 @@ The Edge Function only accepts the Supabase service-role bearer token. Never pla
 that token in the app, repository, public environment variables, or EAS client
 configuration.
 
+The app-side notification UI is the native OS notification: the app icon appears
+on the left, chat notifications use the sender's room profile name as the title,
+and the body is the chat preview. Join requests use the room name as the title
+and `{requested_name}님이 가입 신청을 보냈습니다.` as the body.
+
+Important: push rows are not delivered merely because they exist in
+`push_outbox`. The Edge Function must be called by Supabase Cron or another
+trusted scheduler.
+
 ## Schedule in Supabase
 
 Configure the schedule in the Supabase Dashboard after the production project is
@@ -41,6 +50,21 @@ credential out of migration history.
 - Test one chat notification on a physical iOS device.
 - Test one chat notification on a physical Android device.
 - Test join-request and join-result deep links.
+- Confirm the scheduler has executed `send-push-outbox` at least once and
+  `push_outbox.sent_at` is being filled.
 - Verify notification permission denial does not block app use.
 - Verify the app badge and in-app unread count remain consistent.
 - Confirm no service-role value exists in the client bundle.
+
+## Realtime verification
+
+- On 2026-06-22, two authenticated test accounts confirmed message persistence,
+  Realtime `messages` INSERT delivery, notification-inbox creation,
+  push-outbox creation, and room notification OFF filtering.
+- The earlier false failure came from the test script retaining only one event
+  ID while the room emitted multiple INSERT events. The test now accumulates all
+  received IDs and verifies that the target message ID is included.
+- No polling fallback is enabled. Visible chat updates use Supabase Realtime to
+  avoid repeated database reads.
+- Push jobs for test accounts correctly reached `NO_ACTIVE_DEVICE` because those
+  accounts had no registered physical-device token.
