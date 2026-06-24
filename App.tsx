@@ -1663,32 +1663,43 @@ function AuthenticatedApp({
     }
     if (showSpinner) setDataRefreshing(true);
     try {
-      const [serverRooms, activeIds, verification, promotions] =
-        await Promise.all([
+      const [roomsResult, activeIdsResult, verificationResult, promotionsResult] =
+        await Promise.allSettled([
           listRooms(),
           listMyActiveRoomIds(),
           getVerificationStatus(),
           listRoomPromotions(),
         ]);
-      const mapped = serverRooms
-        .map(mapServerRoom)
-        .filter((room) => room.id !== DEMO_ROOM_ID);
-      setRoomData(mapped);
-      setJoinedIds([...new Set(activeIds)]);
-      setAdultVerified(verification.adultVerified);
-      setAdultContentWebOptedIn(verification.adultContentWebOptedIn);
-      setIosAdultContentEnabled(verification.iosAdultContentEnabled);
-      setPromotionTimestamps(
-        Object.fromEntries(
-          promotions.map((row) => [
-            row.room_id,
-            new Date(row.last_promoted_at).getTime(),
-          ]),
-        ),
-      );
-      setSelectedRoom((current) =>
-        current.id === DEMO_ROOM_ID && mapped.length ? mapped[0] : current,
-      );
+      if (roomsResult.status === "fulfilled") {
+        const mapped = roomsResult.value
+          .map(mapServerRoom)
+          .filter((room) => room.id !== DEMO_ROOM_ID);
+        setRoomData(mapped);
+        setSelectedRoom((current) =>
+          current.id === DEMO_ROOM_ID && mapped.length ? mapped[0] : current,
+        );
+      }
+      if (activeIdsResult.status === "fulfilled")
+        setJoinedIds([...new Set(activeIdsResult.value)]);
+      if (verificationResult.status === "fulfilled") {
+        setAdultVerified(verificationResult.value.adultVerified);
+        setAdultContentWebOptedIn(
+          verificationResult.value.adultContentWebOptedIn,
+        );
+        setIosAdultContentEnabled(
+          verificationResult.value.iosAdultContentEnabled,
+        );
+      }
+      if (promotionsResult.status === "fulfilled")
+        setPromotionTimestamps(
+          Object.fromEntries(
+            promotionsResult.value.map((row) => [
+              row.room_id,
+              new Date(row.last_promoted_at).getTime(),
+            ]),
+          ),
+        );
+      if (roomsResult.status === "rejected") throw roomsResult.reason;
     } catch (error) {
       Alert.alert("방 목록 불러오기 실패", serverErrorMessage(error));
     } finally {
@@ -2157,6 +2168,7 @@ function AuthenticatedApp({
           <RoomDetail
             room={selectedRoom}
             joined={joinedIds.includes(selectedRoom.id)}
+            currentUserId={session?.user.id}
             adminReadOnly={effectiveAdminReadOnly}
             isSuperAdmin={isSuperAdmin}
             onAdminReportUser={(id, label) => adminReport("user", id, label)}
@@ -4414,6 +4426,7 @@ function RoomRow({
 function RoomDetail({
   room,
   joined,
+  currentUserId: providedCurrentUserId,
   adminReadOnly,
   isSuperAdmin,
   onAdminReportUser,
@@ -4426,6 +4439,7 @@ function RoomDetail({
 }: {
   room: Room;
   joined: boolean;
+  currentUserId?: string;
   adminReadOnly: boolean;
   isSuperAdmin: boolean;
   onAdminReportUser: (id: string, label: string) => void;
@@ -4450,16 +4464,22 @@ function RoomDetail({
   const [storyOverlayId, setStoryOverlayId] = useState<string | null>(null);
   const [storyWriteOpen, setStoryWriteOpen] = useState(false);
   const [storyPanelKey, setStoryPanelKey] = useState(0);
-  const [currentUserId, setCurrentUserId] = useState<string | undefined>();
+  const [currentUserId, setCurrentUserId] = useState<string | undefined>(
+    providedCurrentUserId,
+  );
   const isPrivateRoom = Boolean(room.isPrivate || room.tags.includes("비밀방"));
 
   useEffect(() => {
+    if (providedCurrentUserId) {
+      setCurrentUserId(providedCurrentUserId);
+      return;
+    }
     if (!supabase) return;
     supabase.auth
       .getUser()
       .then(({ data }) => setCurrentUserId(data.user?.id))
       .catch(() => undefined);
-  }, []);
+  }, [providedCurrentUserId]);
   useEffect(() => {
     if (!isSupabaseConfigured || !isUuid(room.id)) {
       setMembers(room.id === DEMO_ROOM_ID ? membersForRoom(room) : []);
@@ -6273,6 +6293,7 @@ function ChatRoom({
       <RoomDetail
         room={room}
         joined
+        currentUserId={currentUserId}
         adminReadOnly={readOnly}
         isSuperAdmin={isSuperAdmin}
         onAdminReportUser={onAdminReportUser}

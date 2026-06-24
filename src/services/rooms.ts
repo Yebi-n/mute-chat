@@ -75,12 +75,19 @@ export async function listRooms() {
   if (error) throw error;
   const rows=(data ?? []) as ServerRoom[];
   const roomIds=rows.map((row)=>row.id);
-  const { data: membershipRows, error: membershipError } = roomIds.length
-    ? await client.rpc('get_room_member_counts', { p_room_ids: roomIds })
-    : { data: [], error: null };
-  if (membershipError) throw membershipError;
   const memberCountByRoom = new Map<string, number>();
-  (membershipRows ?? []).forEach((row: { room_id: string; member_count: number | string }) => memberCountByRoom.set(row.room_id, Number(row.member_count ?? 0)));
+  if (roomIds.length) {
+    const { data: membershipRows, error: membershipError } = await client.rpc(
+      'get_room_member_counts',
+      { p_room_ids: roomIds },
+    );
+    if (!membershipError) {
+      (membershipRows ?? []).forEach(
+        (row: { room_id: string; member_count: number | string }) =>
+          memberCountByRoom.set(row.room_id, Number(row.member_count ?? 0)),
+      );
+    }
+  }
   return Promise.all(rows.map(async(row)=>{
     const baseRow = { ...row, member_count: memberCountByRoom.get(row.id) ?? 0 };
     if(!row.cover_asset_path)return baseRow;
@@ -257,7 +264,7 @@ export async function listRoomMembersVisible(roomId: string): Promise<ServerRoom
   const { data, error } = await client.rpc('list_room_members_public', {
     p_room_id: roomId,
   });
-  if (error) throw error;
+  if (error) return listRoomMembers(roomId);
   const rows = (data ?? []) as Array<{
     user_id: string;
     display_name: string | null;

@@ -161,5 +161,11 @@ export async function getCurrentSession(): Promise<Session | null> {
 export async function signOut() {
   if (!supabase) return;
   const { error } = await supabase.auth.signOut({ scope: 'local' });
-  if (error) throw authError(error);
+  if (!error) return;
+  try {
+    await supabase.auth.signOut();
+  } catch {
+    // Logging out should not trap the user in the app when the network or
+    // remote session cleanup fails. The local session is the UX boundary here.
+  }
 }
