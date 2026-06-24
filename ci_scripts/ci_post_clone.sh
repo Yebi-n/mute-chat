@@ -1,18 +1,28 @@
 #!/bin/sh
-set -e
+set -eu
 
-# Xcode Cloud's build image has no Node.js preinstalled; install it.
-brew install node
+REPOSITORY_PATH="${CI_PRIMARY_REPOSITORY_PATH:-$(pwd)}"
 
-# CocoaPods is usually preinstalled on Xcode Cloud, but install it if missing.
-if ! command -v pod >/dev/null 2>&1; then
-  brew install cocoapods
+echo "Using repository path: $REPOSITORY_PATH"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "Node.js was not found; installing with Homebrew."
+  brew install node
+else
+  echo "Using Node.js: $(node --version)"
 fi
 
-# Install JS dependencies at the repository root.
-cd "$CI_PRIMARY_REPOSITORY_PATH"
+if ! command -v pod >/dev/null 2>&1; then
+  echo "CocoaPods was not found; installing with Homebrew."
+  brew install cocoapods
+else
+  echo "Using CocoaPods: $(pod --version)"
+fi
+
+cd "$REPOSITORY_PATH"
+echo "Installing JavaScript dependencies."
 npm ci
 
-# Install CocoaPods dependencies.
 cd ios
+echo "Installing CocoaPods dependencies."
 pod install
