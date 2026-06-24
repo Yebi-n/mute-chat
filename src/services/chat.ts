@@ -122,6 +122,12 @@ export async function getRoomMessageCreatedAt(messageId: string) {
 
 export async function listRoomMessages(roomId: string, limit = 50, before?: string) {
   const client = requireClient();
+  const { data: membership } = await client
+    .from('room_memberships')
+    .select('joined_at')
+    .eq('room_id', roomId)
+    .eq('status', 'active')
+    .maybeSingle();
   let messageQuery = client
     .from('messages')
     .select('id,sender_user_id,kind,body,reply_to_message_id,secret_recipient_user_id,media_group_id,story_id,created_at')
@@ -129,6 +135,7 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(limit);
+  if (membership?.joined_at) messageQuery = messageQuery.gte('created_at', membership.joined_at as string);
   if (before) messageQuery = messageQuery.lt('created_at', before);
   const { data: descendingRows, error: messageError } = await messageQuery;
   if (messageError) throw messageError;

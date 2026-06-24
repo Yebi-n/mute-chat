@@ -1,5 +1,7 @@
 ﻿import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { NavigationContainer } from "@react-navigation/native";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import type { Session } from "@supabase/supabase-js";
 import * as Clipboard from "expo-clipboard";
 import * as ImageManipulator from "expo-image-manipulator";
@@ -15,6 +17,7 @@ import ExternalColorPicker, {
   InputWidget,
   Panel3,
 } from "reanimated-color-picker";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import {
   ActivityIndicator,
   Alert,
@@ -63,7 +66,8 @@ import {
   decideRoomJoin,
   listMyActiveRoomIds,
   listPendingRoomJoinRequests,
-  listRoomMembers,
+  listPendingRoomJoinRequestsWithAvatars,
+  listRoomMembersVisible,
   listRooms,
   requestRoomJoinWithAvatar,
   setRoomCover,
@@ -82,6 +86,7 @@ import {
   listNotificationInbox,
   markAllNotificationsRead,
   markNotificationRead,
+  markRoomJoinRequestNotificationsRead,
   registerPushDevice,
   ServerNotice,
   setGlobalNotificationsEnabled,
@@ -171,6 +176,19 @@ type Screen =
   | "adultVerification"
   | "create"
   | "editRoom";
+type AppStackParamList = {
+  Main: undefined;
+  Search: undefined;
+  Ranking: undefined;
+  Detail: undefined;
+  Apply: undefined;
+  Chat: undefined;
+  EditRoom: undefined;
+  Settings: undefined;
+  AdultVerification: undefined;
+  Create: undefined;
+};
+const AppStack = createNativeStackNavigator<AppStackParamList>();
 type BottomTab = "discover" | "myRooms" | "stories" | "profile";
 type IconName = keyof typeof Ionicons.glyphMap;
 type ChatPanel =
@@ -182,16 +200,25 @@ type ChatPanel =
   | "profile"
   | "roomSettings"
   | null;
+type ChatStackParamList = {
+  ChatMain: undefined;
+  ChatOverview: undefined;
+  ChatStories: undefined;
+  ChatApplications: undefined;
+  ChatMembers: undefined;
+  ChatBlocked: undefined;
+  ChatRoomSettings: undefined;
+};
+const ChatStack = createNativeStackNavigator<ChatStackParamList>();
 type ComposerTool = "media" | "style" | "secret" | null;
 const CHAT_COLLAPSE_CHAR_THRESHOLD = 140;
 const CHAT_COLLAPSE_LINE_LIMIT = 4;
 const DEMO_ROOM_ID = "green-table";
 const DEMO_ROOM: Room = {
   id: DEMO_ROOM_ID,
-  name: "샘플 라운지",
-  description:
-    "채팅 유형, 가입신청, 스토리, 공지선 등 모든 샘플 동작을 확인하는 더미 방입니다.",
-  tags: ["샘플"],
+  name: "테스트 방",
+  description: "내부 확인용 방입니다.",
+  tags: [],
   memberCount: 38,
   maxMembers: 50,
   region: "서울",
@@ -204,6 +231,18 @@ const DEMO_ROOM: Room = {
   isSample: true,
 };
 const DEMO_PUBLIC_STORY_ROOM = DEMO_ROOM;
+const EMPTY_ROOM: Room = {
+  id: "",
+  name: "",
+  description: "",
+  tags: [],
+  memberCount: 0,
+  maxMembers: 1,
+  category: "general",
+  topSpaceCount: 0,
+  emoji: "○",
+  imageColor: "#E8ECEA",
+};
 type RoomMember = {
   userId?: string;
   name: string;
@@ -318,7 +357,7 @@ type ChatMessage =
     });
 const IOS_HIDE_ADULT_UI = Platform.OS === "ios";
 const SCREEN_WIDTH=Dimensions.get("window").width;
-const CHAT_IMAGE_GRID_WIDTH = Math.min(216, Math.floor(SCREEN_WIDTH * 0.55));
+const CHAT_IMAGE_GRID_WIDTH = Math.min(196, Math.floor(SCREEN_WIDTH * 0.48));
 const CHAT_IMAGE_GRID_CELL = Math.floor((CHAT_IMAGE_GRID_WIDTH - 2) / 2);
 const APP_LOCK_ENABLED_KEY = "mute:app-lock:enabled";
 const APP_LOCK_PIN_KEY = "mute:app-lock:pin";
@@ -356,17 +395,22 @@ function GlobalBusyOverlay() {
   );
 }
 
-function Pressable(props: React.ComponentProps<typeof RNPressable>) {
+type AppPressableProps = React.ComponentProps<typeof RNPressable> & {
+  allowRapidPress?: boolean;
+};
+
+function Pressable(props: AppPressableProps) {
+  const { allowRapidPress, ...pressableProps } = props;
   const lastPressAt = useRef(0);
   const onPress = props.onPress;
   return (
     <RNPressable
-      {...props}
+      {...pressableProps}
       onPress={
         onPress
           ? (event) => {
               const now = Date.now();
-              if (now - lastPressAt.current < 700) return;
+              if (!allowRapidPress && now - lastPressAt.current < 700) return;
               lastPressAt.current = now;
               const result = onPress(event) as unknown;
               if (
@@ -985,7 +1029,8 @@ async function pickCroppedImageBatch({
 }
 
 type ChatImageAsset = ImagePicker.ImagePickerAsset & {
-  cropAspect?: "original" | [number, number];
+  cropAspect?: "original" | "free" | [number, number];
+  cropOffset?: { x: number; y: number };
 };
 
 async function pickChatImages(
@@ -1035,26 +1080,32 @@ async function prepareChatImage(asset: ChatImageAsset) {
   const height = Math.max(1, asset.height ?? 1200);
   const requested = asset.cropAspect ?? "original";
   const target =
-    requested === "original" ? width / height : requested[0] / requested[1];
+    requested === "original" || requested === "free"
+      ? width / height
+      : requested[0] / requested[1];
   const ratio = width / height;
+  const focusX = Math.max(-1, Math.min(1, asset.cropOffset?.x ?? 0));
+  const focusY = Math.max(-1, Math.min(1, asset.cropOffset?.y ?? 0));
   const crop =
     ratio > target
       ? {
-          originX: Math.round((width - height * target) / 2),
+          originX: Math.round(((width - height * target) * (focusX + 1)) / 2),
           originY: 0,
           width: Math.round(height * target),
           height,
         }
       : {
           originX: 0,
-          originY: Math.round((height - width / target) / 2),
+          originY: Math.round(((height - width / target) * (focusY + 1)) / 2),
           width,
           height: Math.round(width / target),
         };
   const actions: ImageManipulator.Action[] =
-    requested === "original" ? [] : [{ crop }];
-  const sourceWidth = requested === "original" ? width : crop.width;
-  const sourceHeight = requested === "original" ? height : crop.height;
+    requested === "original" || requested === "free" ? [] : [{ crop }];
+  const sourceWidth =
+    requested === "original" || requested === "free" ? width : crop.width;
+  const sourceHeight =
+    requested === "original" || requested === "free" ? height : crop.height;
   if (Math.max(sourceWidth, sourceHeight) > 1600)
     actions.push(
       sourceWidth >= sourceHeight
@@ -1065,8 +1116,10 @@ async function prepareChatImage(asset: ChatImageAsset) {
     compress: 0.78,
     format: ImageManipulator.SaveFormat.JPEG,
   });
-  const outputWidth = requested === "original" ? width : crop.width;
-  const outputHeight = requested === "original" ? height : crop.height;
+  const outputWidth =
+    requested === "original" || requested === "free" ? width : crop.width;
+  const outputHeight =
+    requested === "original" || requested === "free" ? height : crop.height;
   const scale = Math.min(1, 1600 / Math.max(outputWidth, outputHeight));
   return {
     ...asset,
@@ -1138,39 +1191,46 @@ export default function App() {
     });
     return () => data.subscription.unsubscribe();
   }, [demoMode]);
-  if (!authReady)
-    return (
+  let content: React.ReactNode;
+  if (!authReady) {
+    content = (
       <>
         <SplashScreen />
         <GlobalBusyOverlay />
       </>
     );
-  if (
+  } else if (
     !demoMode &&
     isSupabaseConfigured &&
     (!session || passwordRecoveryActive)
   ) {
-    return (
+    content = (
       <>
         <PhoneAuthScreenV2 onRecoveryStateChange={setPasswordRecoveryActive} />
         <PersistentHomeIndicator />
         <GlobalBusyOverlay />
       </>
     );
+  } else {
+    content = (
+      <>
+        <AppLockGate session={session}>
+          <AuthenticatedApp
+            session={session}
+            onSignedOut={() => {
+              setPasswordRecoveryActive(false);
+              setSession(null);
+            }}
+          />
+        </AppLockGate>
+        <GlobalBusyOverlay />
+      </>
+    );
   }
   return (
-    <>
-      <AppLockGate session={session}>
-        <AuthenticatedApp
-          session={session}
-          onSignedOut={() => {
-            setPasswordRecoveryActive(false);
-            setSession(null);
-          }}
-        />
-      </AppLockGate>
-      <GlobalBusyOverlay />
-    </>
+    <GestureHandlerRootView style={s.flex}>
+      <NavigationContainer>{content}</NavigationContainer>
+    </GestureHandlerRootView>
   );
 }
 
@@ -1230,14 +1290,17 @@ function AppLockGate({
   if (enabled && !unlocked)
     return (
       <>
-        <AppLockScreen
-          session={session}
-          onUnlocked={() => setUnlocked(true)}
-          onDisabled={() => {
-            setEnabled(false);
-            setUnlocked(true);
-          }}
-        />
+        {children}
+        <View style={s.appLockOverlay}>
+          <AppLockScreen
+            session={session}
+            onUnlocked={() => setUnlocked(true)}
+            onDisabled={() => {
+              setEnabled(false);
+              setUnlocked(true);
+            }}
+          />
+        </View>
         <PersistentHomeIndicator />
       </>
     );
@@ -1475,10 +1538,8 @@ function AuthenticatedApp({
   const [screen, setScreen] = useState<Screen>("main");
   const [bottomTab, setBottomTab] = useState<BottomTab>("myRooms");
   const [category, setCategory] = useState<MainTab>("promotion");
-  const [selectedRoom, setSelectedRoom] = useState(DEMO_ROOM);
-  const [roomData, setRoomData] = useState<Room[]>(() =>
-    isSupabaseConfigured ? [] : [DEMO_ROOM],
-  );
+  const [selectedRoom, setSelectedRoom] = useState(EMPTY_ROOM);
+  const [roomData, setRoomData] = useState<Room[]>([]);
   const [dataRefreshing, setDataRefreshing] = useState(isSupabaseConfigured);
   const [joinedIds, setJoinedIds] = useState<string[]>([]);
   const [ownedRoomIds, setOwnedRoomIds] = useState<string[]>([]);
@@ -1520,6 +1581,8 @@ function AuthenticatedApp({
     (adultVerified && (!IOS_HIDE_ADULT_UI || iosAdultContentEnabled));
   const canUseAdultFeatures = isSuperAdmin || adultVerified;
   const [chatInitialPanel, setChatInitialPanel] = useState<ChatPanel>(null);
+  const [returnToNotifications, setReturnToNotifications] = useState(false);
+  const [notificationDrawerSignal, setNotificationDrawerSignal] = useState(0);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -1594,8 +1657,8 @@ function AuthenticatedApp({
   }, [session?.user.id]);
   const reloadAppData = async (showSpinner = false) => {
     if (!isSupabaseConfigured) {
-      setRoomData([DEMO_ROOM]);
-      setJoinedIds([DEMO_ROOM_ID]);
+      setRoomData([]);
+      setJoinedIds([]);
       return;
     }
     if (showSpinner) setDataRefreshing(true);
@@ -1752,6 +1815,7 @@ function AuthenticatedApp({
       return;
     }
     setChatInitialPanel(null);
+    setReturnToNotifications(false);
     setSelectedRoom(room);
     setUnreadCounts((counts) => ({ ...counts, [room.id]: 0 }));
     setAdminReadOnly(false);
@@ -1797,6 +1861,7 @@ function AuthenticatedApp({
     }
     setSelectedRoom(room);
     setAdminReadOnly(Boolean(isSuperAdmin && !joinedIds.includes(room.id)));
+    setReturnToNotifications(notice.destination === "applications");
     setChatInitialPanel(
       notice.destination === "applications" ? "applications" : null,
     );
@@ -1930,157 +1995,6 @@ function AuthenticatedApp({
   const effectiveAdminReadOnly = Boolean(
     adminReadOnly || (isSuperAdmin && !joinedIds.includes(selectedRoom.id)),
   );
-  if (screen === "search")
-    return (
-      <SearchScreen
-        roomData={roomData}
-        query={query}
-        setQuery={setQuery}
-        joinedIds={joinedIds}
-        canSeeAdultRooms={canSeeAdultRooms}
-        isSuperAdmin={isSuperAdmin}
-        onBack={() => setScreen("main")}
-        openRoom={openRoom}
-      />
-    );
-  if (screen === "ranking")
-    return (
-      <RankingScreen
-        roomData={roomData}
-        onBack={() => setScreen("main")}
-        openRoom={openRoom}
-        countFor={topSpaceCount}
-      />
-    );
-  if (screen === "detail")
-    return (
-      <RoomDetail
-        room={selectedRoom}
-        joined={joinedIds.includes(selectedRoom.id)}
-        adminReadOnly={effectiveAdminReadOnly}
-        isSuperAdmin={isSuperAdmin}
-        onAdminReportUser={(id, label) => adminReport("user", id, label)}
-        pending={pendingIds.includes(selectedRoom.id)}
-        onBack={() => setScreen("main")}
-        onApply={() => setScreen("apply")}
-        onEnterChat={() => setScreen("chat")}
-        onEdit={() => setScreen("editRoom")}
-      />
-    );
-  if (screen === "apply")
-    return (
-      <JoinApplication
-        room={selectedRoom}
-        onBack={() => setScreen("detail")}
-        onCompleted={() => setScreen("detail")}
-        onSubmit={async (name, intro, avatarUploadId) => {
-          if (isSupabaseConfigured) {
-            await requestRoomJoinWithAvatar(
-              selectedRoom.id,
-              name,
-              intro,
-              avatarUploadId,
-            );
-          }
-          setPendingIds((ids) => [...new Set([...ids, selectedRoom.id])]);
-          return `${selectedRoom.name}에 가입 신청을 보냈습니다.`;
-        }}
-      />
-    );
-  if (screen === "chat")
-    return (
-      <ChatRoom
-        room={selectedRoom}
-        currentUserId={session?.user.id}
-        readOnly={effectiveAdminReadOnly}
-        isKnownOwner={ownedRoomIds.includes(selectedRoom.id)}
-        isSuperAdmin={isSuperAdmin}
-        onAdminReportUser={(id, label) => adminReport("user", id, label)}
-        onEditRoom={() => setScreen("editRoom")}
-        initialPanel={chatInitialPanel}
-        points={points}
-        promotionAvailableAt={
-          (promotionTimestamps[selectedRoom.id] ?? 0) + 15 * 60 * 1000
-        }
-        topSpaceExpiresAt={topSpaceExpiresAt[selectedRoom.id]}
-        topSpaceRemaining={formatTopSpaceRemaining(
-          topSpaceExpiresAt[selectedRoom.id],
-          now,
-        )}
-        onBoost={(option) => boostRoom(selectedRoom, option)}
-        onPromote={() => promoteRoom(selectedRoom)}
-        onBack={() => {
-          setChatInitialPanel(null);
-          setScreen("main");
-        }}
-      />
-    );
-  if (screen === "editRoom")
-    return (
-      <EditRoom
-        room={selectedRoom}
-        onBack={() =>
-          setScreen(joinedIds.includes(selectedRoom.id) ? "chat" : "detail")
-        }
-        onUpdated={(updated) => {
-          setSelectedRoom(updated);
-          setRoomData((items) =>
-            items.map((item) => (item.id === updated.id ? updated : item)),
-          );
-          setScreen("chat");
-        }}
-      />
-    );
-  if (screen === "settings")
-    return (
-      <Settings
-        adultVerified={adultVerified}
-        isSuperAdmin={isSuperAdmin}
-        onAdultVerification={() => setScreen("adultVerification")}
-        onBack={() => setScreen("main")}
-        onSignedOut={onSignedOut}
-      />
-    );
-  if (screen === "adultVerification") {
-    if (IOS_HIDE_ADULT_UI) {
-      return (
-        <Settings
-          adultVerified={adultVerified}
-          isSuperAdmin={isSuperAdmin}
-          onAdultVerification={() => setScreen("adultVerification")}
-          onBack={() => setScreen("main")}
-          onSignedOut={onSignedOut}
-        />
-      );
-    }
-    return (
-      <AdultVerificationScreen
-        verified={adultVerified}
-        onBack={() => setScreen("settings")}
-        onRefresh={async () => {
-          const status = await getVerificationStatus();
-          setAdultVerified(status.adultVerified);
-          return status.adultVerified;
-        }}
-      />
-    );
-  }
-  if (screen === "create")
-    return (
-      <CreateRoom
-        adultVerified={canUseAdultFeatures}
-        showAdultTab={showAdultTab || isSuperAdmin}
-        onBack={() => setScreen("main")}
-        onCreated={(room) => {
-          setRoomData((items) => [room, ...items]);
-          setJoinedIds((ids) => [...new Set([...ids, room.id])]);
-          setOwnedRoomIds((ids) => [...new Set([...ids, room.id])]);
-          setSelectedRoom(room);
-          setBottomTab("myRooms");
-          setScreen("main");
-        }}
-      />
-    );
   const enrichedRoomData = roomData.map((room) => {
     const summary = roomSummaries[room.id];
     return {
@@ -2094,60 +2008,298 @@ function AuthenticatedApp({
     .sort(
       (a, b) => (topSpaceExpiresAt[b.id] ?? 0) - (topSpaceExpiresAt[a.id] ?? 0),
     );
+  const topSpaceProgress = (room: Room) =>
+    Math.max(
+      0,
+      Math.min(
+        1,
+        ((topSpaceExpiresAt[room.id] ?? 0) - now) /
+          (topSpaceDurations[room.id] || 1),
+      ),
+    );
   return (
-    <MainScreenBridge
-      {...{
-        bottomTab,
-        setBottomTab,
-        category,
-        setCategory,
-        joinedIds,
-        openRoom,
-        activeTopSpaces,
-        now,
-        roomData: enrichedRoomData,
-        adultVerified,
-        showAdultTab,
-        canSeeAdultRooms,
-        isSuperAdmin,
-        points,
-        attendanceAvailableAt,
-        rewardedAdAvailable,
-        rewardLoading,
-        promotionTimestamps,
-        unreadCounts,
-        dataRefreshing,
+    <AppStack.Navigator
+      initialRouteName="Main"
+      screenOptions={{
+        headerShown: false,
+        gestureEnabled: true,
+        animation: "slide_from_right",
       }}
-      onRefresh={() => reloadAppData(true)}
-      onAttendance={() => claimReward("attendance")}
-      onRewardedAd={() => claimReward("rewarded_ad")}
-      openRoomDetail={openRoomDetail}
-      onAdminReportRoom={(room: Room) =>
-        adminReport("room", room.id, room.name)
-      }
-      topSpaceProgress={(room: Room) =>
-        Math.max(
-          0,
-          Math.min(
-            1,
-            ((topSpaceExpiresAt[room.id] ?? 0) - now) /
-              (topSpaceDurations[room.id] || 1),
-          ),
-        )
-      }
-      onNotification={openNotification}
-      onRanking={() => setScreen("ranking")}
-      onOperationsPolicy={openOperationsPolicyPortal}
-      onPointBalanceChange={setPoints}
-      onSearch={() => setScreen("search")}
-      onSettings={() => setScreen("settings")}
-      onCreate={() => setScreen("create")}
-    />
+    >
+      <AppStack.Screen name="Main">
+        {({ navigation }) => {
+          const navigateRoom = async (room: Room) => {
+            if (!canAccessAdultRoom(room)) {
+              Alert.alert("접근 불가", "이 콘텐츠는 현재 iOS에서 이용할 수 없습니다.");
+              return;
+            }
+            setChatInitialPanel(null);
+            setReturnToNotifications(false);
+            setSelectedRoom(room);
+            setUnreadCounts((counts) => ({ ...counts, [room.id]: 0 }));
+            setAdminReadOnly(false);
+            if (room.isSample || joinedIds.includes(room.id)) {
+              navigation.navigate("Chat");
+              return;
+            }
+            if (isSuperAdmin) setAdminReadOnly(true);
+            navigation.navigate("Detail");
+          };
+          const navigateRoomDetail = (room: Room) => {
+            if (!canAccessAdultRoom(room)) {
+              Alert.alert("접근 불가", "이 콘텐츠는 현재 iOS에서 이용할 수 없습니다.");
+              return;
+            }
+            setSelectedRoom(room);
+            setAdminReadOnly(Boolean(isSuperAdmin && !joinedIds.includes(room.id)));
+            navigation.navigate("Detail");
+          };
+          const navigateNotification = (notice: Notice) => {
+            if (notice.destination === "promotion") {
+              setBottomTab("discover");
+              setCategory("promotion");
+              return;
+            }
+            const room = roomData.find((item) => item.id === notice.roomId);
+            if (!room) {
+              Alert.alert("알림 이동 실패", "삭제되었거나 접근할 수 없는 방입니다.");
+              return;
+            }
+            if (!canAccessAdultRoom(room)) {
+              Alert.alert("접근 불가", "이 콘텐츠는 현재 iOS에서 이용할 수 없습니다.");
+              return;
+            }
+            setSelectedRoom(room);
+            setAdminReadOnly(Boolean(isSuperAdmin && !joinedIds.includes(room.id)));
+            setReturnToNotifications(notice.destination === "applications");
+            setChatInitialPanel(
+              notice.destination === "applications" ? "applications" : null,
+            );
+            navigation.navigate(joinedIds.includes(room.id) ? "Chat" : "Detail");
+          };
+          return (
+            <MainScreenBridge
+              {...{
+                bottomTab,
+                setBottomTab,
+                category,
+                setCategory,
+                joinedIds,
+                activeTopSpaces,
+                now,
+                roomData: enrichedRoomData,
+                adultVerified,
+                showAdultTab,
+                canSeeAdultRooms,
+                isSuperAdmin,
+                points,
+                attendanceAvailableAt,
+                rewardedAdAvailable,
+                rewardLoading,
+                promotionTimestamps,
+                unreadCounts,
+                dataRefreshing,
+              }}
+              openRoom={navigateRoom}
+              onRefresh={() => reloadAppData(true)}
+              onAttendance={() => claimReward("attendance")}
+              onRewardedAd={() => claimReward("rewarded_ad")}
+              openRoomDetail={navigateRoomDetail}
+              onAdminReportRoom={(room: Room) =>
+                adminReport("room", room.id, room.name)
+              }
+              topSpaceProgress={topSpaceProgress}
+              onNotification={navigateNotification}
+              notificationDrawerSignal={notificationDrawerSignal}
+              onRanking={() => navigation.navigate("Ranking")}
+              onOperationsPolicy={openOperationsPolicyPortal}
+              onPointBalanceChange={setPoints}
+              onSearch={() => navigation.navigate("Search")}
+              onSettings={() => navigation.navigate("Settings")}
+              onCreate={() => navigation.navigate("Create")}
+            />
+          );
+        }}
+      </AppStack.Screen>
+      <AppStack.Screen name="Search">
+        {({ navigation }) => (
+          <SearchScreen
+            roomData={roomData}
+            query={query}
+            setQuery={setQuery}
+            joinedIds={joinedIds}
+            canSeeAdultRooms={canSeeAdultRooms}
+            isSuperAdmin={isSuperAdmin}
+            onBack={() => navigation.goBack()}
+            openRoom={(room) => {
+              setSelectedRoom(room);
+              setAdminReadOnly(Boolean(isSuperAdmin && !joinedIds.includes(room.id)));
+              navigation.navigate(joinedIds.includes(room.id) ? "Chat" : "Detail");
+            }}
+          />
+        )}
+      </AppStack.Screen>
+      <AppStack.Screen name="Ranking">
+        {({ navigation }) => (
+          <RankingScreen
+            roomData={roomData}
+            onBack={() => navigation.goBack()}
+            openRoom={(room) => {
+              setSelectedRoom(room);
+              navigation.navigate(joinedIds.includes(room.id) ? "Chat" : "Detail");
+            }}
+            countFor={topSpaceCount}
+          />
+        )}
+      </AppStack.Screen>
+      <AppStack.Screen name="Detail">
+        {({ navigation }) => (
+          <RoomDetail
+            room={selectedRoom}
+            joined={joinedIds.includes(selectedRoom.id)}
+            adminReadOnly={effectiveAdminReadOnly}
+            isSuperAdmin={isSuperAdmin}
+            onAdminReportUser={(id, label) => adminReport("user", id, label)}
+            pending={pendingIds.includes(selectedRoom.id)}
+            onBack={() => navigation.goBack()}
+            onApply={() => navigation.navigate("Apply")}
+            onEnterChat={() => navigation.navigate("Chat")}
+            onEdit={() => navigation.navigate("EditRoom")}
+          />
+        )}
+      </AppStack.Screen>
+      <AppStack.Screen name="Apply">
+        {({ navigation }) => (
+          <JoinApplication
+            room={selectedRoom}
+            onBack={() => navigation.goBack()}
+            onCompleted={() => navigation.goBack()}
+            onSubmit={async (name, intro, avatarUploadId) => {
+              if (isSupabaseConfigured) {
+                await requestRoomJoinWithAvatar(
+                  selectedRoom.id,
+                  name,
+                  intro,
+                  avatarUploadId,
+                );
+              }
+              setPendingIds((ids) => [...new Set([...ids, selectedRoom.id])]);
+              return `${selectedRoom.name}에 가입 신청을 보냈습니다.`;
+            }}
+          />
+        )}
+      </AppStack.Screen>
+      <AppStack.Screen name="Chat">
+        {({ navigation }) => (
+          <ChatRoom
+            room={selectedRoom}
+            currentUserId={session?.user.id}
+            readOnly={effectiveAdminReadOnly}
+            isKnownOwner={ownedRoomIds.includes(selectedRoom.id)}
+            isSuperAdmin={isSuperAdmin}
+            onAdminReportUser={(id, label) => adminReport("user", id, label)}
+            onEditRoom={() => navigation.navigate("EditRoom")}
+            initialPanel={chatInitialPanel}
+            onApplicationsBack={
+              returnToNotifications
+                ? () => {
+                    setReturnToNotifications(false);
+                    setChatInitialPanel(null);
+                    navigation.popToTop();
+                    setNotificationDrawerSignal((value) => value + 1);
+                  }
+                : undefined
+            }
+            points={points}
+            promotionAvailableAt={
+              (promotionTimestamps[selectedRoom.id] ?? 0) + 15 * 60 * 1000
+            }
+            topSpaceExpiresAt={topSpaceExpiresAt[selectedRoom.id]}
+            topSpaceRemaining={formatTopSpaceRemaining(
+              topSpaceExpiresAt[selectedRoom.id],
+              now,
+            )}
+            onBoost={(option) => boostRoom(selectedRoom, option)}
+            onPromote={() => promoteRoom(selectedRoom)}
+            onBack={() => {
+              setReturnToNotifications(false);
+              setChatInitialPanel(null);
+              navigation.goBack();
+            }}
+          />
+        )}
+      </AppStack.Screen>
+      <AppStack.Screen name="EditRoom">
+        {({ navigation }) => (
+          <EditRoom
+            room={selectedRoom}
+            onBack={() => navigation.goBack()}
+            onUpdated={(updated) => {
+              setSelectedRoom(updated);
+              setRoomData((items) =>
+                items.map((item) => (item.id === updated.id ? updated : item)),
+              );
+              navigation.navigate("Chat");
+            }}
+          />
+        )}
+      </AppStack.Screen>
+      <AppStack.Screen name="Settings">
+        {({ navigation }) => (
+          <Settings
+            adultVerified={adultVerified}
+            isSuperAdmin={isSuperAdmin}
+            onAdultVerification={() => navigation.navigate("AdultVerification")}
+            onBack={() => navigation.goBack()}
+            onSignedOut={onSignedOut}
+          />
+        )}
+      </AppStack.Screen>
+      <AppStack.Screen name="AdultVerification">
+        {({ navigation }) =>
+          IOS_HIDE_ADULT_UI ? (
+            <Settings
+              adultVerified={adultVerified}
+              isSuperAdmin={isSuperAdmin}
+              onAdultVerification={() => navigation.navigate("AdultVerification")}
+              onBack={() => navigation.goBack()}
+              onSignedOut={onSignedOut}
+            />
+          ) : (
+            <AdultVerificationScreen
+              verified={adultVerified}
+              onBack={() => navigation.goBack()}
+              onRefresh={async () => {
+                const status = await getVerificationStatus();
+                setAdultVerified(status.adultVerified);
+                return status.adultVerified;
+              }}
+            />
+          )
+        }
+      </AppStack.Screen>
+      <AppStack.Screen name="Create">
+        {({ navigation }) => (
+          <CreateRoom
+            adultVerified={canUseAdultFeatures}
+            showAdultTab={showAdultTab || isSuperAdmin}
+            onBack={() => navigation.goBack()}
+            onCreated={(room) => {
+              setRoomData((items) => [room, ...items]);
+              setJoinedIds((ids) => [...new Set([...ids, room.id])]);
+              setOwnedRoomIds((ids) => [...new Set([...ids, room.id])]);
+              setSelectedRoom(room);
+              setBottomTab("myRooms");
+              navigation.popToTop();
+            }}
+          />
+        )}
+      </AppStack.Screen>
+    </AppStack.Navigator>
   );
 }
 
 function mapServerRoom(room: ServerRoom): Room {
-  const extractedTags = extractHashTags(room.description);
   return {
     id: room.id,
     name: room.name,
@@ -2155,7 +2307,6 @@ function mapServerRoom(room: ServerRoom): Room {
     tags: [
       ...new Set(
         [
-          ...extractedTags,
           room.region ??
             (room.category === "concept"
               ? "콘셉트"
@@ -2186,12 +2337,8 @@ function mapServerRoom(room: ServerRoom): Room {
   };
 }
 
-function extractHashTags(text: string) {
-  const matches = text.match(/#[0-9A-Za-z가-힣_]+/g) ?? [];
-  return matches
-    .map((tag) => tag.slice(1))
-    .filter(Boolean)
-    .slice(0, 8);
+function extractHashTags(_text: string) {
+  return [] as string[];
 }
 
 function serverErrorMessage(error: unknown) {
@@ -3515,6 +3662,7 @@ function MainScreen({
   openRoomDetail,
   onAdminReportRoom,
   onNotification,
+  notificationDrawerSignal = 0,
   onRanking,
   onSearch,
   onSettings,
@@ -3544,6 +3692,7 @@ function MainScreen({
   onRanking: () => void;
   onSearch: () => void;
   onNotification: (notice: Notice) => void;
+  notificationDrawerSignal?: number;
   onSettings: () => void;
   onCreate: () => void;
   onPointBalanceChange: (value: number) => void;
@@ -3561,6 +3710,9 @@ function MainScreen({
   const [storyDetailOpen, setStoryDetailOpen] = useState(false);
   const [storySearchOpen, setStorySearchOpen] = useState(false);
   const [storyQuery, setStoryQuery] = useState("");
+  useEffect(() => {
+    if (notificationDrawerSignal > 0) setDrawerOpen(true);
+  }, [notificationDrawerSignal]);
   useEffect(() => {
     if (!supabase || !isSupabaseConfigured) return;
     const client = supabase;
@@ -4172,10 +4324,7 @@ function RoomRow({
   showLastMessage?: boolean;
 }) {
   const isPrivateRoom = Boolean(room.isPrivate || room.tags.includes("비밀방"));
-  const primaryTag =
-    room.tags.find(Boolean) ??
-    room.region ??
-    (room.isAdult ? "성인" : "Member");
+  const primaryTag = room.region ?? room.tags.find(Boolean);
   return (
     <Pressable
       accessibilityLabel={onLongPress ? `${room.name} 채팅방 메뉴` : undefined}
@@ -4226,7 +4375,7 @@ function RoomRow({
             <Text style={s.meta}>
               {room.memberCount}/{room.maxMembers}
             </Text>
-            {primaryTag ? <Text style={s.meta}>#{primaryTag}</Text> : null}
+            {primaryTag ? <Text style={s.meta}>{primaryTag}</Text> : null}
           </View>
           {topSpaceProgress === undefined ? (
             activityLabel ? (
@@ -4299,6 +4448,7 @@ function RoomDetail({
     room.id === DEMO_ROOM_ID ? membersForRoom(room) : [],
   );
   const [storyOverlayId, setStoryOverlayId] = useState<string | null>(null);
+  const [storyWriteOpen, setStoryWriteOpen] = useState(false);
   const [storyPanelKey, setStoryPanelKey] = useState(0);
   const [currentUserId, setCurrentUserId] = useState<string | undefined>();
   const isPrivateRoom = Boolean(room.isPrivate || room.tags.includes("비밀방"));
@@ -4315,7 +4465,7 @@ function RoomDetail({
       setMembers(room.id === DEMO_ROOM_ID ? membersForRoom(room) : []);
       return;
     }
-    listRoomMembers(room.id)
+    listRoomMembersVisible(room.id)
       .then((serverMembers) =>
         setMembers(mapRoomMembers(serverMembers, currentUserId)),
       )
@@ -4359,6 +4509,37 @@ function RoomDetail({
           }}
           onEnterChat={() => {
             setStoryOverlayId(null);
+            setStoryPanelKey((value) => value + 1);
+          }}
+        />
+      </SafeAreaView>
+    );
+  if (storyWriteOpen)
+    return (
+      <SafeAreaView style={s.safe}>
+        <StatusBar style="light" />
+        <StoryPanel
+          key="room-story-write"
+          room={room}
+          joined={joined}
+          isStaff={members.some(
+            (member) => member.mine && (member.owner || member.coHost),
+          )}
+          showChatButton={false}
+          showInternalHeader
+          title="스토리 작성"
+          initialWrite
+          onClose={() => {
+            setStoryWriteOpen(false);
+            setTab("story");
+          }}
+          onEnterChat={() => {
+            setStoryWriteOpen(false);
+            setTab("story");
+          }}
+          onStorySaved={() => {
+            setStoryWriteOpen(false);
+            setTab("story");
             setStoryPanelKey((value) => value + 1);
           }}
         />
@@ -4563,9 +4744,6 @@ function RoomDetail({
                 </View>
               </View>
             )}
-            <Text style={[s.gradientTags, s.roomDetailTags]}>
-              {room.tags.map((tag) => `#${tag}`).join("  ")}
-            </Text>
             <LinkedText style={s.spaceBody}>{room.description}</LinkedText>
           </View>
           <View style={s.memberSectionHead}>
@@ -4615,6 +4793,7 @@ function RoomDetail({
           showInternalHeader={false}
           onEnterChat={onEnterChat}
           onOpenDetail={(story) => setStoryOverlayId(story.id)}
+          onWriteRequest={() => setStoryWriteOpen(true)}
         />
       )}
       {tab === "profile" && (
@@ -4850,6 +5029,7 @@ function ChatRoom({
   topSpaceRemaining,
   onBoost,
   onPromote,
+  onApplicationsBack,
   onBack,
 }: {
   room: Room;
@@ -4868,6 +5048,7 @@ function ChatRoom({
   onPromote: () => Promise<
     { ok: true; remainingMs: number } | { ok: false; remainingMs: number }
   >;
+  onApplicationsBack?: () => void;
   onBack: () => void;
 }) {
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
@@ -4885,6 +5066,8 @@ function ChatRoom({
   const isOwner = myRole === "owner";
   const isStaff = myRole === "owner" || myRole === "cohost";
   const [panel, setPanel] = useState<ChatPanel>(initialPanel);
+  const [panelFromDrawer, setPanelFromDrawer] = useState(false);
+  const [drawerOpenInstant, setDrawerOpenInstant] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [tool, setTool] = useState<ComposerTool>(null);
   const [bubbleColor, setBubbleColor] = useState<string>("#F5F5F5");
@@ -4922,6 +5105,7 @@ function ChatRoom({
   const [chatSearch, setChatSearch] = useState("");
   const [chatSearchCursor, setChatSearchCursor] = useState(0);
   const chatScrollRef = useRef<ScrollView | null>(null);
+  const composerInputRef = useRef<TextInput | null>(null);
   const scrollMetrics = useRef({
     layoutHeight: 0,
     contentHeight: 0,
@@ -5087,11 +5271,21 @@ function ChatRoom({
   useEffect(() => {
     if (!initialMessagesLoaded || chatReady) return;
     const timer = setTimeout(() => {
+      if (messages.length === 0) {
+        setChatReady(true);
+        return;
+      }
       chatScrollRef.current?.scrollToEnd({ animated: false });
-      setChatReady(true);
+      requestAnimationFrame(() => {
+        chatScrollRef.current?.scrollToEnd({ animated: false });
+        setTimeout(() => {
+          chatScrollRef.current?.scrollToEnd({ animated: false });
+          setChatReady(true);
+        }, 40);
+      });
     }, 80);
     return () => clearTimeout(timer);
-  }, [chatReady, initialMessagesLoaded]);
+  }, [chatReady, initialMessagesLoaded, messages.length]);
   useEffect(() => {
     if (!chatStyleLoaded || !isSupabaseConfigured || !isUuid(room.id)) return;
     const timer = setTimeout(
@@ -5125,7 +5319,7 @@ function ChatRoom({
       setRoomMembers(room.id === DEMO_ROOM_ID ? membersForRoom(room) : []);
       return;
     }
-    listRoomMembers(room.id)
+    listRoomMembersVisible(room.id)
       .then((serverMembers) =>
         setRoomMembers(mapRoomMembers(serverMembers, currentUserId)),
       )
@@ -5248,7 +5442,7 @@ function ChatRoom({
     });
   }, [room.id]);
   useEffect(() => {
-    if (!supabase || !isUuid(room.id) || !isStaff) {
+    if (!supabase || !isUuid(room.id) || !isOwner) {
       setPendingJoinRequests([]);
       return;
     }
@@ -5285,7 +5479,7 @@ function ChatRoom({
       active = false;
       client.removeChannel(channel);
     };
-  }, [isStaff, room.id]);
+  }, [isOwner, room.id]);
   useEffect(() => {
     if (!supabase || !isUuid(room.id)) {
       setRoomSystemMessages([]);
@@ -5823,12 +6017,14 @@ function ChatRoom({
         ? [
             {
               text: "답장",
-              onPress: () =>
+              onPress: () => {
                 setReplyTo({
                   id: item.id,
                   name: item.name,
                   text: item.kind === "image" ? "사진" : item.text,
-                }),
+                });
+                setTimeout(() => composerInputRef.current?.focus(), 120);
+              },
             },
           ]
         : []),
@@ -5839,7 +6035,7 @@ function ChatRoom({
     ]);
   const combinedMessages = useMemo(() => {
     const byId = new Map<string, ChatMessage>();
-    const requestMessages: ChatMessage[] = isStaff
+    const requestMessages: ChatMessage[] = isOwner
       ? pendingJoinRequests.map((request) => ({
           id: `request-${request.id}`,
           kind: "system",
@@ -5862,7 +6058,7 @@ function ChatRoom({
         ? first.id.localeCompare(second.id)
         : firstTime - secondTime;
     });
-  }, [isStaff, messages, pendingJoinRequests]);
+  }, [isOwner, messages, pendingJoinRequests]);
   const visibleMessages = combinedMessages.filter((item) => {
     if (item.kind !== "secret") return true;
     return item.mine || item.recipient === myDisplayName || isSuperAdmin;
@@ -6052,6 +6248,26 @@ function ChatRoom({
       Alert.alert("스토리 알림 실패", serverErrorMessage(error));
     }
   };
+  const closePanel = () => {
+    setStoryPanelInitialId(null);
+    setStoryPanelInitialWrite(false);
+    setPanel(null);
+    if (panelFromDrawer) {
+      setPanelFromDrawer(false);
+      setDrawerOpenInstant(true);
+      setDrawerOpen(true);
+    }
+  };
+  const panelTitle =
+    panel === "applications"
+      ? "가입 신청 목록"
+      : panel === "members"
+        ? "멤버 관리"
+        : panel === "blocked"
+          ? "차단 멤버 목록"
+          : panel === "profile"
+            ? "프로필"
+            : "방 공개 설정";
   if (panel === "overview")
     return (
       <RoomDetail
@@ -6061,9 +6277,9 @@ function ChatRoom({
         isSuperAdmin={isSuperAdmin}
         onAdminReportUser={onAdminReportUser}
         pending={false}
-        onBack={() => setPanel(null)}
-        onApply={() => setPanel(null)}
-        onEnterChat={() => setPanel(null)}
+        onBack={closePanel}
+        onApply={closePanel}
+        onEnterChat={closePanel}
         onEdit={onEditRoom}
         enterLabel="채팅방으로 돌아가기"
       />
@@ -6079,16 +6295,8 @@ function ChatRoom({
         title="스토리"
         initialSelectedId={storyPanelInitialId ?? undefined}
         initialWrite={storyPanelInitialWrite}
-        onClose={() => {
-          setStoryPanelInitialId(null);
-          setStoryPanelInitialWrite(false);
-          setPanel(null);
-        }}
-        onEnterChat={() => {
-          setStoryPanelInitialId(null);
-          setStoryPanelInitialWrite(false);
-          setPanel(null);
-        }}
+        onClose={closePanel}
+        onEnterChat={closePanel}
         onStorySaved={(story) => {
           setStoryPanelInitialWrite(false);
           if (
@@ -6105,18 +6313,18 @@ function ChatRoom({
       <SafeAreaView style={s.safe}>
         <StatusBar style="light" />
         <TopBar
-          title={
-            panel === "applications"
-              ? "가입 신청 목록"
-              : panel === "members"
-                ? "멤버 관리"
-                : panel === "blocked"
-                  ? "차단 멤버 목록"
-                  : panel === "profile"
-                    ? "프로필"
-                    : "방 공개 설정"
-          }
-          onBack={() => setPanel(null)}
+          title={panelTitle}
+          onBack={() => {
+            if (
+              panel === "applications" &&
+              onApplicationsBack &&
+              !panelFromDrawer
+            ) {
+              onApplicationsBack();
+              return;
+            }
+            closePanel();
+          }}
         />
         {panel === "applications" ? (
           <JoinRequests room={room} />
@@ -6280,10 +6488,13 @@ function ChatRoom({
             scrollMetrics.current.contentHeight = height;
             if (!initialScrollDone.current) {
               initialScrollDone.current = true;
-              scrollToLatest(false);
+              chatScrollRef.current?.scrollToEnd({ animated: false });
               requestAnimationFrame(() => {
                 chatScrollRef.current?.scrollToEnd({ animated: false });
-                setChatReady(true);
+                setTimeout(() => {
+                  chatScrollRef.current?.scrollToEnd({ animated: false });
+                  setChatReady(true);
+                }, 40);
               });
             } else if (nearBottomRef.current) scrollToLatest();
           }}
@@ -6739,6 +6950,7 @@ function ChatRoom({
                   active={tool === "media"}
                   onPress={() => {
                     setSelectedMember(null);
+                    setReplyTo(null);
                     setDrawerOpen(false);
                     setChatSearchOpen(false);
                     Keyboard.dismiss();
@@ -6750,6 +6962,7 @@ function ChatRoom({
                   active={tool === "style"}
                   onPress={() => {
                     setSelectedMember(null);
+                    setReplyTo(null);
                     setDrawerOpen(false);
                     setChatSearchOpen(false);
                     Keyboard.dismiss();
@@ -6757,6 +6970,7 @@ function ChatRoom({
                   }}
                 />
                 <TextInput
+                  ref={composerInputRef}
                   value={message}
                   onFocus={focusComposer}
                   onChangeText={setMessage}
@@ -7069,6 +7283,8 @@ function ChatRoom({
         isSuperAdmin={isSuperAdmin}
         readOnly={readOnly}
         onClose={() => setDrawerOpen(false)}
+        openInstant={drawerOpenInstant}
+        onInstantOpenConsumed={() => setDrawerOpenInstant(false)}
         onProfileEdit={() => {
           if (!myProfile) {
             setToast("방 프로필을 불러오는 중입니다.");
@@ -7080,20 +7296,24 @@ function ChatRoom({
         }}
         onApplications={() => {
           setDrawerOpen(false);
+          setPanelFromDrawer(true);
           setPanel("applications");
         }}
         onStories={() => {
           setDrawerOpen(false);
+          setPanelFromDrawer(true);
           setStoryPanelInitialId(null);
           setStoryPanelInitialWrite(false);
           setPanel("overview");
         }}
         onOpenMembers={() => {
           setDrawerOpen(false);
+          setPanelFromDrawer(true);
           setPanel("members");
         }}
         onBlocked={() => {
           setDrawerOpen(false);
+          setPanelFromDrawer(true);
           setPanel("blocked");
         }}
         onEditRoom={() => {
@@ -7102,6 +7322,7 @@ function ChatRoom({
         }}
         onRoomSettings={() => {
           setDrawerOpen(false);
+          setPanelFromDrawer(true);
           setPanel("roomSettings");
         }}
         onDelete={() =>
@@ -7249,6 +7470,7 @@ function StoryPanel({
   onEnterChat,
   onStorySaved,
   onOpenDetail,
+  onWriteRequest,
 }: {
   room: Room;
   joined: boolean;
@@ -7263,8 +7485,11 @@ function StoryPanel({
   onEnterChat: () => void;
   onStorySaved?: (story: StoryItem) => void;
   onOpenDetail?: (story: StoryItem) => void;
+  onWriteRequest?: () => void;
 }) {
-  const [filter, setFilter] = useState<"all" | StoryVisibility>("all");
+  const [filter, setFilter] = useState<"all" | StoryVisibility>(
+    joined ? "all" : "public",
+  );
   const [staff, setStaff] = useState(initialStaff);
   const isStaff = staff;
   const [items, setItems] = useState<StoryItem[]>(() =>
@@ -7285,9 +7510,9 @@ function StoryPanel({
     if (showSpinner) setRefreshing(true);
     try {
       const [serverStories, userResult, serverMembers] = await Promise.all([
-        listStories({ roomId: room.id }),
+        listStories({ roomId: room.id, publicOnly: !joined }),
         supabase.auth.getUser(),
-        listRoomMembers(room.id).catch(() => []),
+        listRoomMembersVisible(room.id).catch(() => []),
       ]);
       const userId = userResult.data.user?.id;
       setItems(serverStories.map((story) => mapServerStory(story, userId)));
@@ -7324,7 +7549,10 @@ function StoryPanel({
   useEffect(() => {
     if (!supabase || !isUuid(room.id)) return;
     reloadStories(false).catch(() => undefined);
-  }, [room.id]);
+  }, [joined, room.id]);
+  useEffect(() => {
+    if (!joined && filter !== "public") setFilter("public");
+  }, [filter, joined]);
   useEffect(() => {
     if (!initialSelectedId || seededSelection.current || selected) return;
     const target = items.find((item) => item.id === initialSelectedId);
@@ -7428,34 +7656,38 @@ function StoryPanel({
   const content = (
     <View style={s.flex}>
       <View style={s.storyVisibility}>
-        <Pressable
-          onPress={() => setFilter("all")}
-          style={[
-            s.visibilityOption,
-            filter === "all" && s.visibilityOptionActive,
-          ]}
-        >
-          <Ionicons
-            name="apps-outline"
-            size={14}
-            color={filter === "all" ? colors.mint700 : colors.textMuted}
-          />
-          <Text style={s.visibilityText}>모두 보기</Text>
-        </Pressable>
-        <Pressable
-          onPress={() => setFilter("room")}
-          style={[
-            s.visibilityOption,
-            filter === "room" && s.visibilityOptionActive,
-          ]}
-        >
-          <Ionicons
-            name="people-outline"
-            size={14}
-            color={filter === "room" ? colors.mint700 : colors.textMuted}
-          />
-          <Text style={s.visibilityText}>방 멤버</Text>
-        </Pressable>
+        {joined && (
+          <>
+            <Pressable
+              onPress={() => setFilter("all")}
+              style={[
+                s.visibilityOption,
+                filter === "all" && s.visibilityOptionActive,
+              ]}
+            >
+              <Ionicons
+                name="apps-outline"
+                size={14}
+                color={filter === "all" ? colors.mint700 : colors.textMuted}
+              />
+              <Text style={s.visibilityText}>모두 보기</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setFilter("room")}
+              style={[
+                s.visibilityOption,
+                filter === "room" && s.visibilityOptionActive,
+              ]}
+            >
+              <Ionicons
+                name="people-outline"
+                size={14}
+                color={filter === "room" ? colors.mint700 : colors.textMuted}
+              />
+              <Text style={s.visibilityText}>방 멤버</Text>
+            </Pressable>
+          </>
+        )}
         <Pressable
           onPress={() => setFilter("public")}
           style={[
@@ -7565,7 +7797,9 @@ function StoryPanel({
           )}
           <Pressable
             accessibilityLabel="스토리 글쓰기"
-            onPress={() => setWriting(true)}
+            onPress={() =>
+              onWriteRequest ? onWriteRequest() : setWriting(true)
+            }
             style={[s.storyFab, !showChatButton && { bottom: 22 }]}
           >
             <LinearGradient
@@ -7859,7 +8093,7 @@ function StoryDetail({
             </Pressable>
           )}
         </View>
-        {story.blocks.map((block) =>
+        {story.blocks.map((block, index) =>
           block.type === "text" ? (
             <LinkedText key={block.id} style={s.storyDetailText}>
               {block.text}
@@ -7869,7 +8103,7 @@ function StoryDetail({
               key={block.id}
               source={{ uri: block.uri }}
               contentFit="cover"
-              style={s.storyDetailImage}
+              style={[s.storyDetailImage, index === 0 && s.storyFirstImage]}
             />
           ),
         )}
@@ -8594,7 +8828,7 @@ function MemberPanel({
       setMembers(room.id === DEMO_ROOM_ID ? membersForRoom(room) : []);
       return;
     }
-    listRoomMembers(room.id)
+    listRoomMembersVisible(room.id)
       .then((serverMembers) =>
         setMembers(mapRoomMembers(serverMembers, currentUserId)),
       )
@@ -9182,7 +9416,7 @@ function RoomOverview({
       };
     }
     Promise.all([
-      listRoomMembers(room.id),
+      listRoomMembersVisible(room.id),
       listStories({ roomId: room.id, limit: 5 }),
     ])
       .then(([serverMembers, serverStories]) => {
@@ -9202,9 +9436,6 @@ function RoomOverview({
       <DefaultRoomCover room={room} />
       <View style={s.overviewIntro}>
         <Text style={s.spaceTitle}>{room.name}</Text>
-        <Text style={s.gradientTags}>
-          {room.tags.map((tag) => `#${tag}`).join("  ")}
-        </Text>
         <LinkedText style={s.spaceBody}>{room.description}</LinkedText>
       </View>
       <Text style={s.overviewSection}>멤버</Text>
@@ -9251,7 +9482,7 @@ function RoomOverview({
 
 function JoinRequests({ room }: { room: Room }) {
   const [requests, setRequests] = useState<
-    { id: string; name: string; intro: string; status: string }[]
+    { id: string; name: string; intro: string; status: string; avatarUri?: string }[]
   >([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
@@ -9283,7 +9514,7 @@ function JoinRequests({ room }: { room: Room }) {
       return;
     }
     const reload = () =>
-      listPendingRoomJoinRequests(room.id)
+      listPendingRoomJoinRequestsWithAvatars(room.id)
         .then((rows) => {
           if (active)
             setRequests(
@@ -9291,6 +9522,7 @@ function JoinRequests({ room }: { room: Room }) {
                 id: row.id,
                 name: row.requested_name,
                 intro: row.requested_introduction,
+                avatarUri: row.avatar_url,
                 status: "pending",
               })),
             );
@@ -9328,6 +9560,8 @@ function JoinRequests({ room }: { room: Room }) {
     try {
       if (isSupabaseConfigured && isUuid(id))
         await decideRoomJoin(id, status === "approved");
+      if (isSupabaseConfigured && isUuid(room.id))
+        markRoomJoinRequestNotificationsRead(room.id).catch(() => undefined);
       setRequests((items) => items.filter((item) => item.id !== id));
       setToast(
         `가입 신청을 ${status === "approved" ? "승인" : "거절"}하였습니다.`,
@@ -9356,7 +9590,7 @@ function JoinRequests({ room }: { room: Room }) {
       <ScrollView contentContainerStyle={s.requestList}>
         {requests.map((item) => (
           <View key={item.id} style={s.requestCard}>
-            <DefaultAvatar size={52} />
+            <Avatar uri={item.avatarUri} size={52} />
             <View style={s.requestBody}>
               <Text style={s.memberName}>{item.name}</Text>
               <Text style={s.memberIntro}>{item.intro}</Text>
@@ -9640,10 +9874,12 @@ type PointLogRow =
 function PointLogScreen({
   loading,
   rows,
+  error,
   onBack,
 }: {
   loading: boolean;
   rows: PointLogRow[];
+  error?: string;
   onBack: () => void;
 }) {
   return (
@@ -9662,8 +9898,8 @@ function PointLogScreen({
           contentInsetAdjustmentBehavior="never"
           ListEmptyComponent={
             <Empty
-              title="포인트 내역이 없어요"
-              body="출석체크, 광고 보상, 구매 내역이 이곳에 표시됩니다."
+              title={error ? "포인트 내역을 불러오지 못했어요" : "포인트 내역이 없어요"}
+              body={error || "출석체크, 광고 보상, 구매 내역이 이곳에 표시됩니다."}
             />
           }
           renderItem={({ item }) =>
@@ -9907,6 +10143,7 @@ function Profile({
   const [selectedCharge, setSelectedCharge] = useState(0);
   const [pointLogs, setPointLogs] = useState<PointLedgerItem[]>([]);
   const [pointLogsLoading, setPointLogsLoading] = useState(false);
+  const [pointLogsError, setPointLogsError] = useState("");
   const openOperationsPolicy = () => {
     if (onOperationsPolicy) {
       onOperationsPolicy();
@@ -9939,13 +10176,17 @@ function Profile({
     if (!logOpen || !isSupabaseConfigured) return;
     let active = true;
     setPointLogsLoading(true);
+    setPointLogsError("");
     listPointLedger()
       .then((rows) => {
         if (active) setPointLogs(rows);
       })
-      .catch((error) =>
-        Alert.alert("포인트 내역 불러오기 실패", serverErrorMessage(error)),
-      )
+      .catch((error) => {
+        if (active) {
+          setPointLogs([]);
+          setPointLogsError(serverErrorMessage(error));
+        }
+      })
       .finally(() => {
         if (active) setPointLogsLoading(false);
       });
@@ -9996,6 +10237,7 @@ function Profile({
       <PointLogScreen
         loading={pointLogsLoading}
         rows={pointLogRows}
+        error={pointLogsError}
         onBack={() => setLogOpen(false)}
       />
     );
@@ -10473,6 +10715,7 @@ function EditRoom({
             </View>
             <View style={s.stepper}>
               <Pressable
+                allowRapidPress
                 onPress={() => setCapacity(maxMembers - 1)}
                 style={s.stepperButton}
               >
@@ -10488,6 +10731,7 @@ function EditRoom({
               />
               <Text style={s.stepperUnit}>명</Text>
               <Pressable
+                allowRapidPress
                 onPress={() => setCapacity(maxMembers + 1)}
                 style={s.stepperButton}
               >
@@ -10969,6 +11213,7 @@ function CreateRoom({
             </View>
             <View style={s.stepper}>
               <Pressable
+                allowRapidPress
                 accessibilityLabel="인원 줄이기"
                 onPress={() => setCapacity(maxMembers - 1)}
                 style={s.stepperButton}
@@ -10989,6 +11234,7 @@ function CreateRoom({
               />
               <Text style={s.stepperUnit}>명</Text>
               <Pressable
+                allowRapidPress
                 accessibilityLabel="인원 늘리기"
                 onPress={() => setCapacity(maxMembers + 1)}
                 style={s.stepperButton}
@@ -11859,68 +12105,143 @@ function ChatImageEditor({
     assets.map((asset) => ({ ...asset, cropAspect: "original" })),
   );
   const [selected, setSelected] = useState(0);
+  useEffect(() => {
+    if (!items.length) onBack();
+  }, [items.length, onBack]);
+  const updateSelected = (patch: Partial<ChatImageAsset>) =>
+    setItems((values) =>
+      values.map((asset, index) =>
+        index === selected ? { ...asset, ...patch } : asset,
+      ),
+    );
   const remove = (index: number) =>
     setItems((current) => {
       const next = current.filter((_, itemIndex) => itemIndex !== index);
+      if (!next.length) {
+        requestAnimationFrame(onBack);
+        return next;
+      }
       setSelected((value) => Math.max(0, Math.min(value, next.length - 1)));
       return next;
     });
   const current = items[selected];
-  const ratios: { label: string; value: "original" | [number, number] }[] = [
+  const ratios: { label: string; value: ChatImageAsset["cropAspect"] }[] = [
     { label: "원본", value: "original" },
+    { label: "자유롭게", value: "free" },
     { label: "1:1", value: [1, 1] },
     { label: "4:3", value: [4, 3] },
     { label: "3:4", value: [3, 4] },
     { label: "16:9", value: [16, 9] },
   ];
   const ratioKey = (value: ChatImageAsset["cropAspect"]) =>
-    value === "original" || !value ? "original" : `${value[0]}:${value[1]}`;
+    value === "original" || value === "free" || !value
+      ? (value ?? "original")
+      : `${value[0]}:${value[1]}`;
   const previewRatio = current
-    ? current.cropAspect === "original" || !current.cropAspect
+    ? current.cropAspect === "original" ||
+      current.cropAspect === "free" ||
+      !current.cropAspect
       ? (current.width || 4) / (current.height || 3)
       : current.cropAspect[0] / current.cropAspect[1]
     : 4 / 3;
+  const viewport = Dimensions.get("window");
+  const maxPreviewWidth = viewport.width - 36;
+  const previewWidth = maxPreviewWidth;
+  const previewHeight = previewWidth / previewRatio;
+  const cropResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: () =>
+          Boolean(
+            current &&
+              current.cropAspect &&
+              current.cropAspect !== "original" &&
+              current.cropAspect !== "free",
+          ),
+        onPanResponderMove: (_event, gesture) => {
+          if (!current) return;
+          const offset = current.cropOffset ?? { x: 0, y: 0 };
+          const nextX = Math.max(-1, Math.min(1, offset.x - gesture.dx / 220));
+          const nextY = Math.max(-1, Math.min(1, offset.y - gesture.dy / 220));
+          updateSelected({ cropOffset: { x: nextX, y: nextY } });
+        },
+      }),
+    [current, selected],
+  );
   return (
     <SafeAreaView style={s.imageEditorScreen}>
       <StatusBar style="light" />
-      <TopBar title={`사진 편집 ${items.length}/5`} onBack={onBack} />
-      <View style={s.imageEditorBody}>
+      <TopBar
+        title={items.length ? `${selected + 1}/${items.length}` : "사진 편집"}
+        onBack={onBack}
+      />
+      <ScrollView
+        style={s.imageEditorBody}
+        contentContainerStyle={s.imageEditorBodyContent}
+        showsVerticalScrollIndicator={false}
+      >
         {current ? (
           <View
-            style={[s.imageEditorPreviewWrap, { aspectRatio: previewRatio }]}
+            {...cropResponder.panHandlers}
+            style={[
+              s.imageEditorPreviewWrap,
+              { width: previewWidth, height: previewHeight },
+            ]}
           >
             <ExpoImage
               source={{ uri: current.uri }}
               contentFit="cover"
               style={s.imageEditorPreview}
             />
-            <Pressable
-              accessibilityLabel="선택 사진 삭제"
-              onPress={() => remove(selected)}
-              style={s.imageEditorRemove}
-            >
-              <Ionicons name="trash-outline" size={20} color="#FFF" />
-            </Pressable>
+            {current.cropAspect &&
+              current.cropAspect !== "original" &&
+              current.cropAspect !== "free" && (
+                <View pointerEvents="none" style={s.imageCropFocus}>
+                  <View style={s.imageCropFocusDot} />
+                </View>
+              )}
           </View>
         ) : (
-          <Empty
-            title="선택한 사진이 없어요"
-            body="뒤로 가서 사진을 다시 선택해주세요."
-          />
+          <View />
         )}
+        {items.length > 1 && (
+          <View style={s.imageEditorPager}>
+            <Pressable
+              disabled={selected === 0}
+              onPress={() => setSelected((value) => Math.max(0, value - 1))}
+              style={[s.imageEditorPageButton, selected === 0 && s.disabledSoft]}
+            >
+              <Ionicons name="chevron-back" size={20} color="#FFF" />
+            </Pressable>
+            <Text style={s.imageEditorPageText}>
+              {selected + 1}/{items.length}
+            </Text>
+            <Pressable
+              disabled={selected >= items.length - 1}
+              onPress={() =>
+                setSelected((value) => Math.min(items.length - 1, value + 1))
+              }
+              style={[
+                s.imageEditorPageButton,
+                selected >= items.length - 1 && s.disabledSoft,
+              ]}
+            >
+              <Ionicons name="chevron-forward" size={20} color="#FFF" />
+            </Pressable>
+          </View>
+        )}
+      </ScrollView>
+      <View style={s.imageEditorFooter}>
         {current && (
           <View style={s.imageRatioRow}>
             {ratios.map((ratio) => (
               <Pressable
                 key={ratio.label}
                 onPress={() =>
-                  setItems((values) =>
-                    values.map((asset, index) =>
-                      index === selected
-                        ? { ...asset, cropAspect: ratio.value }
-                        : asset,
-                    ),
-                  )
+                  updateSelected({
+                    cropAspect: ratio.value,
+                    cropOffset: { x: 0, y: 0 },
+                  })
                 }
                 style={[
                   s.imageRatioOption,
@@ -11942,8 +12263,16 @@ function ChatImageEditor({
           </View>
         )}
         <Text style={s.imageEditorHint}>
-          사진마다 원하는 비율을 선택할 수 있어요.
+          사진마다 원하는 비율과 크롭 위치를 조정할 수 있어요.
         </Text>
+        {current && (
+          <Pressable
+            onPress={() => remove(selected)}
+            style={s.imageEditorRemoveTextButton}
+          >
+            <Text style={s.imageEditorRemoveText}>선택 사진 제외</Text>
+          </Pressable>
+        )}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -11967,8 +12296,6 @@ function ChatImageEditor({
             </Pressable>
           ))}
         </ScrollView>
-      </View>
-      <View style={s.imageEditorFooter}>
         <Pressable
           disabled={!items.length}
           onPress={() => onSend(items)}
@@ -12731,6 +13058,7 @@ function TopSpaceSheet({
 }
 function ChatDrawer({
   open,
+  openInstant = false,
   roomId,
   profile,
   isOwner,
@@ -12738,6 +13066,7 @@ function ChatDrawer({
   isSuperAdmin,
   readOnly,
   onClose,
+  onInstantOpenConsumed,
   onProfileEdit,
   onApplications,
   onStories,
@@ -12749,6 +13078,7 @@ function ChatDrawer({
   onLeave,
 }: {
   open: boolean;
+  openInstant?: boolean;
   roomId: string;
   profile?: RoomMember;
   isOwner: boolean;
@@ -12756,6 +13086,7 @@ function ChatDrawer({
   isSuperAdmin: boolean;
   readOnly: boolean;
   onClose: () => void;
+  onInstantOpenConsumed?: () => void;
   onProfileEdit: () => void;
   onApplications: () => void;
   onStories: () => void;
@@ -12793,6 +13124,11 @@ function ChatDrawer({
   useEffect(() => {
     if (open) {
       setVisible(true);
+      if (openInstant) {
+        slide.setValue(0);
+        onInstantOpenConsumed?.();
+        return;
+      }
       slide.setValue(340);
       Animated.timing(slide, {
         toValue: 0,
@@ -12806,7 +13142,7 @@ function ChatDrawer({
         useNativeDriver: true,
       }).start(() => setVisible(false));
     }
-  }, [open, slide, visible]);
+  }, [onInstantOpenConsumed, open, openInstant, slide, visible]);
   const swipe = useMemo(
     () =>
       PanResponder.create({
@@ -15856,6 +16192,7 @@ const s = StyleSheet.create({
     backgroundColor: colors.gray100,
     marginBottom: 10,
   },
+  storyFirstImage: { marginTop: 14 },
   commentSection: {
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
@@ -16864,16 +17201,34 @@ const s = StyleSheet.create({
   deliveryDivider: { color: colors.gray300, fontSize: 9 },
   deliveryDelete: { color: colors.pink600, fontSize: 9, fontWeight: "600" },
   imageEditorScreen: { flex: 1, backgroundColor: "#111" },
-  imageEditorBody: { flex: 1, padding: 18 },
+  imageEditorBody: { flex: 1 },
+  imageEditorBodyContent: {
+    padding: 18,
+    alignItems: "center",
+    paddingBottom: 36,
+  },
   imageEditorPreviewWrap: {
     position: "relative",
-    width: "100%",
-    aspectRatio: 4 / 3,
     borderRadius: 16,
     overflow: "hidden",
     backgroundColor: "#222",
   },
   imageEditorPreview: { width: "100%", height: "100%" },
+  imageCropFocus: {
+    ...StyleSheet.absoluteFill,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,.35)",
+  },
+  imageCropFocusDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "#FFF",
+    backgroundColor: "rgba(28,28,28,.15)",
+  },
   imageEditorRemove: {
     position: "absolute",
     right: 12,
@@ -16889,7 +17244,42 @@ const s = StyleSheet.create({
     color: "rgba(255,255,255,.68)",
     fontSize: 11,
     textAlign: "center",
-    marginVertical: 14,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  imageEditorPager: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 14,
+    marginTop: 12,
+  },
+  imageEditorPageButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,.16)",
+  },
+  imageEditorPageText: {
+    minWidth: 46,
+    color: "#FFF",
+    fontSize: 13,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  disabledSoft: { opacity: 0.35 },
+  imageEditorRemoveTextButton: {
+    minHeight: 34,
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    marginBottom: 4,
+  },
+  imageEditorRemoveText: {
+    color: "rgba(255,255,255,.72)",
+    fontSize: 11,
+    fontWeight: "500",
   },
   imageEditorThumbs: { gap: 10, paddingVertical: 6 },
   imageEditorThumbWrap: {
@@ -16916,10 +17306,12 @@ const s = StyleSheet.create({
     lineHeight: 18,
   },
   imageEditorFooter: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
+    paddingHorizontal: 18,
+    paddingTop: 10,
     paddingBottom: 26,
     backgroundColor: "#111",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255,255,255,.12)",
   },
   globalBusyLayer: {
     ...StyleSheet.absoluteFill,
@@ -16969,6 +17361,11 @@ const s = StyleSheet.create({
     top: 5,
   },
   whitePage: { backgroundColor: "#FFF" },
+  appLockOverlay: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 9999,
+    backgroundColor: "#FFF",
+  },
   drawerNarrow: { width: "80%", maxWidth: 312 },
   drawerProfileUnified: {
     paddingBottom: 42,
@@ -16987,7 +17384,8 @@ const s = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
     gap: 7,
-    marginTop: 14,
+    marginTop: 0,
+    flexWrap: "wrap",
   },
   imageRatioOption: {
     minWidth: 48,

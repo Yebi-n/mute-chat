@@ -251,3 +251,69 @@ export async function listPendingRoomJoinRequests(roomId: string) {
   if (error) throw error;
   return data ?? [];
 }
+
+export async function listRoomMembersVisible(roomId: string): Promise<ServerRoomMember[]> {
+  const client = requireClient();
+  const { data, error } = await client.rpc('list_room_members_public', {
+    p_room_id: roomId,
+  });
+  if (error) throw error;
+  const rows = (data ?? []) as Array<{
+    user_id: string;
+    display_name: string | null;
+    introduction: string | null;
+    role: 'owner' | 'cohost' | 'member';
+    avatar_asset_path: string | null;
+    muted_until: string | null;
+  }>;
+  const avatarPaths = rows
+    .map((row) => row.avatar_asset_path)
+    .filter((value): value is string => Boolean(value));
+  const avatarUrlByPath = new Map<string, string>();
+  if (avatarPaths.length) {
+    const { data: signedRows, error: signedError } = await client.storage
+      .from('profile-avatars')
+      .createSignedUrls(avatarPaths, 3600);
+    if (signedError) throw signedError;
+    signedRows?.forEach((row, index) => {
+      if (row.signedUrl) avatarUrlByPath.set(avatarPaths[index], row.signedUrl);
+    });
+  }
+  return rows.map((row) => ({
+    userId: row.user_id,
+    name: row.display_name?.trim() || '멤버',
+    intro: row.introduction ?? '',
+    role: row.role,
+    avatarUrl: row.avatar_asset_path ? avatarUrlByPath.get(row.avatar_asset_path) : undefined,
+    mutedUntil: row.muted_until ?? null,
+  }));
+}
+
+export async function listPendingRoomJoinRequestsWithAvatars(roomId: string) {
+  const client = requireClient();
+  const { data, error } = await client
+    .from('room_join_requests')
+    .select('id,user_id,requested_name,requested_introduction,status,created_at,avatar_asset_path')
+    .eq('room_id', roomId)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  const rows = data ?? [];
+  const avatarPaths = rows
+    .map((row) => row.avatar_asset_path as string | null)
+    .filter((value): value is string => Boolean(value));
+  const avatarUrlByPath = new Map<string, string>();
+  if (avatarPaths.length) {
+    const { data: signedRows, error: signedError } = await client.storage
+      .from('profile-avatars')
+      .createSignedUrls(avatarPaths, 3600);
+    if (signedError) throw signedError;
+    signedRows?.forEach((row, index) => {
+      if (row.signedUrl) avatarUrlByPath.set(avatarPaths[index], row.signedUrl);
+    });
+  }
+  return rows.map((row) => ({
+    ...row,
+    avatar_url: row.avatar_asset_path ? avatarUrlByPath.get(row.avatar_asset_path as string) : undefined,
+  }));
+}

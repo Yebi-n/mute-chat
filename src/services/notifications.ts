@@ -92,6 +92,7 @@ export async function listNotificationInbox(limit = 50): Promise<ServerNotice[]>
   const { data, error } = await supabase
     .from('user_notifications')
     .select('id,event_type,title,body,data,read_at,created_at')
+    .in('event_type', ['join_request', 'room_kicked'])
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;
@@ -117,5 +118,13 @@ export async function markNotificationRead(notificationId: string) {
 export async function markAllNotificationsRead() {
   if (!isSupabaseConfigured || !supabase) return;
   const { error } = await supabase.rpc('mark_all_notifications_read');
+  if (error) throw error;
+}
+
+export async function markRoomJoinRequestNotificationsRead(roomId: string) {
+  if (!isSupabaseConfigured || !supabase) return;
+  const { error } = await supabase.rpc('mark_room_join_request_notifications_read', {
+    p_room_id: roomId,
+  });
   if (error) throw error;
 }
