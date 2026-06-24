@@ -2201,7 +2201,7 @@ function AuthenticatedApp({
           />
         )}
       </AppStack.Screen>
-      <AppStack.Screen name="Chat">
+      <AppStack.Screen name="Chat" options={{ gestureEnabled: false }}>
         {({ navigation }) => (
           <ChatRoom
             room={selectedRoom}
@@ -6213,6 +6213,19 @@ function ChatRoom({
                 : item,
             ),
           );
+          setMessages((items) =>
+            items.map((item) =>
+              item.kind !== "system" &&
+              ((updated.userId && item.name === profileMember.name) ||
+                (updated.mine && item.mine))
+                ? {
+                    ...item,
+                    name: updated.name,
+                    avatarUri: updated.avatarUri,
+                  }
+                : item,
+            ),
+          );
         }}
       />
     );
@@ -6966,9 +6979,9 @@ function ChatRoom({
             )}
             {!readOnly && (
               <View style={s.composer}>
-                <IconCircle
-                  name={tool === "media" ? "close" : "add"}
-                  active={tool === "media"}
+                <RNPressable
+                  hitSlop={18}
+                  accessibilityLabel="채팅 더보기"
                   onPress={() => {
                     setSelectedMember(null);
                     setReplyTo(null);
@@ -6977,10 +6990,17 @@ function ChatRoom({
                     Keyboard.dismiss();
                     setTool((value) => (value === "media" ? null : "media"));
                   }}
-                />
-                <IconCircle
-                  name="brush-outline"
-                  active={tool === "style"}
+                  style={[s.iconCircle, tool === "media" && s.iconCircleActive]}
+                >
+                  <Ionicons
+                    name={tool === "media" ? "close" : "add"}
+                    size={22}
+                    color={tool === "media" ? colors.mint700 : colors.textSubtle}
+                  />
+                </RNPressable>
+                <RNPressable
+                  hitSlop={18}
+                  accessibilityLabel="채팅 색상"
                   onPress={() => {
                     setSelectedMember(null);
                     setReplyTo(null);
@@ -6989,7 +7009,14 @@ function ChatRoom({
                     Keyboard.dismiss();
                     setTool((value) => (value === "style" ? null : "style"));
                   }}
-                />
+                  style={[s.iconCircle, tool === "style" && s.iconCircleActive]}
+                >
+                  <Ionicons
+                    name="brush-outline"
+                    size={22}
+                    color={tool === "style" ? colors.mint700 : colors.textSubtle}
+                  />
+                </RNPressable>
                 <TextInput
                   ref={composerInputRef}
                   value={message}
@@ -7362,7 +7389,26 @@ function ChatRoom({
             "방을 정말 나가시겠습니까? 모든 내역이 삭제됩니다.",
             [
               { text: "취소", style: "cancel" },
-              { text: "나가기", style: "destructive" },
+              {
+                text: "나가기",
+                style: "destructive",
+                onPress: async () => {
+                  try {
+                    await leaveRoom(room.id);
+                    setDrawerOpen(false);
+                    setToast("방에서 나갔습니다.");
+                    setTimeout(onBack, 350);
+                  } catch (error) {
+                    const message = serverErrorMessage(error);
+                    Alert.alert(
+                      "방 나가기 실패",
+                      message.includes("TRANSFER_OWNERSHIP_REQUIRED")
+                        ? "방장은 방장 권한을 양도한 뒤 나갈 수 있습니다."
+                        : message,
+                    );
+                  }
+                },
+              },
             ],
           )
         }
@@ -10562,8 +10608,7 @@ function EditRoom({
   const disabled =
     saving ||
     !name.trim() ||
-    !description.trim() ||
-    (roomType === "region" && !region.trim());
+    !description.trim();
   const save = async () => {
     if (disabled) return;
     setSaving(true);
@@ -10584,16 +10629,16 @@ function EditRoom({
       if (coverAsset) {
         const resized = await ImageManipulator.manipulateAsync(
           coverAsset.uri,
-          [{ resize: { width: 1024, height: 1024 } }],
-          { compress: 0.74, format: ImageManipulator.SaveFormat.JPEG },
+          [{ resize: { width: 720 } }],
+          { compress: 0.72, format: ImageManipulator.SaveFormat.JPEG },
         );
         const bytes = await (await fetch(resized.uri)).arrayBuffer();
         const upload = await uploadValidatedImage({
           uri: resized.uri,
           mimeType: "image/jpeg",
           fileSize: bytes.byteLength,
-          width: 1024,
-          height: 1024,
+          width: 720,
+          height: 720,
           purpose: "room-cover",
           roomId: room.id,
         });
@@ -10939,11 +10984,11 @@ function CreateRoom({
         let width = coverAsset.width ?? 1;
         let height = coverAsset.height ?? 1;
         if (!isGif) {
-          const scale = Math.min(1, 1440 / Math.max(1, width));
+          const scale = Math.min(1, 720 / Math.max(1, width));
           const resized = await ImageManipulator.manipulateAsync(
             uri,
             [{ resize: { width: Math.max(1, Math.round(width * scale)) } }],
-            { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
+            { compress: 0.72, format: ImageManipulator.SaveFormat.JPEG },
           );
           uri = resized.uri;
           finalCoverUri = uri;
@@ -11010,8 +11055,7 @@ function CreateRoom({
     !profileName.trim() ||
     !profileIntro.trim() ||
     submitting ||
-    invalidPin ||
-    (roomType === "region" && !region.trim());
+    invalidPin;
   return (
     <SafeAreaView style={s.safe}>
       <EdgeBackLayer onBack={onBack} />
@@ -11905,6 +11949,7 @@ function TopBar({
   subtitle,
   inlineCount,
   onBack,
+  edgeBackEnabled = true,
   secondaryTrailing,
   onSecondaryTrailingPress,
   trailing,
@@ -11914,6 +11959,7 @@ function TopBar({
   subtitle?: string;
   inlineCount?: number;
   onBack: () => void;
+  edgeBackEnabled?: boolean;
   secondaryTrailing?: IconName;
   onSecondaryTrailingPress?: () => void;
   trailing?: IconName;
@@ -11921,7 +11967,7 @@ function TopBar({
 }) {
   return (
     <>
-      <EdgeBackLayer onBack={onBack} />
+      {edgeBackEnabled && <EdgeBackLayer onBack={onBack} />}
       <LinearGradient
         colors={["#82B9C1", "#5DBB8C"]}
         start={{ x: 0, y: 0 }}
@@ -12193,8 +12239,9 @@ function ChatImageEditor({
     <SafeAreaView style={s.imageEditorScreen}>
       <StatusBar style="light" />
       <TopBar
-        title={items.length ? `${selected + 1}/${items.length}` : "사진 편집"}
+        title="사진 편집"
         onBack={onBack}
+        edgeBackEnabled={false}
       />
       <ScrollView
         style={s.imageEditorBody}
@@ -12215,41 +12262,17 @@ function ChatImageEditor({
               style={s.imageEditorPreview}
             />
             {current.cropAspect &&
-              current.cropAspect !== "original" &&
-              current.cropAspect !== "free" && (
+              current.cropAspect !== "original" && (
                 <View pointerEvents="none" style={s.imageCropFocus}>
-                  <View style={s.imageCropFocusDot} />
+                  <View style={s.imageCropGridLineVertical} />
+                  <View style={[s.imageCropGridLineVertical, { left: "66.66%" }]} />
+                  <View style={s.imageCropGridLineHorizontal} />
+                  <View style={[s.imageCropGridLineHorizontal, { top: "66.66%" }]} />
                 </View>
               )}
           </View>
         ) : (
           <View />
-        )}
-        {items.length > 1 && (
-          <View style={s.imageEditorPager}>
-            <Pressable
-              disabled={selected === 0}
-              onPress={() => setSelected((value) => Math.max(0, value - 1))}
-              style={[s.imageEditorPageButton, selected === 0 && s.disabledSoft]}
-            >
-              <Ionicons name="chevron-back" size={20} color="#FFF" />
-            </Pressable>
-            <Text style={s.imageEditorPageText}>
-              {selected + 1}/{items.length}
-            </Text>
-            <Pressable
-              disabled={selected >= items.length - 1}
-              onPress={() =>
-                setSelected((value) => Math.min(items.length - 1, value + 1))
-              }
-              style={[
-                s.imageEditorPageButton,
-                selected >= items.length - 1 && s.disabledSoft,
-              ]}
-            >
-              <Ionicons name="chevron-forward" size={20} color="#FFF" />
-            </Pressable>
-          </View>
         )}
       </ScrollView>
       <View style={s.imageEditorFooter}>
@@ -12286,14 +12309,6 @@ function ChatImageEditor({
         <Text style={s.imageEditorHint}>
           사진마다 원하는 비율과 크롭 위치를 조정할 수 있어요.
         </Text>
-        {current && (
-          <Pressable
-            onPress={() => remove(selected)}
-            style={s.imageEditorRemoveTextButton}
-          >
-            <Text style={s.imageEditorRemoveText}>선택 사진 제외</Text>
-          </Pressable>
-        )}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -12314,6 +12329,13 @@ function ChatImageEditor({
                 style={s.imageEditorThumb}
               />
               <Text style={s.imageEditorOrder}>{index + 1}</Text>
+              <Pressable
+                hitSlop={10}
+                onPress={() => remove(index)}
+                style={s.imageEditorThumbRemove}
+              >
+                <Ionicons name="close" size={13} color="#FFF" />
+              </Pressable>
             </Pressable>
           ))}
         </ScrollView>
@@ -13120,6 +13142,7 @@ function ChatDrawer({
 }) {
   const slide = useRef(new Animated.Value(340)).current;
   const [visible, setVisible] = useState(open);
+  const visibleRef = useRef(open);
   const [notifications, setNotifications] = useState(true);
   const [notificationSaving, setNotificationSaving] = useState(false);
   useEffect(() => {
@@ -13144,6 +13167,7 @@ function ChatDrawer({
   };
   useEffect(() => {
     if (open) {
+      visibleRef.current = true;
       setVisible(true);
       if (openInstant) {
         slide.setValue(0);
@@ -13156,14 +13180,17 @@ function ChatDrawer({
         duration: 230,
         useNativeDriver: true,
       }).start();
-    } else if (visible) {
+    } else if (visibleRef.current) {
       Animated.timing(slide, {
         toValue: 340,
         duration: 200,
         useNativeDriver: true,
-      }).start(() => setVisible(false));
+      }).start(() => {
+        visibleRef.current = false;
+        setVisible(false);
+      });
     }
-  }, [onInstantOpenConsumed, open, openInstant, slide, visible]);
+  }, [onInstantOpenConsumed, open, openInstant, slide]);
   const swipe = useMemo(
     () =>
       PanResponder.create({
@@ -17237,18 +17264,25 @@ const s = StyleSheet.create({
   imageEditorPreview: { width: "100%", height: "100%" },
   imageCropFocus: {
     ...StyleSheet.absoluteFill,
-    alignItems: "center",
-    justifyContent: "center",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,.35)",
+    borderColor: "rgba(255,255,255,.9)",
+    borderStyle: "dashed",
   },
-  imageCropFocusDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: "#FFF",
-    backgroundColor: "rgba(28,28,28,.15)",
+  imageCropGridLineVertical: {
+    position: "absolute",
+    left: "33.33%",
+    top: 0,
+    bottom: 0,
+    width: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(255,255,255,.72)",
+  },
+  imageCropGridLineHorizontal: {
+    position: "absolute",
+    top: "33.33%",
+    left: 0,
+    right: 0,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(255,255,255,.72)",
   },
   imageEditorRemove: {
     position: "absolute",
@@ -17302,17 +17336,16 @@ const s = StyleSheet.create({
     fontSize: 11,
     fontWeight: "500",
   },
-  imageEditorThumbs: { gap: 10, paddingVertical: 6 },
+  imageEditorThumbs: { gap: 12, paddingVertical: 8, paddingRight: 8 },
   imageEditorThumbWrap: {
-    width: 66,
-    height: 66,
-    borderRadius: 10,
-    overflow: "hidden",
+    width: 82,
+    height: 82,
+    borderRadius: 14,
     borderWidth: 2,
     borderColor: "transparent",
   },
   imageEditorThumbActive: { borderColor: colors.mint600 },
-  imageEditorThumb: { width: "100%", height: "100%" },
+  imageEditorThumb: { width: "100%", height: "100%", borderRadius: 12 },
   imageEditorOrder: {
     position: "absolute",
     left: 4,
@@ -17325,6 +17358,19 @@ const s = StyleSheet.create({
     fontSize: 10,
     textAlign: "center",
     lineHeight: 18,
+  },
+  imageEditorThumbRemove: {
+    position: "absolute",
+    right: -5,
+    top: -5,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(28,28,28,.78)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,.45)",
   },
   imageEditorFooter: {
     paddingHorizontal: 18,

@@ -1,5 +1,4 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import { dispatchPendingPushes } from './notifications';
 
 export type MediaPurpose = 'room-cover' | 'chat' | 'story' | 'profile-avatar';
 
@@ -95,6 +94,7 @@ export async function sendUploadedImages(input: {
     p_reply_to_message_id: input.replyToMessageId ?? null,
   });
   if (error) throw error;
+  const { dispatchPendingPushes } = await import('./notifications');
   dispatchPendingPushes().catch(() => undefined);
   return data as string;
 }

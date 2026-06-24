@@ -132,10 +132,10 @@ export async function listRoomMembers(roomId: string) {
     const { data: signedRows, error: signedError } = await client.storage
       .from('profile-avatars')
       .createSignedUrls(avatarPaths, 3600);
-    if (signedError) throw signedError;
-    signedRows?.forEach((row, index) => {
-      if (row.signedUrl) avatarUrlByPath.set(avatarPaths[index], row.signedUrl);
-    });
+    if (!signedError)
+      signedRows?.forEach((row, index) => {
+        if (row.signedUrl) avatarUrlByPath.set(avatarPaths[index], row.signedUrl);
+      });
   }
 
   const profileByUserId = new Map(
@@ -281,10 +281,10 @@ export async function listRoomMembersVisible(roomId: string): Promise<ServerRoom
     const { data: signedRows, error: signedError } = await client.storage
       .from('profile-avatars')
       .createSignedUrls(avatarPaths, 3600);
-    if (signedError) throw signedError;
-    signedRows?.forEach((row, index) => {
-      if (row.signedUrl) avatarUrlByPath.set(avatarPaths[index], row.signedUrl);
-    });
+    if (!signedError)
+      signedRows?.forEach((row, index) => {
+        if (row.signedUrl) avatarUrlByPath.set(avatarPaths[index], row.signedUrl);
+      });
   }
   return rows.map((row) => ({
     userId: row.user_id,
@@ -314,10 +314,10 @@ export async function listPendingRoomJoinRequestsWithAvatars(roomId: string) {
     const { data: signedRows, error: signedError } = await client.storage
       .from('profile-avatars')
       .createSignedUrls(avatarPaths, 3600);
-    if (signedError) throw signedError;
-    signedRows?.forEach((row, index) => {
-      if (row.signedUrl) avatarUrlByPath.set(avatarPaths[index], row.signedUrl);
-    });
+    if (!signedError)
+      signedRows?.forEach((row, index) => {
+        if (row.signedUrl) avatarUrlByPath.set(avatarPaths[index], row.signedUrl);
+      });
   }
   return rows.map((row) => ({
     ...row,
