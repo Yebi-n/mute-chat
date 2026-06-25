@@ -151,6 +151,24 @@ export async function updateCurrentUserPassword(password: string) {
   return data.user;
 }
 
+export async function changeCurrentUserPassword(currentPassword: string, newPassword: string) {
+  const client = requireClient();
+  const { data: userData, error: userError } = await client.auth.getUser();
+  if (userError) throw authError(userError);
+  const phone = userData.user?.phone;
+  if (!phone) throw new Error('인증 전화번호를 확인할 수 없습니다.');
+
+  const { error: signInError } = await client.auth.signInWithPassword({
+    phone,
+    password: currentPassword,
+  });
+  if (signInError) throw new Error('현재 사용 중인 비밀번호가 아닙니다.');
+
+  const { data, error } = await client.auth.updateUser({ password: newPassword });
+  if (error) throw authError(error);
+  return data.user;
+}
+
 export async function getCurrentSession(): Promise<Session | null> {
   if (!supabase) return null;
   const { data, error } = await supabase.auth.getSession();

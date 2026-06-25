@@ -2,10 +2,12 @@ import { Platform } from 'react-native';
 import {
   fetchProducts,
   finishTransaction,
+  getAvailablePurchases,
   initConnection,
   purchaseErrorListener,
   purchaseUpdatedListener,
   requestPurchase,
+  restorePurchases,
   type ProductQueryType,
   type Purchase,
 } from 'expo-iap';
@@ -24,8 +26,20 @@ const consumableProductIds = new Set([
   'mute_points_390000',
 ]);
 
+const storeProductIds = new Set([
+  ...consumableProductIds,
+  'mute_theme_mint',
+  'mute_theme_ocean',
+  'mute_theme_lavender',
+  'mute_theme_sunset',
+  'mute_theme_mono',
+  'mute_ad_free_monthly',
+]);
+
 function requireSupabase() {
-  if (!isSupabaseConfigured || !supabase) throw new Error('서버 설정을 확인해주세요.');
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error('서버 설정을 확인해주세요.');
+  }
   return supabase;
 }
 
@@ -86,11 +100,46 @@ async function waitForPurchase(productId: string, startPurchase: () => Promise<u
   });
 }
 
+async function verifyStorePurchase(productId: string, purchase: Purchase) {
+  const transactionId = purchase.transactionId ?? purchase.id;
+  if (!transactionId) {
+    throw new Error('구매 거래 ID를 확인할 수 없습니다.');
+  }
+
+  const { data, error } = await requireSupabase().functions.invoke(
+    'verify-store-purchase',
+    {
+      method: 'POST',
+      body: {
+        platform: Platform.OS,
+        productId,
+        transactionId,
+        signedTransactionInfo: purchase.purchaseToken ?? null,
+      },
+    },
+  );
+  if (error) throw new Error(`구매 검증에 실패했습니다: ${error.message}`);
+  if (data?.error) throw new Error(`구매 검증에 실패했습니다: ${data.error}`);
+
+  await finishTransaction({
+    purchase,
+    isConsumable: consumableProductIds.has(productId),
+  });
+
+  return {
+    pointBalance: Number(data?.pointBalance ?? 0),
+    credited: Boolean(data?.credited),
+    transactionId,
+  };
+}
+
 export async function purchaseStoreProduct(productId: string) {
   await ensureConnection();
   const productType: ProductQueryType = productId === 'mute_ad_free_monthly' ? 'subs' : 'in-app';
   const products = await fetchProducts({ skus: [productId], type: productType });
-  if (!products?.some((product) => product.id === productId)) throw new Error('STORE_PRODUCT_NOT_FOUND');
+  if (!products?.some((product) => product.id === productId)) {
+    throw new Error(`App Store Connect에서 상품을 찾지 못했습니다. 상품 ID를 확인해주세요: ${productId}`);
+  }
 
   const purchase = await waitForPurchase(productId, () =>
     requestPurchase({
@@ -106,32 +155,27 @@ export async function purchaseStoreProduct(productId: string) {
     }),
   );
 
-  const transactionId = purchase.transactionId ?? purchase.id;
-  const { data, error } = await requireSupabase().functions.invoke(
-    'verify-store-purchase',
-    {
-      method: 'POST',
-      body: {
-        platform: Platform.OS,
-        productId,
-        transactionId,
-        signedTransactionInfo: purchase.purchaseToken ?? null,
-      },
-    },
-  );
-  if (error) throw error;
-  if (data?.error) throw new Error(data.error);
+  return verifyStorePurchase(productId, purchase);
+}
 
-  await finishTransaction({
-    purchase,
-    isConsumable: consumableProductIds.has(productId),
+export async function restoreStorePurchases() {
+  await ensureConnection();
+  await restorePurchases();
+  const purchases = await getAvailablePurchases({
+    alsoPublishToEventListenerIOS: false,
+    onlyIncludeActiveItemsIOS: true,
   });
+  let restored = 0;
+  let pointBalance = 0;
 
-  return {
-    pointBalance: Number(data?.pointBalance ?? 0),
-    credited: Boolean(data?.credited),
-    transactionId,
-  };
+  for (const purchase of purchases ?? []) {
+    if (!storeProductIds.has(purchase.productId)) continue;
+    const result = await verifyStorePurchase(purchase.productId, purchase);
+    pointBalance = result.pointBalance;
+    if (result.credited) restored += 1;
+  }
+
+  return { restored, pointBalance };
 }
 
 export async function listStoreEntitlements() {

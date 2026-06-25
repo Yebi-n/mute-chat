@@ -22,6 +22,13 @@ export async function purchaseStoreProduct(_productId: string): Promise<{
   throw new Error('STORE_PURCHASE_PLATFORM_NOT_AVAILABLE');
 }
 
+export async function restoreStorePurchases(): Promise<{
+  restored: number;
+  pointBalance: number;
+}> {
+  throw new Error('STORE_PURCHASE_PLATFORM_NOT_AVAILABLE');
+}
+
 export async function listStoreEntitlements() {
   if (!isSupabaseConfigured || !supabase) return [];
   const { data, error } = await supabase

@@ -164,7 +164,7 @@ Deno.serve(async (request) => {
   } catch (error) {
     return Response.json(
       { error: error instanceof Error ? error.message : 'STORE_VERIFICATION_FAILED' },
-      { status: 409, headers: cors },
+      { headers: cors },
     );
   }
 });

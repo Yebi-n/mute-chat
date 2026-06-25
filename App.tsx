@@ -56,6 +56,7 @@ import {
   signInWithPhonePassword,
   signOut,
   signUpWithPhonePassword,
+  changeCurrentUserPassword,
   updateCurrentUserPassword,
   verifyPhoneOtp,
 } from "./src/services/auth";
@@ -148,8 +149,13 @@ import {
   listStoreEntitlements,
   purchaseProduct,
   purchaseStoreProduct,
+  restoreStorePurchases,
   STORE_PRODUCTS,
 } from "./src/services/purchases";
+import {
+  listStoreTransactions,
+  StoreTransactionItem,
+} from "./src/services/payments";
 import { boostTopSpace, listTopSpaces } from "./src/services/topSpace";
 import {
   listRoomPromotions,
@@ -738,6 +744,9 @@ function pointReasonLabel(reason: string) {
     custom_color: "커스텀 색상 구매",
     point_transfer: "포인트 보내기",
     purchase: "포인트 충전",
+    admin_point: "관리자 포인트",
+    admin_points: "관리자 포인트",
+    admin_grant: "관리자 포인트",
   };
   return labels[reason] ?? reason;
 }
@@ -1031,6 +1040,9 @@ async function pickCroppedImageBatch({
 type ChatImageAsset = ImagePicker.ImagePickerAsset & {
   cropAspect?: "original" | "free" | [number, number];
   cropOffset?: { x: number; y: number };
+  cropScale?: number;
+  cropFreeRatio?: number;
+  cropRotation?: number;
 };
 
 async function pickChatImages(
@@ -1076,17 +1088,23 @@ async function prepareChatImage(asset: ChatImageAsset) {
   const isGif =
     asset.mimeType === "image/gif" || asset.uri.toLowerCase().endsWith(".gif");
   if (isGif) return asset;
-  const width = Math.max(1, asset.width ?? 1600);
-  const height = Math.max(1, asset.height ?? 1200);
+  const sourceWidth = Math.max(1, asset.width ?? 1600);
+  const sourceHeight = Math.max(1, asset.height ?? 1200);
+  const rotation = (((asset.cropRotation ?? 0) % 360) + 360) % 360;
+  const rotated = rotation === 90 || rotation === 270;
+  const width = rotated ? sourceHeight : sourceWidth;
+  const height = rotated ? sourceWidth : sourceHeight;
   const requested = asset.cropAspect ?? "original";
   const target =
-    requested === "original" || requested === "free"
+    requested === "original"
       ? width / height
+      : requested === "free"
+        ? Math.max(0.45, Math.min(2.4, asset.cropFreeRatio ?? width / height))
       : requested[0] / requested[1];
   const ratio = width / height;
   const focusX = Math.max(-1, Math.min(1, asset.cropOffset?.x ?? 0));
   const focusY = Math.max(-1, Math.min(1, asset.cropOffset?.y ?? 0));
-  const crop =
+  const baseCrop =
     ratio > target
       ? {
           originX: Math.round(((width - height * target) * (focusX + 1)) / 2),
@@ -1100,15 +1118,35 @@ async function prepareChatImage(asset: ChatImageAsset) {
           width,
           height: Math.round(width / target),
         };
-  const actions: ImageManipulator.Action[] =
-    requested === "original" || requested === "free" ? [] : [{ crop }];
-  const sourceWidth =
-    requested === "original" || requested === "free" ? width : crop.width;
-  const sourceHeight =
-    requested === "original" || requested === "free" ? height : crop.height;
-  if (Math.max(sourceWidth, sourceHeight) > 1600)
+  const zoom = Math.max(1, Math.min(4, asset.cropScale ?? 1));
+  const cropWidth = Math.max(1, Math.round(baseCrop.width / zoom));
+  const cropHeight = Math.max(1, Math.round(baseCrop.height / zoom));
+  const crop = {
+    originX: Math.max(
+      0,
+      Math.min(
+        width - cropWidth,
+        Math.round(baseCrop.originX + ((baseCrop.width - cropWidth) * (focusX + 1)) / 2),
+      ),
+    ),
+    originY: Math.max(
+      0,
+      Math.min(
+        height - cropHeight,
+        Math.round(baseCrop.originY + ((baseCrop.height - cropHeight) * (focusY + 1)) / 2),
+      ),
+    ),
+    width: cropWidth,
+    height: cropHeight,
+  };
+  const actions: ImageManipulator.Action[] = [];
+  if (rotation) actions.push({ rotate: rotation });
+  if (!(requested === "original" && zoom <= 1)) actions.push({ crop });
+  const resultWidth = requested === "original" && zoom <= 1 ? width : crop.width;
+  const resultHeight = requested === "original" && zoom <= 1 ? height : crop.height;
+  if (Math.max(resultWidth, resultHeight) > 1600)
     actions.push(
-      sourceWidth >= sourceHeight
+      resultWidth >= resultHeight
         ? { resize: { width: 1600 } }
         : { resize: { height: 1600 } },
     );
@@ -1117,9 +1155,9 @@ async function prepareChatImage(asset: ChatImageAsset) {
     format: ImageManipulator.SaveFormat.JPEG,
   });
   const outputWidth =
-    requested === "original" || requested === "free" ? width : crop.width;
+    requested === "original" && zoom <= 1 ? width : crop.width;
   const outputHeight =
-    requested === "original" || requested === "free" ? height : crop.height;
+    requested === "original" && zoom <= 1 ? height : crop.height;
   const scale = Math.min(1, 1600 / Math.max(outputWidth, outputHeight));
   return {
     ...asset,
@@ -2383,6 +2421,12 @@ function serverErrorMessage(error: unknown) {
   if (message.includes("PHONE_ALREADY_REGISTERED"))
     return "이미 가입된 전화번호입니다.";
   if (
+    message.includes("already registered") ||
+    message.includes("User already registered") ||
+    message.includes("already been registered")
+  )
+    return "이미 가입된 번호입니다.";
+  if (
     message.includes("PHONE_NOT_REGISTERED") ||
     message.includes("User not found") ||
     message.includes("not found")
@@ -2409,6 +2453,24 @@ function serverErrorMessage(error: unknown) {
   if (message.includes("INVALID_PIN"))
     return "PIN은 숫자 6자리로 입력해주세요.";
   if (message.includes("INSUFFICIENT_POINTS")) return "포인트가 부족합니다.";
+  if (message.includes("STORE_PURCHASE_PLATFORM_NOT_AVAILABLE"))
+    return "현재 기기에서는 인앱결제를 사용할 수 없습니다.";
+  if (message.includes("PURCHASE_TIMEOUT"))
+    return "구매 응답 시간이 초과되었습니다. 결제 상태를 확인한 뒤 다시 시도해주세요.";
+  if (message.includes("cancel") || message.includes("Cancelled"))
+    return "구매가 취소되었습니다.";
+  if (message.includes("APP_STORE_API_NOT_CONFIGURED"))
+    return "결제 검증 서버 설정이 아직 완료되지 않았습니다.";
+  if (message.includes("APPLE_TRANSACTION_NOT_FOUND"))
+    return "App Store에서 구매 거래를 찾지 못했습니다. 잠시 후 다시 시도해주세요.";
+  if (message.includes("PRODUCT_ID_MISMATCH"))
+    return "구매 상품 정보가 일치하지 않습니다.";
+  if (message.includes("BUNDLE_ID_MISMATCH"))
+    return "앱 결제 정보가 일치하지 않습니다.";
+  if (message.includes("TRANSACTION_REVOKED"))
+    return "취소되었거나 환불된 구매입니다.";
+  if (message.includes("SUBSCRIPTION_NOT_ACTIVE"))
+    return "활성화된 구독을 확인하지 못했습니다.";
   if (message.includes("ROOM_MUTED")) return "채팅 금지 상태입니다.";
   if (message.includes("POINT_PRODUCT_NOT_SUPPORTED"))
     return "아직 준비되지 않은 상품입니다.";
@@ -4363,6 +4425,14 @@ function RoomRow({
           <Text numberOfLines={1} style={s.roomName}>
             {room.name}
           </Text>
+          {pinned && (
+            <Ionicons
+              name="pin-sharp"
+              size={14}
+              color={colors.textMuted}
+              style={s.pinnedIcon}
+            />
+          )}
         </View>
         <Text
           numberOfLines={1}
@@ -4408,14 +4478,6 @@ function RoomRow({
           )}
         </View>
       </View>
-      {pinned && (
-        <Ionicons
-          name="pin"
-          size={14}
-          color={colors.textMuted}
-          style={s.pinnedIcon}
-        />
-      )}{" "}
       {joined && unreadCount > 0 ? (
         <NotificationBadge inline count={unreadCount} />
       ) : null}
@@ -5307,7 +5369,15 @@ function ChatRoom({
     return () => clearTimeout(timer);
   }, [chatReady, initialMessagesLoaded, messages.length]);
   useEffect(() => {
-    if (!chatStyleLoaded || !isSupabaseConfigured || !isUuid(room.id)) return;
+    if (
+      !chatStyleLoaded ||
+      !isSupabaseConfigured ||
+      !isUuid(room.id) ||
+      readOnly ||
+      !currentUserId ||
+      !roomMembers.some((member) => member.mine)
+    )
+      return;
     const timer = setTimeout(
       () =>
         saveMyRoomChatStyle({
@@ -5330,6 +5400,9 @@ function ChatRoom({
     bubbleProductId,
     chatBackground,
     chatStyleLoaded,
+    currentUserId,
+    readOnly,
+    roomMembers,
     room.id,
     textColor,
     textProductId,
@@ -6389,12 +6462,12 @@ function ChatRoom({
   const unmuteSelectedMember=()=>{if(!selectedRoomMember?.userId)return;clearRoomMemberMute(room.id,selectedRoomMember.userId).then(()=>{setRoomMembers((items)=>items.map((item)=>item.userId===selectedRoomMember.userId?{...item,mutedUntil:null}:item));setSelectedMember(null);}).catch((error)=>Alert.alert("채팅 금지 해제 실패",serverErrorMessage(error)));};
   return (
     <SafeAreaView style={s.safe}>
-      <EdgeBackLayer onBack={onBack} />
       <StatusBar style="light" />
       <TopBar
         title={`[${room.name}]`}
         inlineCount={room.memberCount}
         onBack={onBack}
+        edgeBackEnabled={false}
         secondaryTrailing="search"
         onSecondaryTrailingPress={() => {
           setChatSearchOpen((value) => !value);
@@ -10002,6 +10075,93 @@ function PointLogScreen({
   );
 }
 
+function PaymentHistoryScreen({ onBack }: { onBack: () => void }) {
+  const [items, setItems] = useState<StoreTransactionItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    listStoreTransactions()
+      .then((next) => {
+        if (!mounted) return;
+        setItems(next);
+        setError("");
+      })
+      .catch((err) => {
+        if (!mounted) return;
+        setItems([]);
+        setError(serverErrorMessage(err));
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const renderPayment = ({ item }: { item: StoreTransactionItem }) => {
+    const title = item.productId || item.entitlementType || "결제 내역";
+    const subtitle = [
+      item.provider || "store",
+      item.environment || "",
+      formatCompactDate(item.createdAt),
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return (
+      <View style={s.paymentHistoryRow}>
+        <View style={s.paymentHistoryIcon}>
+          <Ionicons name="receipt-outline" size={18} color={colors.mint700} />
+        </View>
+        <View style={s.paymentHistoryBody}>
+          <Text numberOfLines={1} style={s.paymentHistoryTitle}>
+            {title}
+          </Text>
+          <Text numberOfLines={1} style={s.paymentHistorySubtitle}>
+            {subtitle}
+          </Text>
+        </View>
+        <Text style={s.paymentHistoryAmount}>
+          {item.pointsAwarded > 0
+            ? `+${item.pointsAwarded.toLocaleString()}P`
+            : item.entitlementType
+              ? "구독"
+              : "-"}
+        </Text>
+      </View>
+    );
+  };
+
+  return (
+    <SafeAreaView style={s.pointLogPage}>
+      <StatusBar style="light" />
+      <TopBar title="결제 내역" onBack={onBack} />
+      {loading ? (
+        <View style={s.centerState}>
+          <ActivityIndicator color={colors.mint700} />
+          <Text style={s.centerStateText}>결제 내역을 불러오고 있어요.</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={items}
+          keyExtractor={(item) => item.id}
+          contentInsetAdjustmentBehavior="never"
+          ListEmptyComponent={
+            <Empty
+              title={error ? "결제 내역을 불러오지 못했어요" : "결제 내역이 없어요"}
+              body={error || "결제 내역이 생기면 이곳에 표시됩니다."}
+            />
+          }
+          renderItem={renderPayment}
+        />
+      )}
+    </SafeAreaView>
+  );
+}
+
 function ItemShopScreen({
   points,
   onBack,
@@ -10069,6 +10229,25 @@ function ItemShopScreen({
       Alert.alert("구매 완료", selectedTheme ? "테마가 적용되었습니다." : "광고 제거가 적용되었습니다.");
     } catch (error) {
       Alert.alert("구매 실패", serverErrorMessage(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const restoreStoreItems = async () => {
+    if (busy) return;
+    setBusy("restore");
+    try {
+      const result = await restoreStorePurchases();
+      if (result.pointBalance > 0) onPointBalanceChange(result.pointBalance);
+      await reload();
+      Alert.alert(
+        "구매 복원",
+        result.restored > 0
+          ? "구매 내역을 복원했습니다."
+          : "복원할 새 구매 내역이 없습니다.",
+      );
+    } catch (error) {
+      Alert.alert("복원 실패", serverErrorMessage(error));
     } finally {
       setBusy(null);
     }
@@ -10163,6 +10342,17 @@ function ItemShopScreen({
             <Text style={s.itemShopAdBuyText}>{adFree ? "이용 중" : "구매"}</Text>
           </Pressable>
         </View>
+        <Pressable
+          disabled={Boolean(busy)}
+          onPress={() => void restoreStoreItems()}
+          style={s.itemShopRestore}
+        >
+          {busy === "restore" ? (
+            <ActivityIndicator size="small" color={colors.mint700} />
+          ) : (
+            <Text style={s.itemShopRestoreText}>구매 복원</Text>
+          )}
+        </Pressable>
       </ScrollView>
       <View style={s.itemShopFooter}>
         <View>
@@ -10208,6 +10398,7 @@ function Profile({
   const [itemShopOpen, setItemShopOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [selectedCharge, setSelectedCharge] = useState(0);
+  const [chargeBusy, setChargeBusy] = useState(false);
   const [pointLogs, setPointLogs] = useState<PointLedgerItem[]>([]);
   const [pointLogsLoading, setPointLogsLoading] = useState(false);
   const [pointLogsError, setPointLogsError] = useState("");
@@ -10445,12 +10636,18 @@ function Profile({
       )}
       {shopOpen && (
         <View style={s.chargeLayer}>
-          <Pressable style={s.chargeDim} onPress={() => setShopOpen(false)} />
+          <Pressable
+            style={s.chargeDim}
+            onPress={() => {
+              if (!chargeBusy) setShopOpen(false);
+            }}
+          />
           <View style={s.chargeModal}>
             <Text style={s.chargeTitle}>포인트 충전</Text>
             {chargeOptions.map((option, index) => (
               <Pressable
                 key={option.p}
+                disabled={chargeBusy}
                 onPress={() => setSelectedCharge(index)}
                 style={s.chargeOption}
               >
@@ -10470,15 +10667,18 @@ function Profile({
             ))}
             <View style={s.chargeActions}>
               <Pressable
+                disabled={chargeBusy}
                 onPress={() => setShopOpen(false)}
                 style={s.chargeAction}
               >
                 <Text style={s.chargeCancel}>취소</Text>
               </Pressable>
               <Pressable
+                disabled={chargeBusy}
                 onPress={async () => {
                   const option = chargeOptions[selectedCharge];
-                  if (!option) return;
+                  if (!option || chargeBusy) return;
+                  setChargeBusy(true);
                   try {
                     const result = await purchaseStoreProduct(option.productId);
                     onPointBalanceChange(result.pointBalance);
@@ -10489,6 +10689,8 @@ function Profile({
                     setShopOpen(false);
                   } catch (error) {
                     Alert.alert("구매 실패", serverErrorMessage(error));
+                  } finally {
+                    setChargeBusy(false);
                   }
                 }}
                 style={s.chargeAction}
@@ -10499,7 +10701,7 @@ function Profile({
                     selectedCharge >= 0 && s.chargeBuyActive,
                   ]}
                 >
-                  구매
+                  {chargeBusy ? "처리 중" : "구매"}
                 </Text>
               </Pressable>
             </View>
@@ -11434,6 +11636,8 @@ function Settings({
   const [notificationSaving, setNotificationSaving] = useState(false);
   const [processingAccount, setProcessingAccount] = useState(false);
   const [lockSettingsOpen, setLockSettingsOpen] = useState(false);
+  const [passwordChangeOpen, setPasswordChangeOpen] = useState(false);
+  const [paymentHistoryOpen, setPaymentHistoryOpen] = useState(false);
   const [appLockEnabled, setAppLockEnabled] = useState(false);
   useEffect(() => {
     getGlobalNotificationsEnabled()
@@ -11515,6 +11719,10 @@ function Settings({
         onChanged={setAppLockEnabled}
       />
     );
+  if (passwordChangeOpen)
+    return <PasswordChangeScreen onBack={() => setPasswordChangeOpen(false)} />;
+  if (paymentHistoryOpen)
+    return <PaymentHistoryScreen onBack={() => setPaymentHistoryOpen(false)} />;
   return (
     <SafeAreaView style={s.safe}>
       <StatusBar style="light" />
@@ -11559,11 +11767,14 @@ function Settings({
             }
           />
           <Menu
+            icon="key-outline"
+            title="비밀번호 변경"
+            onPress={() => setPasswordChangeOpen(true)}
+          />
+          <Menu
             icon="card-outline"
             title="결제 내역"
-            onPress={() =>
-              Alert.alert("결제 내역", "아직 결제 내역이 없습니다.")
-            }
+            onPress={() => setPaymentHistoryOpen(true)}
           />
           <Menu
             icon="document-text-outline"
@@ -11597,6 +11808,119 @@ function Settings({
         </View>
         <Text style={s.version}>Mute 0.1.0</Text>
       </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function PasswordChangeScreen({ onBack }: { onBack: () => void }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [currentError, setCurrentError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const validNewPassword = newPassword.length >= 8;
+  const passwordsMatch = !confirmPassword || newPassword === confirmPassword;
+  const canSubmit =
+    currentPassword.length > 0 &&
+    validNewPassword &&
+    newPassword === confirmPassword &&
+    !saving;
+  const submit = async () => {
+    if (!canSubmit) return;
+    setSaving(true);
+    setCurrentError("");
+    try {
+      await changeCurrentUserPassword(currentPassword, newPassword);
+      Alert.alert("변경 완료", "비밀번호가 변경되었습니다.", [
+        { text: "확인", onPress: onBack },
+      ]);
+    } catch (error) {
+      const message = serverErrorMessage(error);
+      if (message.includes("현재 사용 중인 비밀번호")) setCurrentError(message);
+      else Alert.alert("비밀번호 변경 실패", message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const confirmSubmit = () =>
+    Alert.alert(
+      "비밀번호 변경",
+      "비밀번호를 변경하시겠습니까?\n이 작업을 되돌릴 수 없습니다.",
+      [
+        { text: "취소", style: "cancel" },
+        { text: "변경", onPress: submit },
+      ],
+    );
+  return (
+    <SafeAreaView style={s.safe}>
+      <StatusBar style="light" />
+      <TopBar title="비밀번호 변경" onBack={onBack} />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={s.flex}
+      >
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={s.passwordChangePage}
+        >
+          <TextInput
+            value={currentPassword}
+            onChangeText={(value) => {
+              setCurrentPassword(value);
+              if (currentError) setCurrentError("");
+            }}
+            secureTextEntry
+            placeholder="현재 비밀번호"
+            placeholderTextColor={colors.textMuted}
+            style={s.input}
+          />
+          {currentError ? (
+            <Text style={s.authPasswordMismatch}>{currentError}</Text>
+          ) : null}
+          <TextInput
+            value={newPassword}
+            onChangeText={setNewPassword}
+            secureTextEntry
+            placeholder="새 비밀번호"
+            placeholderTextColor={colors.textMuted}
+            style={s.input}
+          />
+          {newPassword.length > 0 && !validNewPassword ? (
+            <Text style={s.authPasswordMismatch}>
+              비밀번호는 8자 이상이어야 합니다.
+            </Text>
+          ) : null}
+          <TextInput
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            secureTextEntry
+            placeholder="새 비밀번호 확인"
+            placeholderTextColor={colors.textMuted}
+            style={s.input}
+          />
+          {confirmPassword.length > 0 && !passwordsMatch ? (
+            <Text style={s.authPasswordMismatch}>비밀번호가 일치하지 않습니다.</Text>
+          ) : null}
+          <Pressable
+            disabled={!canSubmit}
+            onPress={confirmSubmit}
+            style={[s.primary, !canSubmit && s.disabled]}
+          >
+            <LinearGradient
+              colors={canSubmit ? ["#82B9C1", "#5DBB8C"] : ["#C9D8D5", "#BFCAC7"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={s.primaryGradient}
+            >
+              {saving ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <Text style={s.primaryText}>비밀번호 변경</Text>
+              )}
+            </LinearGradient>
+          </Pressable>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -12159,6 +12483,12 @@ function ImageGrid({
     </View>
   );
 }
+function imageTouchDistance(touches: ArrayLike<{ pageX: number; pageY: number }>) {
+  if (touches.length < 2) return 0;
+  const first = touches[0];
+  const second = touches[1];
+  return Math.hypot(first.pageX - second.pageX, first.pageY - second.pageY);
+}
 function ChatImageEditor({
   assets,
   onBack,
@@ -12169,9 +12499,19 @@ function ChatImageEditor({
   onSend: (assets: ChatImageAsset[]) => void;
 }) {
   const [items, setItems] = useState<ChatImageAsset[]>(
-    assets.map((asset) => ({ ...asset, cropAspect: "original" })),
+    assets.map((asset) => ({
+      ...asset,
+      cropAspect: "original",
+      cropOffset: { x: 0, y: 0 },
+      cropScale: 1,
+      cropFreeRatio: (asset.width || 4) / (asset.height || 3),
+      cropRotation: 0,
+    })),
   );
   const [selected, setSelected] = useState(0);
+  const panStart = useRef({ x: 0, y: 0 });
+  const pinchStart = useRef({ distance: 0, scale: 1 });
+  const freeRatioStart = useRef(1);
   useEffect(() => {
     if (!items.length) onBack();
   }, [items.length, onBack]);
@@ -12192,6 +12532,13 @@ function ChatImageEditor({
       return next;
     });
   const current = items[selected];
+  const rotateSelected = (direction: -1 | 1) => {
+    if (!current) return;
+    updateSelected({
+      cropRotation: (((current.cropRotation ?? 0) + direction * 90) % 360 + 360) % 360,
+      cropOffset: { x: 0, y: 0 },
+    });
+  };
   const ratios: { label: string; value: ChatImageAsset["cropAspect"] }[] = [
     { label: "원본", value: "original" },
     { label: "자유롭게", value: "free" },
@@ -12208,33 +12555,70 @@ function ChatImageEditor({
     ? current.cropAspect === "original" ||
       current.cropAspect === "free" ||
       !current.cropAspect
-      ? (current.width || 4) / (current.height || 3)
+      ? current.cropAspect === "free"
+        ? Math.max(0.45, Math.min(2.4, current.cropFreeRatio ?? (current.width || 4) / (current.height || 3)))
+        : (current.width || 4) / (current.height || 3)
       : current.cropAspect[0] / current.cropAspect[1]
     : 4 / 3;
   const viewport = Dimensions.get("window");
   const maxPreviewWidth = viewport.width - 36;
   const previewWidth = maxPreviewWidth;
-  const previewHeight = previewWidth / previewRatio;
+  const maxPreviewHeight = Math.max(260, viewport.height - 360);
+  const previewHeight = Math.min(maxPreviewHeight, previewWidth / previewRatio);
   const cropResponder = useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponder: () =>
-          Boolean(
-            current &&
-              current.cropAspect &&
-              current.cropAspect !== "original" &&
-              current.cropAspect !== "free",
-          ),
-        onPanResponderMove: (_event, gesture) => {
+        onStartShouldSetPanResponder: () => Boolean(current),
+        onMoveShouldSetPanResponder: () => Boolean(current),
+        onPanResponderGrant: (event) => {
+          const offset = current?.cropOffset ?? { x: 0, y: 0 };
+          panStart.current = offset;
+          pinchStart.current = {
+            distance: imageTouchDistance(event.nativeEvent.touches),
+            scale: current?.cropScale ?? 1,
+          };
+        },
+        onPanResponderMove: (event, gesture) => {
           if (!current) return;
-          const offset = current.cropOffset ?? { x: 0, y: 0 };
-          const nextX = Math.max(-1, Math.min(1, offset.x - gesture.dx / 220));
-          const nextY = Math.max(-1, Math.min(1, offset.y - gesture.dy / 220));
+          const touches = event.nativeEvent.touches;
+          if (touches.length >= 2 && pinchStart.current.distance > 0) {
+            const distance = imageTouchDistance(touches);
+            const nextScale = Math.max(
+              1,
+              Math.min(4, pinchStart.current.scale * (distance / pinchStart.current.distance)),
+            );
+            updateSelected({ cropScale: nextScale });
+            return;
+          }
+          const nextX = Math.max(-1, Math.min(1, panStart.current.x - gesture.dx / 180));
+          const nextY = Math.max(-1, Math.min(1, panStart.current.y - gesture.dy / 180));
           updateSelected({ cropOffset: { x: nextX, y: nextY } });
         },
       }),
     [current, selected],
   );
+  const freeResizeResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => current?.cropAspect === "free",
+        onMoveShouldSetPanResponder: () => current?.cropAspect === "free",
+        onPanResponderGrant: () => {
+          freeRatioStart.current = current?.cropFreeRatio ?? previewRatio;
+        },
+        onPanResponderMove: (_event, gesture) => {
+          if (current?.cropAspect !== "free") return;
+          const nextRatio = Math.max(
+            0.45,
+            Math.min(2.4, freeRatioStart.current + gesture.dx / 180 - gesture.dy / 260),
+          );
+          updateSelected({ cropFreeRatio: nextRatio });
+        },
+      }),
+    [current, previewRatio, selected],
+  );
+  const previewOffset = current?.cropOffset ?? { x: 0, y: 0 };
+  const previewScale = current?.cropScale ?? 1;
+  const previewRotation = current?.cropRotation ?? 0;
   return (
     <SafeAreaView style={s.imageEditorScreen}>
       <StatusBar style="light" />
@@ -12259,15 +12643,31 @@ function ChatImageEditor({
             <ExpoImage
               source={{ uri: current.uri }}
               contentFit="cover"
-              style={s.imageEditorPreview}
+              style={[
+                s.imageEditorPreview,
+                {
+                  transform: [
+                    { translateX: previewOffset.x * previewWidth * -0.18 },
+                    { translateY: previewOffset.y * previewHeight * -0.18 },
+                    { scale: previewScale },
+                    { rotate: `${previewRotation}deg` },
+                  ],
+                },
+              ]}
             />
             {current.cropAspect &&
               current.cropAspect !== "original" && (
-                <View pointerEvents="none" style={s.imageCropFocus}>
+                <View pointerEvents="box-none" style={s.imageCropFocus}>
                   <View style={s.imageCropGridLineVertical} />
                   <View style={[s.imageCropGridLineVertical, { left: "66.66%" }]} />
                   <View style={s.imageCropGridLineHorizontal} />
                   <View style={[s.imageCropGridLineHorizontal, { top: "66.66%" }]} />
+                  {current.cropAspect === "free" && (
+                    <View
+                      {...freeResizeResponder.panHandlers}
+                      style={s.imageCropResizeHandle}
+                    />
+                  )}
                 </View>
               )}
           </View>
@@ -12276,6 +12676,36 @@ function ChatImageEditor({
         )}
       </ScrollView>
       <View style={s.imageEditorFooter}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={s.imageEditorThumbs}
+        >
+          {items.map((asset, index) => (
+            <Pressable
+              key={`${asset.uri}-${index}`}
+              onPress={() => setSelected(index)}
+              style={[
+                s.imageEditorThumbWrap,
+                index === selected && s.imageEditorThumbActive,
+              ]}
+            >
+              <ExpoImage
+                source={{ uri: asset.uri }}
+                contentFit="cover"
+                style={s.imageEditorThumb}
+              />
+              <Text style={s.imageEditorOrder}>{index + 1}</Text>
+              <RNPressable
+                hitSlop={12}
+                onPress={() => remove(index)}
+                style={s.imageEditorThumbRemove}
+              >
+                <Ionicons name="close" size={13} color="#FFF" />
+              </RNPressable>
+            </Pressable>
+          ))}
+        </ScrollView>
         {current && (
           <View style={s.imageRatioRow}>
             {ratios.map((ratio) => (
@@ -12285,6 +12715,11 @@ function ChatImageEditor({
                   updateSelected({
                     cropAspect: ratio.value,
                     cropOffset: { x: 0, y: 0 },
+                    cropScale: 1,
+                    cropFreeRatio:
+                      ratio.value === "free"
+                        ? current.cropFreeRatio ?? (current.width || 4) / (current.height || 3)
+                        : current.cropFreeRatio,
                   })
                 }
                 style={[
@@ -12306,55 +12741,36 @@ function ChatImageEditor({
             ))}
           </View>
         )}
-        <Text style={s.imageEditorHint}>
-          사진마다 원하는 비율과 크롭 위치를 조정할 수 있어요.
-        </Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={s.imageEditorThumbs}
-        >
-          {items.map((asset, index) => (
-            <Pressable
-              key={`${asset.uri}-${index}`}
-              onPress={() => setSelected(index)}
-              style={[
-                s.imageEditorThumbWrap,
-                index === selected && s.imageEditorThumbActive,
-              ]}
-            >
-              <ExpoImage
-                source={{ uri: asset.uri }}
-                contentFit="cover"
-                style={s.imageEditorThumb}
-              />
-              <Text style={s.imageEditorOrder}>{index + 1}</Text>
-              <Pressable
-                hitSlop={10}
-                onPress={() => remove(index)}
-                style={s.imageEditorThumbRemove}
-              >
-                <Ionicons name="close" size={13} color="#FFF" />
-              </Pressable>
-            </Pressable>
-          ))}
-        </ScrollView>
-        <Pressable
-          disabled={!items.length}
-          onPress={() => onSend(items)}
-          style={[s.primary, !items.length && s.disabled]}
-        >
-          <LinearGradient
-            colors={
-              items.length ? ["#82B9C1", "#5DBB8C"] : ["#C9D8D5", "#BFCAC7"]
+        <View style={s.imageEditorToolbar}>
+          <RNPressable onPress={onBack} style={s.imageEditorToolSide}>
+            <Text style={s.imageEditorCancel}>취소</Text>
+          </RNPressable>
+          <RNPressable onPress={() => rotateSelected(-1)} style={s.imageEditorToolButton}>
+            <Ionicons name="return-up-back" size={25} color="rgba(255,255,255,.9)" />
+          </RNPressable>
+          <RNPressable
+            onPress={() =>
+              updateSelected({
+                cropAspect: current?.cropAspect === "original" ? [1, 1] : "original",
+                cropOffset: { x: 0, y: 0 },
+                cropScale: 1,
+              })
             }
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={s.primaryGradient}
+            style={s.imageEditorToolButton}
           >
-            <Text style={s.primaryText}>{items.length}장 전송</Text>
-          </LinearGradient>
-        </Pressable>
+            <Ionicons name="crop" size={26} color="#FFF" />
+          </RNPressable>
+          <RNPressable onPress={() => rotateSelected(1)} style={s.imageEditorToolButton}>
+            <Ionicons name="return-up-forward" size={25} color="rgba(255,255,255,.9)" />
+          </RNPressable>
+          <RNPressable
+            disabled={!items.length}
+            onPress={() => onSend(items)}
+            style={s.imageEditorToolSide}
+          >
+            <Text style={[s.imageEditorDone, !items.length && s.disabledSoft]}>완료</Text>
+          </RNPressable>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -16897,6 +17313,37 @@ const s = StyleSheet.create({
     fontSize: 15,
     textAlign: "right",
   },
+  paymentHistoryRow: {
+    minHeight: 72,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 20,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  paymentHistoryIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.mint050,
+  },
+  paymentHistoryBody: { flex: 1, minWidth: 0 },
+  paymentHistoryTitle: { color: colors.text, fontSize: 14, fontWeight: "500" },
+  paymentHistorySubtitle: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 4,
+  },
+  paymentHistoryAmount: {
+    minWidth: 76,
+    textAlign: "right",
+    color: "#1C1C1C",
+    fontSize: 14,
+    fontWeight: "500",
+  },
   hyperlink: {
     color: "#2878B8",
     textDecorationLine: "underline",
@@ -16968,6 +17415,18 @@ const s = StyleSheet.create({
   },
   itemShopAdBuy: { minWidth: 62, height: 34, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: colors.mint700 },
   itemShopAdBuyText: { color: "#FFF", fontSize: 11, fontWeight: "700" },
+  itemShopRestore: {
+    height: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+    backgroundColor: "#FFF",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    marginTop: -12,
+    marginBottom: 18,
+  },
+  itemShopRestoreText: { color: colors.mint700, fontSize: 11, fontWeight: "600" },
   itemShopFooter: {
     position: "absolute",
     left: 0,
@@ -17268,6 +17727,17 @@ const s = StyleSheet.create({
     borderColor: "rgba(255,255,255,.9)",
     borderStyle: "dashed",
   },
+  imageCropResizeHandle: {
+    position: "absolute",
+    right: -10,
+    bottom: -10,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 2,
+    borderColor: "#FFF",
+    backgroundColor: "rgba(93,187,140,.85)",
+  },
   imageCropGridLineVertical: {
     position: "absolute",
     left: "33.33%",
@@ -17336,16 +17806,16 @@ const s = StyleSheet.create({
     fontSize: 11,
     fontWeight: "500",
   },
-  imageEditorThumbs: { gap: 12, paddingVertical: 8, paddingRight: 8 },
+  imageEditorThumbs: { gap: 14, paddingVertical: 10, paddingRight: 8 },
   imageEditorThumbWrap: {
-    width: 82,
-    height: 82,
-    borderRadius: 14,
+    width: 94,
+    height: 94,
+    borderRadius: 16,
     borderWidth: 2,
     borderColor: "transparent",
   },
   imageEditorThumbActive: { borderColor: colors.mint600 },
-  imageEditorThumb: { width: "100%", height: "100%", borderRadius: 12 },
+  imageEditorThumb: { width: "100%", height: "100%", borderRadius: 14 },
   imageEditorOrder: {
     position: "absolute",
     left: 4,
@@ -17374,12 +17844,33 @@ const s = StyleSheet.create({
   },
   imageEditorFooter: {
     paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 26,
+    paddingTop: 8,
+    paddingBottom: 18,
     backgroundColor: "#111",
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(255,255,255,.12)",
   },
+  imageEditorToolbar: {
+    minHeight: 58,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 8,
+  },
+  imageEditorToolSide: {
+    minWidth: 58,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  imageEditorToolButton: {
+    width: 52,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  imageEditorCancel: { color: "#0A84FF", fontSize: 16, fontWeight: "500" },
+  imageEditorDone: { color: "#FFD60A", fontSize: 16, fontWeight: "700" },
   globalBusyLayer: {
     ...StyleSheet.absoluteFill,
     zIndex: 20000,
@@ -17415,6 +17906,13 @@ const s = StyleSheet.create({
     padding: 24,
     paddingTop: 42,
     gap: 14,
+    backgroundColor: "#FFF",
+  },
+  passwordChangePage: {
+    flexGrow: 1,
+    padding: 24,
+    paddingTop: 34,
+    gap: 12,
     backgroundColor: "#FFF",
   },
   pinnedIcon: { marginHorizontal: 5 },

@@ -45,18 +45,22 @@ export async function claimPointReward(type: 'attendance' | 'rewarded_ad', rewar
 }
 
 export async function listPointLedger(limit = 80): Promise<PointLedgerItem[]> {
-  const { data, error } = await requireClient()
-    .from('point_ledger')
-    .select('id,amount,reason,reference_id,created_at')
-    .order('created_at', { ascending: false })
-    .limit(limit);
+  const { data, error } = await requireClient().rpc('list_my_point_ledger', {
+    p_limit: limit,
+  });
   if (error) throw error;
-  return (data ?? []).map((row) => ({
+  return ((data ?? []) as Array<{
+    id: string;
+    amount: number | string | null;
+    reason: string | null;
+    reference_id: string | null;
+    created_at: string | null;
+  }>).map((row) => ({
     id: row.id as string,
     amount: Number(row.amount ?? 0),
-    reason: row.reason as string,
+    reason: (row.reason ?? 'admin_point') as string,
     referenceId: row.reference_id as string | null,
-    createdAt: row.created_at as string,
+    createdAt: (row.created_at ?? new Date().toISOString()) as string,
   }));
 }
 
