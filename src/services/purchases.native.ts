@@ -138,7 +138,7 @@ export async function purchaseStoreProduct(productId: string) {
   const productType: ProductQueryType = productId === 'mute_ad_free_monthly' ? 'subs' : 'in-app';
   const products = await fetchProducts({ skus: [productId], type: productType });
   if (!products?.some((product) => product.id === productId)) {
-    throw new Error(`App Store Connect에서 상품을 찾지 못했습니다. 상품 ID를 확인해주세요: ${productId}`);
+    throw new Error(`STORE_PRODUCT_NOT_FOUND:${productId}`);
   }
 
   const purchase = await waitForPurchase(productId, () =>

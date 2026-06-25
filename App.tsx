@@ -452,16 +452,18 @@ const LINK_PATTERN = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
 type AppTheme = {
   id: string;
   name: string;
-  productId: string;
+  productId?: string;
   gradient: [string, string];
   accent: string;
 };
 const APP_THEMES: AppTheme[] = [
+  { id: "white", name: "화이트", gradient: ["#FFFFFF", "#FFFFFF"], accent: "#1C1C1C" },
   { id: "mint", name: "민트", productId: STORE_PRODUCTS.themeMint, gradient: ["#82B9C1", "#5DBB8C"], accent: "#4FAE7D" },
   { id: "ocean", name: "오션", productId: STORE_PRODUCTS.themeOcean, gradient: ["#83B9D8", "#527FBF"], accent: "#527FBF" },
   { id: "lavender", name: "라벤더", productId: STORE_PRODUCTS.themeLavender, gradient: ["#B9A7D9", "#8D75BC"], accent: "#8D75BC" },
   { id: "sunset", name: "선셋", productId: STORE_PRODUCTS.themeSunset, gradient: ["#E7A48E", "#D87587"], accent: "#D87587" },
   { id: "mono", name: "모노", productId: STORE_PRODUCTS.themeMono, gradient: ["#777D82", "#353A3E"], accent: "#535A60" },
+  { id: "dark", name: "다크", gradient: ["#1C1C1C", "#000000"], accent: "#1C1C1C" },
 ];
 let activeAppTheme = APP_THEMES[0];
 const appThemeListeners = new Set<(theme: AppTheme) => void>();
@@ -1578,7 +1580,7 @@ function AuthenticatedApp({
   const [category, setCategory] = useState<MainTab>("promotion");
   const [selectedRoom, setSelectedRoom] = useState(EMPTY_ROOM);
   const [roomData, setRoomData] = useState<Room[]>([]);
-  const [dataRefreshing, setDataRefreshing] = useState(isSupabaseConfigured);
+  const [dataRefreshing, setDataRefreshing] = useState(false);
   const [joinedIds, setJoinedIds] = useState<string[]>([]);
   const [ownedRoomIds, setOwnedRoomIds] = useState<string[]>([]);
   const [pendingIds, setPendingIds] = useState<string[]>([]);
@@ -2014,8 +2016,12 @@ function AuthenticatedApp({
       if (isSupabaseConfigured) {
         const result = await claimPointReward(type, ad.rewardKey);
         setPoints(result.pointBalance);
-        if (type === "attendance")
+        if (type === "attendance") {
           setAttendanceAvailableAt(new Date(result.nextAvailableAt).getTime());
+          setRewardedAdAvailable(true);
+        } else {
+          setRewardedAdAvailable(false);
+        }
         Alert.alert(
           "포인트 지급",
           `${result.awardedPoints}포인트를 받았습니다.`,
@@ -2023,8 +2029,12 @@ function AuthenticatedApp({
       } else {
         const reward = type === "attendance" ? 10 : 5;
         setPoints((value) => value + reward);
-        if (type === "attendance")
+        if (type === "attendance") {
           setAttendanceAvailableAt(Date.now() + 60 * 60 * 1000);
+          setRewardedAdAvailable(true);
+        } else {
+          setRewardedAdAvailable(false);
+        }
         Alert.alert("포인트 지급", `${reward}포인트를 받았습니다.`);
       }
     } catch (error) {
@@ -2457,6 +2467,14 @@ function serverErrorMessage(error: unknown) {
     return "현재 기기에서는 인앱결제를 사용할 수 없습니다.";
   if (message.includes("PURCHASE_TIMEOUT"))
     return "구매 응답 시간이 초과되었습니다. 결제 상태를 확인한 뒤 다시 시도해주세요.";
+  if (message.includes("STORE_PRODUCT_NOT_FOUND"))
+    return "App Store Connect에서 상품을 찾지 못했습니다. 상품 ID와 심사 상태를 확인해주세요.";
+  if (message.includes("REWARDED_AD_ATTENDANCE_REQUIRED"))
+    return "출석 체크 후 대기 시간 동안 한 번만 광고 보상을 받을 수 있습니다.";
+  if (message.includes("REWARDED_AD_ALREADY_CLAIMED"))
+    return "이번 출석 대기 시간에는 이미 광고 보상을 받았습니다.";
+  if (message.includes("REWARD_COOLDOWN"))
+    return "아직 출석 체크 시간이 아닙니다.";
   if (message.includes("cancel") || message.includes("Cancelled"))
     return "구매가 취소되었습니다.";
   if (message.includes("APP_STORE_API_NOT_CONFIGURED"))
@@ -3782,6 +3800,7 @@ function MainScreen({
   const [toast, setToast] = useState("");
   const [pinnedRoomIds, setPinnedRoomIds] = useState<string[]>([]);
   const [storyDetailOpen, setStoryDetailOpen] = useState(false);
+  const [profileSubpageOpen, setProfileSubpageOpen] = useState(false);
   const [storySearchOpen, setStorySearchOpen] = useState(false);
   const [storyQuery, setStoryQuery] = useState("");
   useEffect(() => {
@@ -3963,7 +3982,7 @@ function MainScreen({
           </View>
         </View>
       ) : (
-        !storyDetailOpen && (
+        !storyDetailOpen && !profileSubpageOpen && (
           <LinearGradient
             colors={["#82B9C1", "#5DBB8C"]}
             start={{ x: 0, y: 0 }}
@@ -4180,6 +4199,7 @@ function MainScreen({
           onRanking={onRanking}
           onSettings={onSettings}
           onPointBalanceChange={onPointBalanceChange}
+          onSubpageChange={setProfileSubpageOpen}
         />
       )}
       {bottomTab === "stories" && (
@@ -8039,8 +8059,21 @@ function StoryDetail({
     if (!body || !joined) return;
     try {
       let id = `comment-${Date.now()}`;
-      if (isSupabaseConfigured && isUuid(story.id))
+      if (isSupabaseConfigured && isUuid(story.id)) {
         id = await addStoryComment(story.id, body);
+        if (room?.id && isUuid(room.id)) {
+          const [rows, userResult] = await Promise.all([
+            listStories({ roomId: room.id }),
+            supabase?.auth.getUser(),
+          ]);
+          const latest = rows.find((item) => item.id === story.id);
+          if (latest) {
+            onChange(mapServerStory(latest, userResult?.data.user?.id));
+            setComment("");
+            return;
+          }
+        }
+      }
       onChange({
         ...story,
         comments: [
@@ -10252,13 +10285,10 @@ function ItemShopScreen({
       setBusy(null);
     }
   };
-  const chatProducts = [
-    { title: "채팅방 배경", icon: "color-fill-outline" as IconName, productId: STORE_PRODUCTS.customBackground },
-    { title: "색연필", icon: "brush-outline" as IconName, productId: STORE_PRODUCTS.customTextColor },
-    { title: "말풍선", icon: "chatbubble-outline" as IconName, productId: STORE_PRODUCTS.customBubbleColor },
-  ];
   const selectedTheme = APP_THEMES.find((item) => item.id === themeChoice) ?? APP_THEMES[0];
-  const selectedThemeOwned = storeItems.some((item) => item.productId === selectedTheme.productId);
+  const selectedThemeOwned =
+    !selectedTheme.productId ||
+    storeItems.some((item) => item.productId === selectedTheme.productId);
   const adFree = storeItems.find(
     (item) =>
       item.productId === STORE_PRODUCTS.adFreeMonthly &&
@@ -10269,42 +10299,39 @@ function ItemShopScreen({
       <StatusBar style="dark" />
       <TopBar title="아이템샵" onBack={onBack} />
       <ScrollView contentContainerStyle={s.itemShopPage}>
-        <Text style={s.itemShopSectionTitle}>채팅 아이템</Text>
-        <View style={s.itemShopGrid}>
-          {chatProducts.map((item) => {
-            const owned = chatItems.some((ownedItem) => ownedItem.productId === item.productId);
-            return (
-              <View key={item.productId} style={s.itemShopSmallCard}>
-                <Ionicons name={item.icon} size={24} color={colors.mint700} />
-                <Text style={s.itemShopCardTitle}>{item.title}</Text>
-                <Text style={s.itemShopPrice}>{owned ? "보유 중" : "3,200 P"}</Text>
-                <Pressable
-                  disabled={Boolean(busy) || owned}
-                  onPress={() => buyPointItem(item.productId, item.title)}
-                  style={[s.itemShopBuy, owned && s.disabled]}
-                >
-                  <LinearGradient colors={["#82B9C1", "#5DBB8C"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.itemShopBuyGradient}>
-                    {busy === item.productId ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={s.itemShopBuyText}>{owned ? "구매 완료" : "구매"}</Text>}
-                  </LinearGradient>
-                </Pressable>
-              </View>
-            );
-          })}
-        </View>
-
         <Text style={s.itemShopSectionTitle}>앱 테마</Text>
         <View style={s.itemShopThemeList}>
           {APP_THEMES.map((item) => {
-            const owned = storeItems.some((ownedItem) => ownedItem.productId === item.productId);
+            const free = !item.productId;
+            const owned =
+              free ||
+              storeItems.some((ownedItem) => ownedItem.productId === item.productId);
             const selected = themeChoice === item.id;
             return (
               <View key={item.id} style={s.itemShopThemeCard}>
-                <ExpoLinearGradient colors={item.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.itemShopThemePreview}>
-                  <Image source={require("./assets/mute-logo-white.png")} resizeMode="contain" style={s.itemShopThemeLogo} />
+                <ExpoLinearGradient
+                  colors={item.gradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={[
+                    s.itemShopThemePreview,
+                    item.id === "white" && s.itemShopThemePreviewWhite,
+                  ]}
+                >
+                  <Image
+                    source={require("./assets/mute-logo-white.png")}
+                    resizeMode="contain"
+                    style={[
+                      s.itemShopThemeLogo,
+                      item.id === "white" && s.itemShopThemeLogoDark,
+                    ]}
+                  />
                 </ExpoLinearGradient>
                 <View style={s.itemShopThemeCopy}>
                   <Text style={s.itemShopCardTitle}>{item.name}</Text>
-                  <Text style={s.itemShopPrice}>{owned ? "보유 중 · 영구 소장" : "4,900원 · 영구 소장"}</Text>
+                  <Text style={s.itemShopPrice}>
+                    {free ? "기본 제공" : owned ? "보유 중 · 영구 소장" : "4,900원 · 영구 소장"}
+                  </Text>
                 </View>
                 <Pressable
                   disabled={Boolean(busy)}
@@ -10322,7 +10349,9 @@ function ItemShopScreen({
           onPress={() =>
             selectedThemeOwned
               ? selectAppTheme(selectedTheme)
-              : void buyStoreItem(selectedTheme.productId, selectedTheme)
+              : selectedTheme.productId
+                ? void buyStoreItem(selectedTheme.productId, selectedTheme)
+                : selectAppTheme(selectedTheme)
           }
           style={s.itemShopThemeBuy}
         >
@@ -10339,7 +10368,13 @@ function ItemShopScreen({
             <Text style={s.itemShopPrice}>{adFree ? "이용 중" : "월 5,900원"}</Text>
           </View>
           <Pressable disabled={Boolean(busy) || Boolean(adFree)} onPress={() => void buyStoreItem(STORE_PRODUCTS.adFreeMonthly)} style={[s.itemShopAdBuy, adFree && s.disabled]}>
-            <Text style={s.itemShopAdBuyText}>{adFree ? "이용 중" : "구매"}</Text>
+            <LinearGradient colors={["#82B9C1", "#5DBB8C"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.itemShopBuyGradient}>
+              {busy === STORE_PRODUCTS.adFreeMonthly ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <Text style={s.itemShopAdBuyText}>{adFree ? "이용 중" : "구매"}</Text>
+              )}
+            </LinearGradient>
           </Pressable>
         </View>
         <Pressable
@@ -10381,6 +10416,7 @@ function Profile({
   onOperationsPolicy,
   onSettings,
   onPointBalanceChange,
+  onSubpageChange,
 }: {
   points: number;
   now: number;
@@ -10393,6 +10429,7 @@ function Profile({
   onOperationsPolicy?: () => void;
   onSettings: () => void;
   onPointBalanceChange: (value: number) => void;
+  onSubpageChange?: (open: boolean) => void;
 }) {
   const [shopOpen, setShopOpen] = useState(false);
   const [itemShopOpen, setItemShopOpen] = useState(false);
@@ -10402,6 +10439,10 @@ function Profile({
   const [pointLogs, setPointLogs] = useState<PointLedgerItem[]>([]);
   const [pointLogsLoading, setPointLogsLoading] = useState(false);
   const [pointLogsError, setPointLogsError] = useState("");
+  useEffect(() => {
+    onSubpageChange?.(logOpen || itemShopOpen);
+    return () => onSubpageChange?.(false);
+  }, [itemShopOpen, logOpen, onSubpageChange]);
   const openOperationsPolicy = () => {
     if (onOperationsPolicy) {
       onOperationsPolicy();
@@ -10453,42 +10494,42 @@ function Profile({
     };
   }, [logOpen]);
   const pointLogRows = useMemo(() => {
-    let balance = Number.isFinite(points) ? points : 0;
-    let lastDate = "";
-    return pointLogs.flatMap((item, index) => {
-      const timestamp = Date.parse(String(item.createdAt ?? ""));
-      const date = Number.isFinite(timestamp)
-        ? new Date(timestamp)
-        : new Date();
-      const dateLabel = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-      const timeLabel = date.toLocaleTimeString("ko-KR", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      });
-      const balanceAfter = balance;
-      const rawAmount = Number(item.amount);
-      const amount = Number.isFinite(rawAmount) ? rawAmount : 0;
-      balance -= amount;
-      const rows: PointLogRow[] = [];
-      if (dateLabel !== lastDate) {
+    try {
+      let balance = Number.isFinite(points) ? points : 0;
+      let lastDate = "";
+      return pointLogs.flatMap((item, index) => {
+        const timestamp = Date.parse(String(item?.createdAt ?? ""));
+        const date = Number.isFinite(timestamp)
+          ? new Date(timestamp)
+          : new Date();
+        const dateLabel = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+        const timeLabel = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+        const balanceAfter = balance;
+        const rawAmount = Number(item?.amount);
+        const amount = Number.isFinite(rawAmount) ? rawAmount : 0;
+        balance -= amount;
+        const rows: PointLogRow[] = [];
+        if (dateLabel !== lastDate) {
+          rows.push({
+            kind: "date",
+            key: `date-${dateLabel}-${index}`,
+            label: dateLabel,
+          });
+          lastDate = dateLabel;
+        }
         rows.push({
-          kind: "date",
-          key: `date-${dateLabel}-${index}`,
-          label: dateLabel,
+          kind: "item",
+          key: item?.id || `point-${index}`,
+          time: timeLabel,
+          title: pointReasonLabel(String(item?.reason || "기타")),
+          amount,
+          balance: Number.isFinite(balanceAfter) ? balanceAfter : 0,
         });
-        lastDate = dateLabel;
-      }
-      rows.push({
-        kind: "item",
-        key: item.id || `point-${index}`,
-        time: timeLabel,
-        title: pointReasonLabel(String(item.reason || "기타")),
-        amount,
-        balance: Number.isFinite(balanceAfter) ? balanceAfter : 0,
+        return rows;
       });
-      return rows;
-    });
+    } catch {
+      return [] as PointLogRow[];
+    }
   }, [pointLogs, points]);
   if (logOpen)
     return (
@@ -17398,7 +17439,13 @@ const s = StyleSheet.create({
     backgroundColor: "#FFF",
   },
   itemShopThemePreview: { width: 84, height: 50, borderRadius: 10, alignItems: "flex-start", justifyContent: "center", paddingLeft: 8 },
+  itemShopThemePreviewWhite: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    ...shadows.tiny,
+  },
   itemShopThemeLogo: { width: 20, height: 20 },
+  itemShopThemeLogoDark: { tintColor: "#1C1C1C" },
   itemShopThemeCopy: { flex: 1, minWidth: 0 },
   itemShopRadio: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: colors.gray300, alignItems: "center", justifyContent: "center" },
   itemShopRadioDot: { width: 12, height: 12, borderRadius: 6 },
@@ -17413,7 +17460,7 @@ const s = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: "#FFF",
   },
-  itemShopAdBuy: { minWidth: 62, height: 34, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: colors.mint700 },
+  itemShopAdBuy: { minWidth: 62, height: 34, borderRadius: 10, overflow: "hidden", backgroundColor: colors.mint700 },
   itemShopAdBuyText: { color: "#FFF", fontSize: 11, fontWeight: "700" },
   itemShopRestore: {
     height: 38,
