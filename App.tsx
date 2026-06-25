@@ -260,7 +260,12 @@ type RoomMember = {
   mutedUntil?: string | null;
 };
 type TopSpacePackage = { points: number; seconds: number; boosts: number };
-type ColorProduct = { color: string; name: string; price: number };
+type ColorProduct = {
+  color: string;
+  name: string;
+  price: number;
+  productId?: string;
+};
 type Notice = {
   id: string;
   icon: IconName;
@@ -553,28 +558,28 @@ const TOP_SPACE_PACKAGES: TopSpacePackage[] = [
 
 const BUBBLE_COLOR_PRODUCTS: ColorProduct[] = [
   { color: "#F5F5F5", name: "기본 회색", price: 0 },
-  { color: "#FFFCF3", name: "아이보리", price: 1200 },
-  { color: "#FCFFD0", name: "라임 크림", price: 1200 },
-  { color: "#E9DFC4", name: "오트", price: 1200 },
-  { color: "#D9F2FA", name: "스카이", price: 1500 },
-  { color: "#E2E2EF", name: "라일락", price: 1500 },
-  { color: "#FFE3E7", name: "블러시", price: 1500 },
-  { color: "#FFEFC5", name: "버터", price: 1500 },
-  { color: "#E2F1B9", name: "세이지", price: 1800 },
-  { color: "#3D485D", name: "슬레이트", price: 2200 },
-  { color: "#404338", name: "올리브 차콜", price: 2200 },
+  { color: "#FFFCF3", name: "아이보리", price: 1200, productId: "mute_bubble_color_01" },
+  { color: "#FCFFD0", name: "라임 크림", price: 1200, productId: "mute_bubble_color_02" },
+  { color: "#E9DFC4", name: "오트", price: 1200, productId: "mute_bubble_color_03" },
+  { color: "#D9F2FA", name: "스카이", price: 1500, productId: "mute_bubble_color_04" },
+  { color: "#E2E2EF", name: "라일락", price: 1500, productId: "mute_bubble_color_05" },
+  { color: "#FFE3E7", name: "블러시", price: 1500, productId: "mute_bubble_color_06" },
+  { color: "#FFEFC5", name: "버터", price: 1500, productId: "mute_bubble_color_07" },
+  { color: "#E2F1B9", name: "세이지", price: 1800, productId: "mute_bubble_color_08" },
+  { color: "#3D485D", name: "슬레이트", price: 2200, productId: "mute_bubble_color_09" },
+  { color: "#404338", name: "올리브 차콜", price: 2200, productId: "mute_bubble_color_10" },
 ];
 const TEXT_COLOR_PRODUCTS: ColorProduct[] = [
   { color: "#1C1C1C", name: "기본 블랙", price: 0 },
-  { color: "#BAB3AE", name: "웜 그레이", price: 1800 },
-  { color: "#625756", name: "코코아", price: 1800 },
-  { color: "#AA6566", name: "로즈", price: 2500 },
-  { color: "#B28774", name: "테라", price: 2500 },
-  { color: "#DCA279", name: "피치", price: 2500 },
-  { color: "#7A7AB7", name: "바이올렛", price: 2800 },
-  { color: "#F1F4CB", name: "크림", price: 2800 },
-  { color: "#8ED3D3", name: "아쿠아", price: 3200 },
-  { color: "#EF769C", name: "핑크", price: 3200 },
+  { color: "#BAB3AE", name: "웜 그레이", price: 1800, productId: "mute_text_color_01" },
+  { color: "#625756", name: "코코아", price: 1800, productId: "mute_text_color_02" },
+  { color: "#AA6566", name: "로즈", price: 2500, productId: "mute_text_color_03" },
+  { color: "#B28774", name: "테라", price: 2500, productId: "mute_text_color_04" },
+  { color: "#DCA279", name: "피치", price: 2500, productId: "mute_text_color_05" },
+  { color: "#7A7AB7", name: "바이올렛", price: 2800, productId: "mute_text_color_06" },
+  { color: "#F1F4CB", name: "크림", price: 2800, productId: "mute_text_color_07" },
+  { color: "#8ED3D3", name: "아쿠아", price: 3200, productId: "mute_text_color_08" },
+  { color: "#EF769C", name: "핑크", price: 3200, productId: "mute_text_color_09" },
 ];
 const ROOM_MEMBERS: RoomMember[] = [
   {
@@ -2456,6 +2461,12 @@ function serverErrorMessage(error: unknown) {
   if (message.includes("ROOM_FULL")) return "방의 최대 인원에 도달했습니다.";
   if (message.includes("ROOM_CREATE_COOLDOWN"))
     return "방은 1분에 한 번만 만들 수 있습니다.";
+  if (
+    message.includes("room_join_requests_one_pending") ||
+    message.includes("duplicate key value violates unique constraint") ||
+    message.includes("duplicate key")
+  )
+    return "이미 가입 신청을 보냈습니다.";
   if (message.includes("ROOM_BANNED"))
     return "이 방에서 재가입이 제한된 계정입니다.";
   if (message.includes("MEMBER_NOT_FOUND"))
@@ -9657,26 +9668,7 @@ function JoinRequests({ room }: { room: Room }) {
     let active = true;
     setLoading(true);
     if (!isSupabaseConfigured || !isUuid(room.id)) {
-      setRequests([
-        {
-          id: "demo-request-1",
-          name: "유리안",
-          intro: "산책 모임에 참여하고 싶어요. 저녁 시간대가 가장 편합니다.",
-          status: "pending",
-        },
-        {
-          id: "demo-request-2",
-          name: "파도결",
-          intro: "사진과 일상 이야기 둘 다 좋아해요. 조용히 적응해볼게요.",
-          status: "pending",
-        },
-        {
-          id: "demo-request-3",
-          name: "서늘",
-          intro: "방 분위기 읽고 천천히 이야기 나누고 싶습니다.",
-          status: "pending",
-        },
-      ]);
+      setRequests([]);
       setLoading(false);
       return;
     }
@@ -13235,13 +13227,16 @@ function ColorPicker({
   onEntitlementsChange: (items: ChatEntitlement[]) => void;
 }) {
   const customEnabled = true;
-  const choose = (item: ColorProduct, index: number) => {
+  const choose = (item: ColorProduct) => {
     if (item.price === 0) {
       onSelect(item.color, undefined);
       return;
     }
-    const prefix = label === "말풍선 색상" ? "bubble" : "text";
-    const productId = `mute_${prefix}_color_${String(index).padStart(2, "0")}`;
+    const productId = item.productId;
+    if (!productId) {
+      Alert.alert("구매 실패", "상품 ID가 연결되지 않았습니다.");
+      return;
+    }
     const active = entitlements.find(
       (entitlement) => entitlement.productId === productId,
     );
@@ -13284,11 +13279,11 @@ function ColorPicker({
         <Text style={s.colorLabel}>{label}</Text>
       </View>
       <View style={s.colorOptions}>
-        {values.map((item, index) => (
+        {values.map((item) => (
           <Pressable
             accessibilityLabel={`${item.name} ${item.price}포인트`}
             key={`${label}-${item.color}`}
-            onPress={() => choose(item, index)}
+            onPress={() => choose(item)}
             style={[
               s.colorDot,
               { backgroundColor: item.color },
@@ -15271,8 +15266,8 @@ const s = StyleSheet.create({
   },
   spaceTitle: {
     color: colors.text,
-    fontSize: 21,
-    fontWeight: "800",
+    fontSize: 19,
+    fontWeight: "700",
     marginTop: 7,
   },
   detailMetaRow: {
@@ -15290,7 +15285,12 @@ const s = StyleSheet.create({
     fontWeight: "700",
     marginBottom: 11,
   },
-  spaceBody: { color: colors.textSubtle, fontSize: 13, lineHeight: 21 },
+  spaceBody: {
+    color: colors.textSubtle,
+    fontSize: 13,
+    lineHeight: 21,
+    marginTop: 8,
+  },
   memberSectionHead: {
     flexDirection: "row",
     alignItems: "center",
