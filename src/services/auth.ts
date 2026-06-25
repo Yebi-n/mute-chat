@@ -153,9 +153,16 @@ export async function updateCurrentUserPassword(password: string) {
 
 export async function changeCurrentUserPassword(currentPassword: string, newPassword: string) {
   const client = requireClient();
-  const { data: userData, error: userError } = await client.auth.getUser();
+  const [{ data: sessionData, error: sessionError }, { data: userData, error: userError }] =
+    await Promise.all([client.auth.getSession(), client.auth.getUser()]);
+  if (sessionError) throw authError(sessionError);
   if (userError) throw authError(userError);
-  const phone = userData.user?.phone;
+  const phone =
+    sessionData.session?.user?.phone ??
+    userData.user?.phone ??
+    (typeof sessionData.session?.user?.user_metadata?.phone === 'string'
+      ? sessionData.session.user.user_metadata.phone
+      : null);
   if (!phone) throw new Error('인증 전화번호를 확인할 수 없습니다.');
 
   const { error: signInError } = await client.auth.signInWithPassword({

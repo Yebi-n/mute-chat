@@ -118,12 +118,13 @@ import {
   listRoomReadReceipts,
   markRoomRead,
   sendSecretMessage,
+  softDeleteMyMessage,
   sendSystemMessage,
   sendTextMessage,
   ServerRoomMessage,
 } from "./src/services/chat";
 import { sendUploadedImages, uploadValidatedImage } from "./src/services/media";
-import { requestAccountDeletion, submitReport } from "./src/services/safety";
+import { listReportedRoomIds, requestAccountDeletion, submitReport } from "./src/services/safety";
 import {
   addStoryComment,
   createStoryWithBlocks,
@@ -318,8 +319,10 @@ type ChatBase = {
   createdAt?: string;
   delivery?: ChatDelivery;
   uploadProgress?: number;
+  uploadProgressLabel?: string;
   bubbleColor?: string;
   textColor?: string;
+  pendingUploadAssets?: ChatImageAsset[];
 };
 type ChatMessage =
   | (ChatBase & {
@@ -372,6 +375,11 @@ const CHAT_IMAGE_GRID_WIDTH = Math.min(196, Math.floor(SCREEN_WIDTH * 0.48));
 const CHAT_IMAGE_GRID_CELL = Math.floor((CHAT_IMAGE_GRID_WIDTH - 2) / 2);
 const APP_LOCK_ENABLED_KEY = "mute:app-lock:enabled";
 const APP_LOCK_PIN_KEY = "mute:app-lock:pin";
+const LOCAL_PENDING_MESSAGES = new Map<string, ChatMessage[]>();
+const ROOM_SCROLL_STATE = new Map<
+  string,
+  { offsetY: number; nearBottom: boolean }
+>();
 
 const BASE_CATEGORIES: { key: MainTab; label: string }[] = [
   { key: "promotion", label: "프로모션" },
@@ -603,16 +611,77 @@ function customPaletteProduct(
   };
 }
 
+function customProductPrefix(target: "bubble" | "text" | "background") {
+  if (target === "bubble") return "mute_custom_bubble_color_";
+  if (target === "text") return "mute_custom_text_color_";
+  return "mute_custom_background_";
+}
+
+function customDisplayName(color: string) {
+  const hex = color.replace("#", "");
+  const red = parseInt(hex.slice(0, 2), 16);
+  const green = parseInt(hex.slice(2, 4), 16);
+  const blue = parseInt(hex.slice(4, 6), 16);
+  return `커스텀 색상(R: ${String(red).padStart(3, "0")}, G: ${String(green).padStart(3, "0")}, B: ${String(blue).padStart(3, "0")})`;
+}
+
+function customPaletteProducts(
+  entitlements: ChatEntitlement[],
+  target: "bubble" | "text" | "background",
+) {
+  const prefix = customProductPrefix(target);
+  return entitlements
+    .filter(
+      (item) =>
+        item.productId.startsWith(prefix) &&
+        typeof item.value === "string" &&
+        /^#[0-9A-Fa-f]{6}$/.test(item.value),
+    )
+    .map((item) => ({
+      color: String(item.value).toUpperCase(),
+      name: customDisplayName(String(item.value).toUpperCase()),
+      price: 3200,
+      productId: item.productId,
+    }))
+    .sort((a, b) => a.productId.localeCompare(b.productId));
+}
+
+function nextCustomProductId(
+  entitlements: ChatEntitlement[],
+  target: "bubble" | "text" | "background",
+) {
+  const prefix = customProductPrefix(target);
+  const used = new Set(
+    entitlements
+      .filter((item) => item.productId.startsWith(prefix))
+      .map((item) => item.productId),
+  );
+  for (let index = 1; index <= 10; index += 1) {
+    const productId = `${prefix}${index}`;
+    if (!used.has(productId)) return productId;
+  }
+  return null;
+}
+
 function withCustomPaletteColor(
   values: ColorProduct[],
-  customItem: ColorProduct | null,
+  customItems: ColorProduct[],
 ) {
-  if (!customItem) return values;
-  const filtered = values.filter((item) => item.productId !== customItem.productId);
-  if (filtered.some((item) => item.color.toUpperCase() === customItem.color.toUpperCase())) {
-    return filtered;
-  }
-  return [...filtered, customItem];
+  if (!customItems.length) return values;
+  const filtered = values.filter(
+    (item) =>
+      !item.productId ||
+      !customItems.some((customItem) => customItem.productId === item.productId),
+  );
+  const added = customItems.filter(
+    (customItem) =>
+      !filtered.some(
+        (item) =>
+          item.productId === customItem.productId ||
+          item.color.toUpperCase() === customItem.color.toUpperCase(),
+      ),
+  );
+  return [...filtered, ...added];
 }
 const ROOM_MEMBERS: RoomMember[] = [
   {
@@ -825,6 +894,24 @@ function mapServerChatMessage(
   currentUserId?: string,
 ): ChatMessage {
   const mine = Boolean(currentUserId && message.userId === currentUserId);
+  const deletedText =
+    message.senderDeletedAt && message.kind !== "system"
+      ? "삭제된 메시지입니다."
+      : null;
+  if (deletedText && message.kind === "image") {
+    return {
+      id: message.id,
+      kind: "text",
+      mine,
+      name: message.senderName ?? (mine ? "나" : "멤버"),
+      avatarUri: message.senderAvatarUrl,
+      text: deletedText,
+      time: formatChatClock(message.createdAt),
+      createdAt: message.createdAt,
+      bubbleColor: message.bubbleColor,
+      textColor: message.textColor,
+    };
+  }
   const replyTo = message.replyToBody
     ? {
         id: message.replyToMessageId ?? `reply-${message.id}`,
@@ -870,10 +957,10 @@ function mapServerChatMessage(
       name: message.senderName ?? (mine ? "나" : "멤버"),
       avatarUri: message.senderAvatarUrl,
       recipient: message.recipientName ?? "멤버",
-      text: message.body,
+      text: deletedText ?? message.body,
       time: formatChatClock(message.createdAt),
       createdAt: message.createdAt,
-      replyTo,
+      replyTo: deletedText ? undefined : replyTo,
       bubbleColor: message.bubbleColor,
       textColor: message.textColor,
     };
@@ -905,10 +992,10 @@ function mapServerChatMessage(
     mine,
     name: message.senderName ?? (mine ? "나" : "멤버"),
     avatarUri: message.senderAvatarUrl,
-    text: message.body,
+    text: deletedText ?? message.body,
     time: formatChatClock(message.createdAt),
     createdAt: message.createdAt,
-    replyTo,
+    replyTo: deletedText ? undefined : replyTo,
     bubbleColor: message.bubbleColor,
     textColor: message.textColor,
   };
@@ -1624,6 +1711,7 @@ function AuthenticatedApp({
   const [category, setCategory] = useState<MainTab>("promotion");
   const [selectedRoom, setSelectedRoom] = useState(EMPTY_ROOM);
   const [roomData, setRoomData] = useState<Room[]>([]);
+  const [roomDataLoaded, setRoomDataLoaded] = useState(false);
   const [dataRefreshing, setDataRefreshing] = useState(false);
   const [joinedIds, setJoinedIds] = useState<string[]>([]);
   const [ownedRoomIds, setOwnedRoomIds] = useState<string[]>([]);
@@ -1652,6 +1740,7 @@ function AuthenticatedApp({
   const [roomSummaries, setRoomSummaries] = useState<
     Record<string, { lastMessage?: string; updatedAt?: number }>
   >({});
+  const [reportedRoomIds, setReportedRoomIds] = useState<string[]>([]);
   const [now, setNow] = useState(Date.now());
   const [adultVerified, setAdultVerified] = useState(false);
   const [adultContentWebOptedIn, setAdultContentWebOptedIn] = useState(false);
@@ -1745,28 +1834,38 @@ function AuthenticatedApp({
     if (!isSupabaseConfigured) {
       setRoomData([]);
       setJoinedIds([]);
+      setReportedRoomIds([]);
+      setRoomDataLoaded(true);
       return;
     }
     if (showSpinner) setDataRefreshing(true);
     try {
-      const [roomsResult, activeIdsResult, verificationResult, promotionsResult] =
+      const [roomsResult, activeIdsResult, verificationResult, promotionsResult, reportedRoomsResult] =
         await Promise.allSettled([
           listRooms(),
           listMyActiveRoomIds(),
           getVerificationStatus(),
           listRoomPromotions(),
+          listReportedRoomIds(),
         ]);
       if (roomsResult.status === "fulfilled") {
+        const hiddenRoomIds =
+          reportedRoomsResult.status === "fulfilled"
+            ? new Set(reportedRoomsResult.value)
+            : new Set<string>();
         const mapped = roomsResult.value
           .map(mapServerRoom)
-          .filter((room) => room.id !== DEMO_ROOM_ID);
+          .filter((room) => room.id !== DEMO_ROOM_ID && !hiddenRoomIds.has(room.id));
         setRoomData(mapped);
         setSelectedRoom((current) =>
           current.id === DEMO_ROOM_ID && mapped.length ? mapped[0] : current,
         );
+        setRoomDataLoaded(true);
       }
       if (activeIdsResult.status === "fulfilled")
         setJoinedIds([...new Set(activeIdsResult.value)]);
+      if (reportedRoomsResult.status === "fulfilled")
+        setReportedRoomIds(reportedRoomsResult.value);
       if (verificationResult.status === "fulfilled") {
         setAdultVerified(verificationResult.value.adultVerified);
         setAdultContentWebOptedIn(
@@ -1787,6 +1886,7 @@ function AuthenticatedApp({
         );
       if (roomsResult.status === "rejected") throw roomsResult.reason;
     } catch (error) {
+      setRoomDataLoaded(true);
       Alert.alert("방 목록 불러오기 실패", serverErrorMessage(error));
     } finally {
       setDataRefreshing(false);
@@ -2089,6 +2189,10 @@ function AuthenticatedApp({
         "보상 지급 실패",
         message.includes("REWARD_COOLDOWN")
           ? "아직 출석 체크 시간이 아닙니다."
+          : message.includes("REWARDED_AD_ATTENDANCE_REQUIRED")
+            ? "출석 체크 후에 광고 보상을 받을 수 있습니다."
+            : message.includes("REWARDED_AD_ALREADY_CLAIMED")
+              ? "이번 출석 주기에서 광고 보상은 이미 받았습니다."
           : message.includes("DAILY_REWARD_LIMIT")
             ? "오늘 받을 수 있는 광고 보상을 모두 받았습니다."
             : message,
@@ -2100,7 +2204,10 @@ function AuthenticatedApp({
   const effectiveAdminReadOnly = Boolean(
     adminReadOnly || (isSuperAdmin && !joinedIds.includes(selectedRoom.id)),
   );
-  const enrichedRoomData = roomData.map((room) => {
+  const hiddenRoomIds = new Set(reportedRoomIds);
+  const enrichedRoomData = roomData
+    .filter((room) => !hiddenRoomIds.has(room.id))
+    .map((room) => {
     const summary = roomSummaries[room.id];
     return {
       ...room,
@@ -2204,6 +2311,7 @@ function AuthenticatedApp({
                 promotionTimestamps,
                 unreadCounts,
                 dataRefreshing,
+                dataLoaded: roomDataLoaded,
               }}
               openRoom={navigateRoom}
               onRefresh={() => reloadAppData(true)}
@@ -3800,6 +3908,7 @@ function MainScreen({
   promotionTimestamps,
   unreadCounts,
   dataRefreshing = false,
+  dataLoaded = true,
   onRefresh,
   onAttendance,
   onRewardedAd,
@@ -3829,6 +3938,7 @@ function MainScreen({
   promotionTimestamps: Record<string, number>;
   unreadCounts: Record<string, number>;
   dataRefreshing?: boolean;
+  dataLoaded?: boolean;
   onRefresh?: () => void;
   isSuperAdmin: boolean;
   onAdminReportRoom: (room: Room) => void;
@@ -4230,7 +4340,11 @@ function MainScreen({
             )
           }
           ListEmptyComponent={
-            dataRefreshing ? (
+            !dataLoaded ? (
+              <View style={s.centerState}>
+                <ActivityIndicator color={colors.mint700} />
+              </View>
+            ) : dataRefreshing ? (
               <View style={s.centerState}>
                 <ActivityIndicator color={colors.mint700} />
               </View>
@@ -4264,6 +4378,7 @@ function MainScreen({
           joinedIds={joinedIds}
           openRoom={openRoom}
           query={storyQuery}
+          loading={!dataLoaded}
           onDetailChange={setStoryDetailOpen}
         />
       )}
@@ -5238,9 +5353,10 @@ function ChatRoom({
     [],
   );
   const [chatStyleLoaded, setChatStyleLoaded] = useState(false);
-  const [customColorTarget, setCustomColorTarget] = useState<
-    "bubble" | "text" | "background" | null
-  >(null);
+  const [customColorTarget, setCustomColorTarget] = useState<{
+    target: "bubble" | "text" | "background";
+    productId: string;
+  } | null>(null);
   const [message, setMessage] = useState("");
   const [secretDraft, setSecretDraft] = useState("");
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
@@ -5262,6 +5378,8 @@ function ChatRoom({
   const [chatSearchCursor, setChatSearchCursor] = useState(0);
   const chatScrollRef = useRef<ScrollView | null>(null);
   const composerInputRef = useRef<TextInput | null>(null);
+  const mountedRef = useRef(true);
+  const roomSessionRef = useRef(0);
   const scrollMetrics = useRef({
     layoutHeight: 0,
     contentHeight: 0,
@@ -5398,6 +5516,27 @@ function ChatRoom({
         ]
       : [],
   );
+  const rememberScrollPosition = () => {
+    ROOM_SCROLL_STATE.set(room.id, {
+      offsetY: scrollMetrics.current.offsetY,
+      nearBottom: nearBottomRef.current,
+    });
+  };
+  useEffect(() => {
+    mountedRef.current = true;
+    roomSessionRef.current += 1;
+    return () => {
+      mountedRef.current = false;
+      roomSessionRef.current += 1;
+    };
+  }, [room.id]);
+  useEffect(() => {
+    const pending = messages.filter(
+      (item) => item.delivery === "sending" || item.delivery === "failed",
+    );
+    if (pending.length) LOCAL_PENDING_MESSAGES.set(room.id, pending);
+    else LOCAL_PENDING_MESSAGES.delete(room.id);
+  }, [messages, room.id]);
   useEffect(() => {
     if (!isSupabaseConfigured || !isUuid(room.id) || !currentUserId) {
       setChatStyleLoaded(true);
@@ -5498,7 +5637,8 @@ function ChatRoom({
     setInitialMessagesLoaded(false);
     setHasOlderMessages(true);
     if (!isSupabaseConfigured || !isUuid(room.id)) {
-      if (room.id !== DEMO_ROOM_ID) setMessages([]);
+      if (room.id !== DEMO_ROOM_ID)
+        setMessages(LOCAL_PENDING_MESSAGES.get(room.id) ?? []);
       else {
         setInitialMessagesLoaded(true);
         setChatReady(true);
@@ -5507,9 +5647,19 @@ function ChatRoom({
     }
     listRoomMessages(room.id, 50)
       .then((serverMessages) => {
-        setMessages(
-          serverMessages.map((item) =>
+        const pending = LOCAL_PENDING_MESSAGES.get(room.id) ?? [];
+        const byId = new Map<string, ChatMessage>();
+        [
+          ...serverMessages.map((item) =>
             mapServerChatMessage(item, currentUserId),
+          ),
+          ...pending,
+        ].forEach((item) => byId.set(item.id, item));
+        setMessages(
+          [...byId.values()].sort(
+            (first, second) =>
+              (Date.parse(first.createdAt ?? "") || 0) -
+              (Date.parse(second.createdAt ?? "") || 0),
           ),
         );
         setHasOlderMessages(serverMessages.length === 50);
@@ -5954,6 +6104,8 @@ function ChatRoom({
     const localId = existingId ?? `pending-image-${Date.now()}`;
     const createdAt = new Date().toISOString();
     const reply = replyTo ?? undefined;
+    const sessionId = roomSessionRef.current;
+    const previewUris = selected.map((asset) => asset.uri);
     if (!existingId)
       setMessages((items) => [
         ...items,
@@ -5963,19 +6115,29 @@ function ChatRoom({
           mine: true,
           name: myDisplayName,
           avatarUri: myProfile?.avatarUri,
-          imageUris: selected.map((asset) => asset.uri),
+          imageUris: previewUris,
           time: "지금",
           createdAt,
           replyTo: reply,
           delivery: "sending",
           uploadProgress: 0,
+          uploadProgressLabel:
+            selected.length > 1 ? `0/${selected.length}` : undefined,
+          pendingUploadAssets: selected,
         },
       ]);
     else
       setMessages((items) =>
         items.map((item) =>
           item.id === localId
-            ? { ...item, delivery: "sending" as const, uploadProgress: 0 }
+            ? {
+                ...item,
+                delivery: "sending" as const,
+                uploadProgress: 0,
+                uploadProgressLabel:
+                  selected.length > 1 ? `0/${selected.length}` : undefined,
+                pendingUploadAssets: selected,
+              }
             : item,
         ),
       );
@@ -5984,6 +6146,9 @@ function ChatRoom({
       const output: string[] = [];
       const uploadIds: string[] = [];
       for (let index = 0; index < selected.length; index += 1) {
+        if (sessionId !== roomSessionRef.current) {
+          throw new Error("UPLOAD_CANCELLED");
+        }
         const asset = await prepareChatImage(selected[index]);
         const isGif =
           asset.mimeType === "image/gif" ||
@@ -6016,8 +6181,11 @@ function ChatRoom({
               item.id === localId
                 ? {
                     ...item,
-                    imageUris: [...output],
                     uploadProgress: (index + 1) / selected.length,
+                    uploadProgressLabel:
+                      selected.length > 1
+                        ? `${index + 1}/${selected.length}`
+                        : undefined,
                   }
                 : item,
             ),
@@ -6046,12 +6214,18 @@ function ChatRoom({
             item.id === localId
               ? {
                   ...item,
-                  imageUris: [...output],
                   uploadProgress: (index + 1) / selected.length,
+                  uploadProgressLabel:
+                    selected.length > 1
+                      ? `${index + 1}/${selected.length}`
+                      : undefined,
                 }
               : item,
           ),
         );
+      }
+      if (sessionId !== roomSessionRef.current) {
+        throw new Error("UPLOAD_CANCELLED");
       }
       let id = localId;
       if (uploadIds.length)
@@ -6069,6 +6243,8 @@ function ChatRoom({
                 imageUris: output,
                 delivery: "sent" as const,
                 uploadProgress: 1,
+                uploadProgressLabel: undefined,
+                pendingUploadAssets: undefined,
               }
             : item,
         ),
@@ -6076,9 +6252,50 @@ function ChatRoom({
       setReplyTo(null);
       setTool(null);
     } catch {
+      if (sessionId !== roomSessionRef.current || !mountedRef.current) {
+        const pending = LOCAL_PENDING_MESSAGES.get(room.id) ?? [];
+        const next = pending.some((item) => item.id === localId)
+          ? pending.map((item) =>
+              item.id === localId
+                ? {
+                    ...item,
+                    delivery: "failed" as const,
+                    imageUris: previewUris,
+                    pendingUploadAssets: selected,
+                    uploadProgressLabel: undefined,
+                  }
+                : item,
+            )
+          : [
+              ...pending,
+              {
+                id: localId,
+                kind: "image" as const,
+                mine: true,
+                name: myDisplayName,
+                avatarUri: myProfile?.avatarUri,
+                imageUris: previewUris,
+                time: "지금",
+                createdAt,
+                replyTo: reply,
+                delivery: "failed" as const,
+                pendingUploadAssets: selected,
+              },
+            ];
+        LOCAL_PENDING_MESSAGES.set(room.id, next);
+        return;
+      }
       setMessages((items) =>
         items.map((item) =>
-          item.id === localId ? { ...item, delivery: "failed" as const } : item,
+          item.id === localId
+            ? {
+                ...item,
+                delivery: "failed" as const,
+                imageUris: previewUris,
+                uploadProgressLabel: undefined,
+                pendingUploadAssets: selected,
+              }
+            : item,
         ),
       );
     }
@@ -6097,18 +6314,19 @@ function ChatRoom({
       void submitTextMessage(item.id, item.text, item.replyTo);
     else
       void uploadImageMessage(
-        (item.imageUris ?? []).map(
-          (uri) =>
-            ({
-              uri,
-              width: 1600,
-              height: 1200,
-              type: "image",
-              mimeType: uri.toLowerCase().endsWith(".gif")
-                ? "image/gif"
-                : "image/jpeg",
-            }) as ImagePicker.ImagePickerAsset,
-        ),
+        item.pendingUploadAssets ??
+          (item.imageUris ?? []).map(
+            (uri) =>
+              ({
+                uri,
+                width: 1600,
+                height: 1200,
+                type: "image",
+                mimeType: uri.toLowerCase().endsWith(".gif")
+                  ? "image/gif"
+                  : "image/jpeg",
+              }) as ImagePicker.ImagePickerAsset,
+          ),
         item.id,
       );
   };
@@ -6178,8 +6396,20 @@ function ChatRoom({
   };
   const messageActions = (
     item: Extract<ChatMessage, { kind: "text" | "secret" | "image" }>,
-  ) =>
-    Alert.alert("메시지", undefined, [
+  ) => {
+    const createdAt = Date.parse(item.createdAt ?? "");
+    const localOnly =
+      item.delivery === "sending" ||
+      item.delivery === "failed" ||
+      String(item.id).startsWith("pending-");
+    const canDelete =
+      item.mine &&
+      (item.kind === "text" || item.kind === "image") &&
+      (localOnly ||
+        (Number.isFinite(createdAt) &&
+          Date.now() - createdAt <= 5 * 60 * 1000 &&
+          (item.kind !== "text" || item.text !== "삭제된 메시지입니다.")));
+    return Alert.alert("메시지", undefined, [
       ...(item.kind === "text" || item.kind === "image"
         ? [
             {
@@ -6198,8 +6428,59 @@ function ChatRoom({
       ...(item.kind !== "image"
         ? [{ text: "복사", onPress: () => copyMessage(item.text) }]
         : []),
+      ...(canDelete
+        ? [
+            {
+              text: "삭제하기",
+              style: "destructive" as const,
+              onPress: async () => {
+                try {
+                  if (localOnly) {
+                    setMessages((current) =>
+                      current.filter((message) => message.id !== item.id),
+                    );
+                    return;
+                  }
+                  if (isSupabaseConfigured && isUuid(item.id))
+                    await softDeleteMyMessage(item.id);
+                  setMessages((current) =>
+                    current.map((message) =>
+                      message.id === item.id
+                        ? message.kind === "image"
+                          ? {
+                              id: message.id,
+                              kind: "text" as const,
+                              mine: message.mine,
+                              name: message.name,
+                              avatarUri: message.avatarUri,
+                              text: "삭제된 메시지입니다.",
+                              time: message.time,
+                              createdAt: message.createdAt,
+                              delivery: message.delivery,
+                              uploadProgress: message.uploadProgress,
+                              bubbleColor: message.bubbleColor,
+                              textColor: message.textColor,
+                            }
+                          : message.kind === "text"
+                            ? {
+                                ...message,
+                                text: "삭제된 메시지입니다.",
+                                replyTo: undefined,
+                              }
+                            : message
+                        : message,
+                    ),
+                  );
+                } catch (error) {
+                  Alert.alert("메시지 삭제 실패", serverErrorMessage(error));
+                }
+              },
+            },
+          ]
+        : []),
       { text: "취소", style: "cancel" },
     ]);
+  };
   const combinedMessages = useMemo(() => {
     const byId = new Map<string, ChatMessage>();
     const requestMessages: ChatMessage[] = isOwner
@@ -6379,14 +6660,15 @@ function ChatRoom({
   if (customColorTarget)
     return (
       <CustomColorScreen
-        target={customColorTarget}
-        initialColor={customColorTarget === "bubble" ? bubbleColor : customColorTarget==="text"?textColor:chatBackground}
+        target={customColorTarget.target}
+        productId={customColorTarget.productId}
+        initialColor={customColorTarget.target === "bubble" ? bubbleColor : customColorTarget.target==="text"?textColor:chatBackground}
         entitlements={chatEntitlements}
         onEntitlementsChange={setChatEntitlements}
         onBack={() => setCustomColorTarget(null)}
         onComplete={(color,productId) => {
-          if (customColorTarget === "bubble") {setBubbleColor(color);setBubbleProductId(productId);}
-          else if(customColorTarget==="text"){setTextColor(color);setTextProductId(productId);}
+          if (customColorTarget.target === "bubble") {setBubbleColor(color);setBubbleProductId(productId);}
+          else if(customColorTarget.target==="text"){setTextColor(color);setTextProductId(productId);}
           else {setChatBackground(color);setBackgroundProductId(productId);}
           listActiveChatEntitlements().then(setChatEntitlements).catch(()=>undefined);
           setCustomColorTarget(null);
@@ -6430,6 +6712,8 @@ function ChatRoom({
     }
   };
   const closePanel = () => {
+    rememberScrollPosition();
+    initialScrollDone.current = false;
     setStoryPanelInitialId(null);
     setStoryPanelInitialWrite(false);
     setPanel(null);
@@ -6541,6 +6825,7 @@ function ChatRoom({
         }}
         trailing="menu"
         onTrailingPress={() => {
+          rememberScrollPosition();
           Keyboard.dismiss();
           setTool(null);
           setChatSearchOpen(false);
@@ -6641,6 +6926,10 @@ function ChatRoom({
             nearBottomRef.current =
               contentSize.height - layoutMeasurement.height - contentOffset.y <
               120;
+            ROOM_SCROLL_STATE.set(room.id, {
+              offsetY: contentOffset.y,
+              nearBottom: nearBottomRef.current,
+            });
             setShowScrollToBottom(!nearBottomRef.current);
             if (nearBottomRef.current && newMessagePreview)
               setNewMessagePreview("");
@@ -6661,14 +6950,23 @@ function ChatRoom({
             scrollMetrics.current.contentHeight = height;
             if (!initialScrollDone.current) {
               initialScrollDone.current = true;
-              chatScrollRef.current?.scrollToEnd({ animated: false });
-              requestAnimationFrame(() => {
+              const saved = ROOM_SCROLL_STATE.get(room.id);
+              if (saved && !saved.nearBottom) {
+                chatScrollRef.current?.scrollTo({
+                  y: Math.max(0, saved.offsetY),
+                  animated: false,
+                });
+                setChatReady(true);
+              } else {
                 chatScrollRef.current?.scrollToEnd({ animated: false });
-                setTimeout(() => {
+                requestAnimationFrame(() => {
                   chatScrollRef.current?.scrollToEnd({ animated: false });
-                  setChatReady(true);
-                }, 40);
-              });
+                  setTimeout(() => {
+                    chatScrollRef.current?.scrollToEnd({ animated: false });
+                    setChatReady(true);
+                  }, 40);
+                });
+              }
             } else if (nearBottomRef.current) scrollToLatest();
           }}
         >
@@ -6743,6 +7041,8 @@ function ChatRoom({
                         )}
                         <Pressable
                           onPress={() => {
+                            rememberScrollPosition();
+                            initialScrollDone.current = false;
                             setStoryPanelInitialWrite(false);
                             setStoryPanelInitialId(item.storyId);
                             setPanel("stories");
@@ -7077,6 +7377,8 @@ function ChatRoom({
                 }}
                 onPromotion={openPromotion}
                 onNewStory={() => {
+                  rememberScrollPosition();
+                  initialScrollDone.current = false;
                   setTool(null);
                   setStoryPanelInitialId(null);
                   setStoryPanelInitialWrite(true);
@@ -7096,7 +7398,7 @@ function ChatRoom({
                 onBubbleColor={(color,productId)=>{setBubbleColor(color);setBubbleProductId(productId);}}
                 onTextColor={(color,productId)=>{setTextColor(color);setTextProductId(productId);}}
                 onBackgroundColor={(color,productId)=>{setChatBackground(color);setBackgroundProductId(productId);}}
-                onCustomColor={(target)=>{const productId=target==="bubble"?STORE_PRODUCTS.customBubbleColor:target==="text"?STORE_PRODUCTS.customTextColor:STORE_PRODUCTS.customBackground;const active=chatEntitlements.find((item)=>item.productId===productId);if(active){Alert.alert("커스텀 색상",`${formatEntitlementRemaining(active.expiresAt)} 남았습니다.`,[{text:"취소",style:"cancel"},{text:"색상 선택",onPress:()=>setCustomColorTarget(target)}]);}else setCustomColorTarget(target);}}
+                onCustomColor={(target)=>{const productId=nextCustomProductId(chatEntitlements,target);if(!productId){setToast("커스텀 색상은 최대 10개까지 보유할 수 있습니다.");setTimeout(()=>setToast(""),1800);return;}rememberScrollPosition();initialScrollDone.current=false;setCustomColorTarget({target,productId});}}
                 entitlements={chatEntitlements}
                 onEntitlementsChange={setChatEntitlements}
               />
@@ -8690,12 +8992,14 @@ function PublicStoryFeed({
   joinedIds,
   openRoom,
   query = "",
+  loading = false,
   onDetailChange,
 }: {
   roomData: Room[];
   joinedIds: string[];
   openRoom: (room: Room) => void;
   query?: string;
+  loading?: boolean;
   onDetailChange?: (open: boolean) => void;
 }) {
   const [sort, setSort] = useState<"random" | "views" | "hearts" | "latest">(
@@ -8705,12 +9009,16 @@ function PublicStoryFeed({
   const [editing, setEditing] = useState(false);
   const [publicStories, setPublicStories] = useState<StoryItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     onDetailChange?.(Boolean(selected));
     return () => onDetailChange?.(false);
   }, [onDetailChange, selected]);
   const reloadPublicStories = async (showSpinner = false) => {
-    if (!supabase) return;
+    if (!supabase) {
+      setLoaded(true);
+      return;
+    }
     if (showSpinner) setRefreshing(true);
     try {
       const [serverStories, userResult] = await Promise.all([
@@ -8722,6 +9030,10 @@ function PublicStoryFeed({
           mapServerStory(story, userResult.data.user?.id),
         ),
       );
+      setLoaded(true);
+    } catch (error) {
+      setLoaded(true);
+      throw error;
     } finally {
       if (showSpinner) setRefreshing(false);
     }
@@ -8808,7 +9120,11 @@ function PublicStoryFeed({
         />
       }
       ListEmptyComponent={
-        query.trim() ? (
+        loading || !loaded ? (
+          <View style={s.centerState}>
+            <ActivityIndicator color={colors.mint700} />
+          </View>
+        ) : query.trim() ? (
           <Empty
             title="검색 결과가 없어요"
             body="다른 제목으로 검색해 보세요."
@@ -10150,14 +10466,15 @@ function PointLogScreen({
           body={error || "출석체크, 광고 보상, 구매 내역이 이곳에 표시됩니다."}
         />
       ) : (
-        <ScrollView contentInsetAdjustmentBehavior="never">
-          {rows.map((item) =>
+        <FlatList
+          data={rows}
+          keyExtractor={(item) => item.key}
+          contentInsetAdjustmentBehavior="never"
+          renderItem={({ item }) =>
             item.kind === "date" ? (
-              <Text key={item.key} style={s.pointLogDate}>
-                {item.label}
-              </Text>
+              <Text style={s.pointLogDate}>{item.label}</Text>
             ) : (
-              <View key={item.key} style={s.pointLogRow}>
+              <View style={s.pointLogRow}>
                 <Text style={s.pointLogTime}>{item.time}</Text>
                 <Text numberOfLines={2} style={s.pointLogTitle}>
                   {item.title}
@@ -10178,9 +10495,9 @@ function PointLogScreen({
                   )
                 </Text>
               </View>
-            ),
-          )}
-        </ScrollView>
+            )
+          }
+        />
       )}
     </SafeAreaView>
   );
@@ -12820,11 +13137,11 @@ function ChatDeliveryMeta({
     return (
       <View style={s.deliveryMeta}>
         <ActivityIndicator size="small" color={colors.mint700} />
-        {item.kind === "image" && (
+        {item.kind === "image" && item.uploadProgressLabel ? (
           <Text style={s.deliveryProgress}>
-            {Math.round((item.uploadProgress ?? 0) * 100)}%
+            {item.uploadProgressLabel}
           </Text>
-        )}
+        ) : null}
       </View>
     );
   if (item.delivery === "failed")
@@ -12960,21 +13277,12 @@ function ComposerPanel({
   promotionRemainingMs:number;
 }) {
   if (!tool || tool === "secret") return null;
-  const customBackgroundItem = customPaletteProduct(
-    entitlements,
-    STORE_PRODUCTS.customBackground,
-    "커스텀 배경",
-  );
-  const customBubbleItem = customPaletteProduct(
-    entitlements,
-    STORE_PRODUCTS.customBubbleColor,
-    "커스텀 말풍선",
-  );
-  const customTextItem = customPaletteProduct(
-    entitlements,
-    STORE_PRODUCTS.customTextColor,
-    "커스텀 텍스트",
-  );
+  const customBackgroundItems = customPaletteProducts(entitlements, "background");
+  const customBubbleItems = customPaletteProducts(entitlements, "bubble");
+  const customTextItems = customPaletteProducts(entitlements, "text");
+  const canAddCustomBackground = customBackgroundItems.length < 10;
+  const canAddCustomBubble = customBubbleItems.length < 10;
+  const canAddCustomText = customTextItems.length < 10;
   const backgroundColors = [
     "#FFFFFF",
     "#F2F7F4",
@@ -12988,13 +13296,13 @@ function ComposerPanel({
       name: "배경",
       price: 0,
     })),
-    customBackgroundItem,
+    customBackgroundItems,
   );
   const bubblePalette = withCustomPaletteColor(
     BUBBLE_COLOR_PRODUCTS,
-    customBubbleItem,
+    customBubbleItems,
   );
-  const textPalette = withCustomPaletteColor(TEXT_COLOR_PRODUCTS, customTextItem);
+  const textPalette = withCustomPaletteColor(TEXT_COLOR_PRODUCTS, customTextItems);
   return (
     <View style={[s.composerPanel, { height: tool === "media" ? 360 : 260 }]}>
       {tool === "media" ? (
@@ -13058,14 +13366,14 @@ function ComposerPanel({
             onSelect={onBackgroundColor}
             entitlements={entitlements}
             onEntitlementsChange={onEntitlementsChange}
-            onCustomColor={() => onCustomColor("background")}
+            onCustomColor={canAddCustomBackground ? () => onCustomColor("background") : undefined}
           />
           <ColorPicker
             label="말풍선 색상"
             values={bubblePalette}
             selected={bubbleColor}
             onSelect={onBubbleColor}
-            onCustomColor={() => onCustomColor("bubble")}
+            onCustomColor={canAddCustomBubble ? () => onCustomColor("bubble") : undefined}
             entitlements={entitlements}
             onEntitlementsChange={onEntitlementsChange}
           />
@@ -13074,7 +13382,7 @@ function ComposerPanel({
             values={textPalette}
             selected={textColor}
             onSelect={onTextColor}
-            onCustomColor={() => onCustomColor("text")}
+            onCustomColor={canAddCustomText ? () => onCustomColor("text") : undefined}
             entitlements={entitlements}
             onEntitlementsChange={onEntitlementsChange}
           />
@@ -13289,7 +13597,7 @@ function ColorPicker({
   entitlements: ChatEntitlement[];
   onEntitlementsChange: (items: ChatEntitlement[]) => void;
 }) {
-  const customEnabled = true;
+  const customEnabled = Boolean(onCustomColor);
   const choose = (item: ColorProduct) => {
     if (item.price === 0) {
       onSelect(item.color, undefined);
@@ -13378,6 +13686,7 @@ function ColorPicker({
 
 function CustomColorScreen({
   target,
+  productId,
   initialColor,
   onBack,
   onComplete,
@@ -13385,6 +13694,7 @@ function CustomColorScreen({
   onEntitlementsChange,
 }: {
   target: "bubble" | "text" | "background";
+  productId: string;
   initialColor: string;
   onBack: () => void;
   onComplete: (color: string,productId:string) => void;
@@ -13397,7 +13707,6 @@ function CustomColorScreen({
     if (purchasing) return;
     setPurchasing(true);
     try {
-      const productId=target==="bubble"?STORE_PRODUCTS.customBubbleColor:target==="text"?STORE_PRODUCTS.customTextColor:STORE_PRODUCTS.customBackground;
       const active=entitlements.some((item)=>item.productId===productId);
       if (!active) await purchaseProduct(productId);
       await setCustomChatEntitlementValue(productId, selection);
@@ -13551,7 +13860,16 @@ function TopSpaceSheet({
         )}
         <Pressable
           disabled={points < selected.points}
-          onPress={() => onBoost(selected)}
+          onPress={() =>
+            Alert.alert(
+              "탑스페이스",
+              `${selected.points.toLocaleString()}P를 사용하여 탑스페이스를 올리겠습니까?`,
+              [
+                { text: "취소", style: "cancel" },
+                { text: "올리기", onPress: () => onBoost(selected) },
+              ],
+            )
+          }
           style={[
             s.topSpaceButton,
             s.topSpaceButtonRelaxed,

@@ -7,6 +7,7 @@ export type ServerRoomMessage = {
   kind: 'text' | 'image' | 'system' | 'secret' | 'story';
   body: string;
   createdAt: string;
+  senderDeletedAt?: string | null;
   replyToMessageId: string | null;
   replyToBody?: string;
   replyToSenderName?: string;
@@ -90,6 +91,13 @@ export async function sendSystemMessage(input: {
   return data as string;
 }
 
+export async function softDeleteMyMessage(messageId: string) {
+  const { error } = await requireClient().rpc('soft_delete_my_message', {
+    p_message_id: messageId,
+  });
+  if (error) throw error;
+}
+
 export async function announceStoryCreated(storyId: string) {
   const { data, error } = await requireClient().rpc('announce_story_created', {
     p_story_id: storyId,
@@ -122,15 +130,19 @@ export async function getRoomMessageCreatedAt(messageId: string) {
 
 export async function listRoomMessages(roomId: string, limit = 50, before?: string) {
   const client = requireClient();
+  const {
+    data: { user },
+  } = await client.auth.getUser();
   const { data: membership } = await client
     .from('room_memberships')
     .select('joined_at')
     .eq('room_id', roomId)
+    .eq('user_id', user?.id ?? '00000000-0000-0000-0000-000000000000')
     .eq('status', 'active')
     .maybeSingle();
   let messageQuery = client
     .from('messages')
-    .select('id,sender_user_id,kind,body,reply_to_message_id,secret_recipient_user_id,media_group_id,story_id,created_at')
+    .select('id,sender_user_id,kind,body,sender_deleted_at,reply_to_message_id,secret_recipient_user_id,media_group_id,story_id,created_at')
     .eq('room_id', roomId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
@@ -260,6 +272,7 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
     kind: row.story_id ? 'story' : row.kind as 'text' | 'image' | 'system' | 'secret',
     body: row.body as string,
     createdAt: row.created_at as string,
+    senderDeletedAt: (row.sender_deleted_at as string | null) ?? null,
     replyToMessageId: row.reply_to_message_id as string | null,
     replyToBody: row.reply_to_message_id ? replyById.get(row.reply_to_message_id as string) : undefined,
     replyToSenderName: row.reply_to_message_id ? replySenderNameById.get(row.reply_to_message_id as string) : undefined,
