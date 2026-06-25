@@ -28,11 +28,13 @@ const consumableProductIds = new Set([
 
 const storeProductIds = new Set([
   ...consumableProductIds,
+  'mute_theme_white',
   'mute_theme_mint',
   'mute_theme_ocean',
   'mute_theme_lavender',
   'mute_theme_sunset',
   'mute_theme_mono',
+  'mute_theme_dark',
   'mute_ad_free_monthly',
 ]);
 

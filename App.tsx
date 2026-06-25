@@ -140,7 +140,6 @@ import {
   claimPointReward,
   getMyWallet,
   listPointLedger,
-  PointLedgerItem,
   showRewardedAd,
   transferRoomPoints,
 } from "./src/services/monetization";
@@ -457,13 +456,13 @@ type AppTheme = {
   accent: string;
 };
 const APP_THEMES: AppTheme[] = [
-  { id: "white", name: "화이트", gradient: ["#FFFFFF", "#FFFFFF"], accent: "#1C1C1C" },
-  { id: "mint", name: "민트", productId: STORE_PRODUCTS.themeMint, gradient: ["#82B9C1", "#5DBB8C"], accent: "#4FAE7D" },
+  { id: "mint", name: "기본 테마", gradient: ["#82B9C1", "#5DBB8C"], accent: "#4FAE7D" },
+  { id: "white", name: "화이트", productId: STORE_PRODUCTS.themeWhite, gradient: ["#FFFFFF", "#FFFFFF"], accent: "#1C1C1C" },
   { id: "ocean", name: "오션", productId: STORE_PRODUCTS.themeOcean, gradient: ["#83B9D8", "#527FBF"], accent: "#527FBF" },
   { id: "lavender", name: "라벤더", productId: STORE_PRODUCTS.themeLavender, gradient: ["#B9A7D9", "#8D75BC"], accent: "#8D75BC" },
   { id: "sunset", name: "선셋", productId: STORE_PRODUCTS.themeSunset, gradient: ["#E7A48E", "#D87587"], accent: "#D87587" },
   { id: "mono", name: "모노", productId: STORE_PRODUCTS.themeMono, gradient: ["#777D82", "#353A3E"], accent: "#535A60" },
-  { id: "dark", name: "다크", gradient: ["#1C1C1C", "#000000"], accent: "#1C1C1C" },
+  { id: "dark", name: "다크", productId: STORE_PRODUCTS.themeDark, gradient: ["#1C1C1C", "#000000"], accent: "#1C1C1C" },
 ];
 let activeAppTheme = APP_THEMES[0];
 const appThemeListeners = new Set<(theme: AppTheme) => void>();
@@ -478,6 +477,9 @@ function selectAppTheme(theme: AppTheme) {
   activeAppTheme = theme;
   void AsyncStorage.setItem("mute.app-theme", theme.id);
   appThemeListeners.forEach((listener) => listener(theme));
+}
+function themeForeground(theme: AppTheme) {
+  return theme.id === "white" ? "#1C1C1C" : "#FFF";
 }
 function useAppTheme() {
   const [theme, setTheme] = useState(activeAppTheme);
@@ -497,6 +499,10 @@ function LinearGradient(props: ComponentProps<typeof ExpoLinearGradient>) {
     <ExpoLinearGradient
       {...props}
       colors={isPrimary ? theme.gradient : source}
+      style={[
+        props.style,
+        isPrimary && theme.id === "white" ? s.primaryWhiteGradient : null,
+      ]}
     />
   );
 }
@@ -1623,6 +1629,8 @@ function AuthenticatedApp({
   const [chatInitialPanel, setChatInitialPanel] = useState<ChatPanel>(null);
   const [returnToNotifications, setReturnToNotifications] = useState(false);
   const [notificationDrawerSignal, setNotificationDrawerSignal] = useState(0);
+  const appTheme = useAppTheme();
+  const primaryForeground = themeForeground(appTheme);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -3803,6 +3811,8 @@ function MainScreen({
   const [profileSubpageOpen, setProfileSubpageOpen] = useState(false);
   const [storySearchOpen, setStorySearchOpen] = useState(false);
   const [storyQuery, setStoryQuery] = useState("");
+  const appTheme = useAppTheme();
+  const primaryForeground = themeForeground(appTheme);
   useEffect(() => {
     if (notificationDrawerSignal > 0) setDrawerOpen(true);
   }, [notificationDrawerSignal]);
@@ -4219,7 +4229,7 @@ function MainScreen({
             end={{ x: 1, y: 0 }}
             style={s.fabGradient}
           >
-            <Ionicons name="add" size={27} color="#FFF" />
+            <Ionicons name="add" size={27} color={primaryForeground} />
           </LinearGradient>
         </Pressable>
       )}
@@ -5168,8 +5178,6 @@ function ChatRoom({
   const isOwner = myRole === "owner";
   const isStaff = myRole === "owner" || myRole === "cohost";
   const [panel, setPanel] = useState<ChatPanel>(initialPanel);
-  const [panelFromDrawer, setPanelFromDrawer] = useState(false);
-  const [drawerOpenInstant, setDrawerOpenInstant] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [tool, setTool] = useState<ComposerTool>(null);
   const [bubbleColor, setBubbleColor] = useState<string>("#F5F5F5");
@@ -6378,11 +6386,6 @@ function ChatRoom({
     setStoryPanelInitialId(null);
     setStoryPanelInitialWrite(false);
     setPanel(null);
-    if (panelFromDrawer) {
-      setPanelFromDrawer(false);
-      setDrawerOpenInstant(true);
-      setDrawerOpen(true);
-    }
   };
   const panelTitle =
     panel === "applications"
@@ -6442,11 +6445,7 @@ function ChatRoom({
         <TopBar
           title={panelTitle}
           onBack={() => {
-            if (
-              panel === "applications" &&
-              onApplicationsBack &&
-              !panelFromDrawer
-            ) {
+            if (panel === "applications" && onApplicationsBack) {
               onApplicationsBack();
               return;
             }
@@ -7424,8 +7423,6 @@ function ChatRoom({
         isSuperAdmin={isSuperAdmin}
         readOnly={readOnly}
         onClose={() => setDrawerOpen(false)}
-        openInstant={drawerOpenInstant}
-        onInstantOpenConsumed={() => setDrawerOpenInstant(false)}
         onProfileEdit={() => {
           if (!myProfile) {
             setToast("방 프로필을 불러오는 중입니다.");
@@ -7437,24 +7434,20 @@ function ChatRoom({
         }}
         onApplications={() => {
           setDrawerOpen(false);
-          setPanelFromDrawer(true);
           setPanel("applications");
         }}
         onStories={() => {
           setDrawerOpen(false);
-          setPanelFromDrawer(true);
           setStoryPanelInitialId(null);
           setStoryPanelInitialWrite(false);
           setPanel("overview");
         }}
         onOpenMembers={() => {
           setDrawerOpen(false);
-          setPanelFromDrawer(true);
           setPanel("members");
         }}
         onBlocked={() => {
           setDrawerOpen(false);
-          setPanelFromDrawer(true);
           setPanel("blocked");
         }}
         onEditRoom={() => {
@@ -7463,7 +7456,6 @@ function ChatRoom({
         }}
         onRoomSettings={() => {
           setDrawerOpen(false);
-          setPanelFromDrawer(true);
           setPanel("roomSettings");
         }}
         onDelete={() =>
@@ -8018,6 +8010,8 @@ function StoryDetail({
   const [comment, setComment] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const theme = useAppTheme();
+  const foreground = themeForeground(theme);
   const canDelete = story.mine || canModerate;
   const refreshStory = async () => {
     if (!supabase || !isUuid(story.id) || !room?.id) return;
@@ -8180,16 +8174,16 @@ function StoryDetail({
           style={s.storyDetailHeader}
         >
           <Pressable onPress={onBack} style={s.storyHeaderAction}>
-            <Ionicons name="chevron-back" size={22} color="#FFF" />
+            <Ionicons name="chevron-back" size={22} color={foreground} />
           </Pressable>
-          <Text style={s.storyDetailHeaderTitle}>스토리</Text>
+          <Text style={[s.storyDetailHeaderTitle, { color: foreground }]}>스토리</Text>
           <View style={s.storyHeaderRight}>
             <Pressable
               hitSlop={10}
               onPress={() => setMenuOpen((value) => !value)}
               style={s.storyHeaderAction}
             >
-              <Ionicons name="ellipsis-horizontal" size={20} color="#FFF" />
+              <Ionicons name="ellipsis-horizontal" size={20} color={foreground} />
             </Pressable>
           </View>
         </LinearGradient>
@@ -10045,16 +10039,69 @@ type PointLogRow =
     };
 
 function PointLogScreen({
-  loading,
-  rows,
-  error,
+  points,
   onBack,
 }: {
-  loading: boolean;
-  rows: PointLogRow[];
-  error?: string;
+  points: number;
   onBack: () => void;
 }) {
+  const [rows, setRows] = useState<PointLogRow[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
+    listPointLedger()
+      .then((items) => {
+        if (!active) return;
+        let runningBalance = Number.isFinite(points) ? points : 0;
+        let lastDate = "";
+        const nextRows = items.flatMap((item, index) => {
+          const timestamp = Date.parse(String(item?.createdAt ?? ""));
+          const date = Number.isFinite(timestamp)
+            ? new Date(timestamp)
+            : new Date();
+          const dateLabel = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+          const timeLabel = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+          const amount = Number.isFinite(Number(item?.amount))
+            ? Number(item?.amount)
+            : 0;
+          const balanceAfter = runningBalance;
+          runningBalance -= amount;
+          const rendered: PointLogRow[] = [];
+          if (dateLabel !== lastDate) {
+            rendered.push({
+              kind: "date",
+              key: `date-${dateLabel}-${index}`,
+              label: dateLabel,
+            });
+            lastDate = dateLabel;
+          }
+          rendered.push({
+            kind: "item",
+            key: item?.id || `point-${index}`,
+            time: timeLabel,
+            title: pointReasonLabel(String(item?.reason || "admin_point")),
+            amount,
+            balance: Number.isFinite(balanceAfter) ? balanceAfter : 0,
+          });
+          return rendered;
+        });
+        setRows(nextRows);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setRows([]);
+        setError(serverErrorMessage(err));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [points]);
   return (
     <SafeAreaView style={s.pointLogPage}>
       <StatusBar style="light" />
@@ -10207,51 +10254,23 @@ function ItemShopScreen({
   onPointBalanceChange: (value: number) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
-  const [chatItems, setChatItems] = useState<ChatEntitlement[]>([]);
   const [storeItems, setStoreItems] = useState<
     Array<{ productId: string; type: string; expiresAt: string | null }>
   >([]);
   const theme = useAppTheme();
+  const primaryTextColor = themeForeground(theme);
   const [themeChoice, setThemeChoice] = useState(theme.id);
   const reload = async () => {
-    const [chat, store, wallet] = await Promise.all([
-      listActiveChatEntitlements(),
+    const [store, wallet] = await Promise.all([
       listStoreEntitlements(),
       getMyWallet(),
     ]);
-    setChatItems(chat);
     setStoreItems(store);
     onPointBalanceChange(wallet.pointBalance);
   };
   useEffect(() => {
     void reload().catch(() => undefined);
   }, []);
-  const buyPointItem = (productId: string, title: string) => {
-    const owned = chatItems.some((item) => item.productId === productId);
-    if (owned) {
-      Alert.alert(title, "이미 보유 중인 아이템입니다.");
-      return;
-    }
-    Alert.alert(title, "3,200포인트로 7일 동안 사용하시겠습니까?", [
-      { text: "취소", style: "cancel" },
-      {
-        text: "구매하기",
-        onPress: async () => {
-          if (busy) return;
-          setBusy(productId);
-          try {
-            await purchaseProduct(productId);
-            await reload();
-            Alert.alert("구매 완료", "채팅방 색상 설정에서 사용할 수 있습니다.");
-          } catch (error) {
-            Alert.alert("구매 실패", serverErrorMessage(error));
-          } finally {
-            setBusy(null);
-          }
-        },
-      },
-    ]);
-  };
   const buyStoreItem = async (productId: string, selectedTheme?: AppTheme) => {
     if (busy) return;
     setBusy(productId);
@@ -10330,7 +10349,7 @@ function ItemShopScreen({
                 <View style={s.itemShopThemeCopy}>
                   <Text style={s.itemShopCardTitle}>{item.name}</Text>
                   <Text style={s.itemShopPrice}>
-                    {free ? "기본 제공" : owned ? "보유 중 · 영구 소장" : "4,900원 · 영구 소장"}
+                    {free ? "기본 제공" : owned ? "보유 중 · 영구 소장" : ["white", "dark"].includes(item.id) ? "3,900원 · 영구 소장" : "4,900원 · 영구 소장"}
                   </Text>
                 </View>
                 <Pressable
@@ -10356,7 +10375,7 @@ function ItemShopScreen({
           style={s.itemShopThemeBuy}
         >
           <LinearGradient colors={["#82B9C1", "#5DBB8C"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.itemShopBuyGradient}>
-            {busy === selectedTheme.productId ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={s.itemShopBuyText}>{selectedThemeOwned ? "적용하기" : "4,900원 구매"}</Text>}
+            {busy === selectedTheme.productId ? <ActivityIndicator size="small" color={primaryTextColor} /> : <Text style={[s.itemShopBuyText, { color: primaryTextColor }]}>{selectedThemeOwned ? "적용하기" : ["white", "dark"].includes(selectedTheme.id) ? "3,900원 구매" : "구매하기"}</Text>}
           </LinearGradient>
         </Pressable>
 
@@ -10370,9 +10389,9 @@ function ItemShopScreen({
           <Pressable disabled={Boolean(busy) || Boolean(adFree)} onPress={() => void buyStoreItem(STORE_PRODUCTS.adFreeMonthly)} style={[s.itemShopAdBuy, adFree && s.disabled]}>
             <LinearGradient colors={["#82B9C1", "#5DBB8C"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.itemShopBuyGradient}>
               {busy === STORE_PRODUCTS.adFreeMonthly ? (
-                <ActivityIndicator size="small" color="#FFF" />
+                <ActivityIndicator size="small" color={primaryTextColor} />
               ) : (
-                <Text style={s.itemShopAdBuyText}>{adFree ? "이용 중" : "구매"}</Text>
+                <Text style={[s.itemShopAdBuyText, { color: primaryTextColor }]}>{adFree ? "이용 중" : "구매하기"}</Text>
               )}
             </LinearGradient>
           </Pressable>
@@ -10396,7 +10415,7 @@ function ItemShopScreen({
         </View>
         <Pressable onPress={onRecharge} style={s.itemShopRecharge}>
           <LinearGradient colors={["#82B9C1", "#5DBB8C"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.itemShopRechargeGradient}>
-            <Text style={s.itemShopBuyText}>충전하기</Text>
+            <Text style={[s.itemShopBuyText, { color: primaryTextColor }]}>충전하기</Text>
           </LinearGradient>
         </Pressable>
       </View>
@@ -10436,9 +10455,6 @@ function Profile({
   const [logOpen, setLogOpen] = useState(false);
   const [selectedCharge, setSelectedCharge] = useState(0);
   const [chargeBusy, setChargeBusy] = useState(false);
-  const [pointLogs, setPointLogs] = useState<PointLedgerItem[]>([]);
-  const [pointLogsLoading, setPointLogsLoading] = useState(false);
-  const [pointLogsError, setPointLogsError] = useState("");
   useEffect(() => {
     onSubpageChange?.(logOpen || itemShopOpen);
     return () => onSubpageChange?.(false);
@@ -10471,72 +10487,10 @@ function Profile({
     { p: 200000, w: 37000, productId: STORE_PRODUCTS.point200000 },
     { p: 390000, w: 65000, productId: STORE_PRODUCTS.point390000 },
   ];
-  useEffect(() => {
-    if (!logOpen || !isSupabaseConfigured) return;
-    let active = true;
-    setPointLogsLoading(true);
-    setPointLogsError("");
-    listPointLedger()
-      .then((rows) => {
-        if (active) setPointLogs(rows);
-      })
-      .catch((error) => {
-        if (active) {
-          setPointLogs([]);
-          setPointLogsError(serverErrorMessage(error));
-        }
-      })
-      .finally(() => {
-        if (active) setPointLogsLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [logOpen]);
-  const pointLogRows = useMemo(() => {
-    try {
-      let balance = Number.isFinite(points) ? points : 0;
-      let lastDate = "";
-      return pointLogs.flatMap((item, index) => {
-        const timestamp = Date.parse(String(item?.createdAt ?? ""));
-        const date = Number.isFinite(timestamp)
-          ? new Date(timestamp)
-          : new Date();
-        const dateLabel = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-        const timeLabel = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-        const balanceAfter = balance;
-        const rawAmount = Number(item?.amount);
-        const amount = Number.isFinite(rawAmount) ? rawAmount : 0;
-        balance -= amount;
-        const rows: PointLogRow[] = [];
-        if (dateLabel !== lastDate) {
-          rows.push({
-            kind: "date",
-            key: `date-${dateLabel}-${index}`,
-            label: dateLabel,
-          });
-          lastDate = dateLabel;
-        }
-        rows.push({
-          kind: "item",
-          key: item?.id || `point-${index}`,
-          time: timeLabel,
-          title: pointReasonLabel(String(item?.reason || "기타")),
-          amount,
-          balance: Number.isFinite(balanceAfter) ? balanceAfter : 0,
-        });
-        return rows;
-      });
-    } catch {
-      return [] as PointLogRow[];
-    }
-  }, [pointLogs, points]);
   if (logOpen)
     return (
       <PointLogScreen
-        loading={pointLogsLoading}
-        rows={pointLogRows}
-        error={pointLogsError}
+        points={points}
         onBack={() => setLogOpen(false)}
       />
     );
@@ -12330,6 +12284,8 @@ function TopBar({
   trailing?: IconName;
   onTrailingPress?: () => void;
 }) {
+  const theme = useAppTheme();
+  const foreground = themeForeground(theme);
   return (
     <>
       {edgeBackEnabled && <EdgeBackLayer onBack={onBack} />}
@@ -12339,17 +12295,19 @@ function TopBar({
         end={{ x: 1, y: 0 }}
         style={s.topBar}
       >
-        <IconButton name="chevron-back" color="#FFF" onPress={onBack} />
+        <IconButton name="chevron-back" color={foreground} onPress={onBack} />
         <View style={s.topCenter}>
           <View style={s.topTitleLine}>
-            <Text numberOfLines={1} style={s.topTitle}>
+            <Text numberOfLines={1} style={[s.topTitle, { color: foreground }]}>
               {title}
             </Text>
             {inlineCount !== undefined && (
-              <Text style={s.topInlineCount}>{inlineCount}명</Text>
+              <Text style={[s.topInlineCount, { color: foreground }]}>
+                {inlineCount}명
+              </Text>
             )}
           </View>
-          {subtitle && <Text style={s.topSub}>{subtitle}</Text>}
+          {subtitle && <Text style={[s.topSub, { color: foreground }]}>{subtitle}</Text>}
         </View>
         <View style={s.topActions}>
           {secondaryTrailing && (
@@ -12361,7 +12319,7 @@ function TopBar({
               onPress={onSecondaryTrailingPress}
               style={s.topSide}
             >
-              <Ionicons name={secondaryTrailing} size={21} color="#FFF" />
+              <Ionicons name={secondaryTrailing} size={21} color={foreground} />
             </RNPressable>
           )}
           <RNPressable
@@ -12371,7 +12329,7 @@ function TopBar({
             disabled={!onTrailingPress}
             style={s.topSide}
           >
-            {trailing && <Ionicons name={trailing} size={22} color="#FFF" />}
+            {trailing && <Ionicons name={trailing} size={22} color={foreground} />}
           </RNPressable>
         </View>
       </LinearGradient>
@@ -13558,7 +13516,6 @@ function TopSpaceSheet({
 }
 function ChatDrawer({
   open,
-  openInstant = false,
   roomId,
   profile,
   isOwner,
@@ -13566,7 +13523,6 @@ function ChatDrawer({
   isSuperAdmin,
   readOnly,
   onClose,
-  onInstantOpenConsumed,
   onProfileEdit,
   onApplications,
   onStories,
@@ -13578,7 +13534,6 @@ function ChatDrawer({
   onLeave,
 }: {
   open: boolean;
-  openInstant?: boolean;
   roomId: string;
   profile?: RoomMember;
   isOwner: boolean;
@@ -13586,7 +13541,6 @@ function ChatDrawer({
   isSuperAdmin: boolean;
   readOnly: boolean;
   onClose: () => void;
-  onInstantOpenConsumed?: () => void;
   onProfileEdit: () => void;
   onApplications: () => void;
   onStories: () => void;
@@ -13600,8 +13554,13 @@ function ChatDrawer({
   const slide = useRef(new Animated.Value(340)).current;
   const [visible, setVisible] = useState(open);
   const visibleRef = useRef(open);
+  const openedAtRef = useRef(0);
   const [notifications, setNotifications] = useState(true);
   const [notificationSaving, setNotificationSaving] = useState(false);
+  const requestClose = () => {
+    if (Date.now() - openedAtRef.current < 180) return;
+    onClose();
+  };
   useEffect(() => {
     if (open && isUuid(roomId))
       getRoomNotificationsEnabled(roomId)
@@ -13624,13 +13583,9 @@ function ChatDrawer({
   };
   useEffect(() => {
     if (open) {
+      openedAtRef.current = Date.now();
       visibleRef.current = true;
       setVisible(true);
-      if (openInstant) {
-        slide.setValue(0);
-        onInstantOpenConsumed?.();
-        return;
-      }
       slide.setValue(340);
       Animated.timing(slide, {
         toValue: 0,
@@ -13647,7 +13602,7 @@ function ChatDrawer({
         setVisible(false);
       });
     }
-  }, [onInstantOpenConsumed, open, openInstant, slide]);
+  }, [open, slide]);
   const swipe = useMemo(
     () =>
       PanResponder.create({
@@ -13657,7 +13612,7 @@ function ChatDrawer({
           slide.setValue(Math.max(0, gesture.dx)),
         onPanResponderRelease: (_, gesture) => {
           if (gesture.dx > 55) {
-            onClose();
+            requestClose();
             return;
           }
           Animated.spring(slide, { toValue: 0, useNativeDriver: true }).start();
@@ -13665,14 +13620,14 @@ function ChatDrawer({
         onPanResponderTerminate: () =>
           Animated.spring(slide, { toValue: 0, useNativeDriver: true }).start(),
       }),
-    [onClose, slide],
+    [slide],
   );
   if (!visible) return null;
   return (
     <View style={s.drawerLayer}>
       <Pressable
         accessibilityLabel="채팅 메뉴 닫기"
-        onPress={onClose}
+        onPress={requestClose}
         style={s.drawerDim}
       />
       <Animated.View
@@ -13832,9 +13787,14 @@ function NotificationDrawer({
 }) {
   const slide = useRef(new Animated.Value(340)).current;
   const [visible, setVisible] = useState(open);
+  const openedAtRef = useRef(0);
   const [confirmAll, setConfirmAll] = useState(false);
   const [loading, setLoading] = useState(false);
   const [notices, setNotices] = useState<Notice[]>([]);
+  const requestClose = () => {
+    if (Date.now() - openedAtRef.current < 180) return;
+    onClose();
+  };
   useEffect(
     () => onUnreadChange(notices.some((notice) => !notice.read)),
     [notices, onUnreadChange],
@@ -13859,6 +13819,7 @@ function NotificationDrawer({
   }, [open]);
   useEffect(() => {
     if (open) {
+      openedAtRef.current = Date.now();
       setVisible(true);
       slide.setValue(340);
       Animated.timing(slide, {
@@ -13883,7 +13844,7 @@ function NotificationDrawer({
           slide.setValue(Math.max(0, gesture.dx)),
         onPanResponderRelease: (_, gesture) => {
           if (gesture.dx > 55) {
-            onClose();
+            requestClose();
             return;
           }
           Animated.spring(slide, { toValue: 0, useNativeDriver: true }).start();
@@ -13891,7 +13852,7 @@ function NotificationDrawer({
         onPanResponderTerminate: () =>
           Animated.spring(slide, { toValue: 0, useNativeDriver: true }).start(),
       }),
-    [onClose, slide],
+    [slide],
   );
   if (!visible) return null;
   const markNoticeRead = (notice: Notice) => {
@@ -13916,7 +13877,7 @@ function NotificationDrawer({
     <View style={s.drawerLayer}>
       <Pressable
         accessibilityLabel="알림 닫기"
-        onPress={onClose}
+        onPress={requestClose}
         style={s.drawerDim}
       />
       <Animated.View
@@ -13933,7 +13894,7 @@ function NotificationDrawer({
           <Pressable
             hitSlop={12}
             accessibilityLabel="알림 닫기"
-            onPress={onClose}
+            onPress={requestClose}
             style={s.iconButton}
           >
             <Ionicons name="close" size={24} color={colors.textSubtle} />
@@ -17400,7 +17361,7 @@ const s = StyleSheet.create({
     fontSize: 16,
     fontWeight: "700",
     marginBottom: 12,
-    marginTop: 12,
+    marginTop: 14,
   },
   itemShopGrid: { flexDirection: "row", gap: 9, marginBottom: 24 },
   itemShopSmallCard: {
@@ -17425,8 +17386,8 @@ const s = StyleSheet.create({
   itemShopBuy: { width: "100%", height: 34, borderRadius: 10, overflow: "hidden", marginTop: "auto" },
   itemShopBuyGradient: { flex: 1, alignItems: "center", justifyContent: "center" },
   itemShopBuyText: { color: "#FFF", fontSize: 11, fontWeight: "700" },
-  itemShopThemeList: { gap: 9, marginBottom: 24 },
-  itemShopThemeBuy: { height: 44, borderRadius: 13, overflow: "hidden", marginTop: -12, marginBottom: 24 },
+  itemShopThemeList: { gap: 9, marginBottom: 16 },
+  itemShopThemeBuy: { height: 44, borderRadius: 13, overflow: "hidden", marginTop: 4, marginBottom: 28 },
   itemShopThemeCard: {
     minHeight: 72,
     flexDirection: "row",
@@ -17460,18 +17421,18 @@ const s = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: "#FFF",
   },
-  itemShopAdBuy: { minWidth: 62, height: 34, borderRadius: 10, overflow: "hidden", backgroundColor: colors.mint700 },
+  itemShopAdBuy: { minWidth: 84, height: 36, borderRadius: 10, overflow: "hidden", backgroundColor: colors.mint700, marginLeft: 4 },
   itemShopAdBuyText: { color: "#FFF", fontSize: 11, fontWeight: "700" },
   itemShopRestore: {
-    height: 38,
+    height: 40,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 12,
     backgroundColor: "#FFF",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
-    marginTop: -12,
-    marginBottom: 18,
+    marginTop: 10,
+    marginBottom: 22,
   },
   itemShopRestoreText: { color: colors.mint700, fontSize: 11, fontWeight: "600" },
   itemShopFooter: {
@@ -17494,6 +17455,11 @@ const s = StyleSheet.create({
   itemShopFooterPoints: { color: colors.text, fontSize: 17, fontWeight: "600", marginTop: 2 },
   itemShopRecharge: { width: 112, height: 42, borderRadius: 13, overflow: "hidden" },
   itemShopRechargeGradient: { flex: 1, alignItems: "center", justifyContent: "center" },
+  primaryWhiteGradient: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    ...shadows.tiny,
+  },
   chargeLayer: {
     ...StyleSheet.absoluteFill,
     zIndex: 90,

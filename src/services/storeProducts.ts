@@ -9,9 +9,11 @@ export const STORE_PRODUCTS = {
   point60000: 'mute_points_60000',
   point200000: 'mute_points_200000',
   point390000: 'mute_points_390000',
+  themeWhite: 'mute_theme_white',
   themeMint: 'mute_theme_mint',
   themeOcean: 'mute_theme_ocean',
   themeLavender: 'mute_theme_lavender',
   themeSunset: 'mute_theme_sunset',
   themeMono: 'mute_theme_mono',
+  themeDark: 'mute_theme_dark',
 } as const;
