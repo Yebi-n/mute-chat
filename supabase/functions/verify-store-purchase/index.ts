@@ -14,8 +14,13 @@ const pointProducts: Record<string, number> = {
   mute_points_390000: 390000,
 };
 const themeProducts = new Set([
-  'mute_theme_mint', 'mute_theme_ocean', 'mute_theme_lavender',
-  'mute_theme_sunset', 'mute_theme_mono',
+  'mute_theme_white',
+  'mute_theme_mint',
+  'mute_theme_ocean',
+  'mute_theme_lavender',
+  'mute_theme_sunset',
+  'mute_theme_mono',
+  'mute_theme_dark',
 ]);
 const adFreeProduct = 'mute_ad_free_monthly';
 

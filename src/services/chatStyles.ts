@@ -2,12 +2,12 @@ import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
 function client(){if(!isSupabaseConfigured||!supabase)throw new Error('Supabase 환경 변수가 설정되지 않았습니다.');return supabase;}
 
-export type ChatEntitlement={productId:string;type:string;expiresAt:string};
+export type ChatEntitlement={productId:string;type:string;value?:string|null;expiresAt:string};
 export type RoomChatStyle={userId:string;bubbleColor:string;textColor:string;backgroundColor:string;bubbleProductId?:string;textProductId?:string;backgroundProductId?:string};
 
 export async function listActiveChatEntitlements():Promise<ChatEntitlement[]>{
-  const {data,error}=await client().rpc('get_my_active_chat_entitlements');if(error)throw error;
-  return ((data??[]) as Array<{product_id:string;entitlement_type:string;expires_at:string}>).map((row)=>({productId:row.product_id,type:row.entitlement_type,expiresAt:row.expires_at}));
+  const {data,error}=await client().rpc('get_my_active_chat_entitlements_v2');if(error)throw error;
+  return ((data??[]) as Array<{product_id:string;entitlement_type:string;value?:string|null;expires_at:string}>).map((row)=>({productId:row.product_id,type:row.entitlement_type,value:row.value??null,expiresAt:row.expires_at}));
 }
 
 export async function listRoomChatStyles(roomId:string):Promise<RoomChatStyle[]>{
@@ -20,3 +20,9 @@ export async function saveMyRoomChatStyle(input:{roomId:string;bubbleColor:strin
 }
 
 export async function purchaseCustomBackground(){const {data,error}=await client().rpc('purchase_custom_background');if(error)throw error;return Array.isArray(data)?data[0]:data;}
+
+export async function setCustomChatEntitlementValue(productId:string,value:string){
+  const {data,error}=await client().rpc('set_custom_chat_entitlement_value',{p_product_id:productId,p_value:value});
+  if(error)throw error;
+  return Array.isArray(data)?data[0]:data;
+}

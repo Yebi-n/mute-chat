@@ -164,6 +164,7 @@ import {
   listActiveChatEntitlements,
   listRoomChatStyles,
   saveMyRoomChatStyle,
+  setCustomChatEntitlementValue,
   ChatEntitlement,
   RoomChatStyle,
 } from "./src/services/chatStyles";
@@ -581,6 +582,38 @@ const TEXT_COLOR_PRODUCTS: ColorProduct[] = [
   { color: "#8ED3D3", name: "아쿠아", price: 3200, productId: "mute_text_color_08" },
   { color: "#EF769C", name: "핑크", price: 3200, productId: "mute_text_color_09" },
 ];
+
+function customPaletteProduct(
+  entitlements: ChatEntitlement[],
+  productId: string,
+  fallbackName: string,
+): ColorProduct | null {
+  const matched = entitlements.find(
+    (item) =>
+      item.productId === productId &&
+      typeof item.value === "string" &&
+      /^#[0-9A-Fa-f]{6}$/.test(item.value),
+  );
+  if (!matched?.value) return null;
+  return {
+    color: matched.value.toUpperCase(),
+    name: fallbackName,
+    price: 3200,
+    productId,
+  };
+}
+
+function withCustomPaletteColor(
+  values: ColorProduct[],
+  customItem: ColorProduct | null,
+) {
+  if (!customItem) return values;
+  const filtered = values.filter((item) => item.productId !== customItem.productId);
+  if (filtered.some((item) => item.color.toUpperCase() === customItem.color.toUpperCase())) {
+    return filtered;
+  }
+  return [...filtered, customItem];
+}
 const ROOM_MEMBERS: RoomMember[] = [
   {
     userId: "00000000-0000-4000-8000-000000000001",
@@ -2488,6 +2521,8 @@ function serverErrorMessage(error: unknown) {
     return "구매 응답 시간이 초과되었습니다. 결제 상태를 확인한 뒤 다시 시도해주세요.";
   if (message.includes("STORE_PRODUCT_NOT_FOUND"))
     return "App Store Connect에서 상품을 찾지 못했습니다. 상품 ID와 심사 상태를 확인해주세요.";
+  if (message.includes("UNSUPPORTED_PRODUCT"))
+    return "서버 검증 대상에 등록되지 않은 상품입니다. 앱 버전과 서버 설정을 같이 확인해주세요.";
   if (message.includes("REWARDED_AD_ATTENDANCE_REQUIRED"))
     return "출석 체크 후 대기 시간 동안 한 번만 광고 보상을 받을 수 있습니다.";
   if (message.includes("REWARDED_AD_ALREADY_CLAIMED"))
@@ -6347,6 +6382,7 @@ function ChatRoom({
         target={customColorTarget}
         initialColor={customColorTarget === "bubble" ? bubbleColor : customColorTarget==="text"?textColor:chatBackground}
         entitlements={chatEntitlements}
+        onEntitlementsChange={setChatEntitlements}
         onBack={() => setCustomColorTarget(null)}
         onComplete={(color,productId) => {
           if (customColorTarget === "bubble") {setBubbleColor(color);setBubbleProductId(productId);}
@@ -9677,7 +9713,12 @@ function JoinRequests({ room }: { room: Room }) {
         .then((rows) => {
           if (active)
             setRequests(
-              rows.map((row) => ({
+              rows.map((row: {
+                id: string;
+                requested_name: string;
+                requested_introduction: string;
+                avatar_url?: string;
+              }) => ({
                 id: row.id,
                 name: row.requested_name,
                 intro: row.requested_introduction,
@@ -10103,22 +10144,20 @@ function PointLogScreen({
           <ActivityIndicator color={colors.mint700} />
           <Text style={s.centerStateText}>포인트 내역을 불러오고 있어요.</Text>
         </View>
+      ) : !rows.length ? (
+        <Empty
+          title={error ? "포인트 내역을 불러오지 못했어요" : "포인트 내역이 없어요"}
+          body={error || "출석체크, 광고 보상, 구매 내역이 이곳에 표시됩니다."}
+        />
       ) : (
-        <FlatList
-          data={rows}
-          keyExtractor={(row) => row.key}
-          contentInsetAdjustmentBehavior="never"
-          ListEmptyComponent={
-            <Empty
-              title={error ? "포인트 내역을 불러오지 못했어요" : "포인트 내역이 없어요"}
-              body={error || "출석체크, 광고 보상, 구매 내역이 이곳에 표시됩니다."}
-            />
-          }
-          renderItem={({ item }) =>
+        <ScrollView contentInsetAdjustmentBehavior="never">
+          {rows.map((item) =>
             item.kind === "date" ? (
-              <Text style={s.pointLogDate}>{item.label}</Text>
+              <Text key={item.key} style={s.pointLogDate}>
+                {item.label}
+              </Text>
             ) : (
-              <View style={s.pointLogRow}>
+              <View key={item.key} style={s.pointLogRow}>
                 <Text style={s.pointLogTime}>{item.time}</Text>
                 <Text numberOfLines={2} style={s.pointLogTitle}>
                   {item.title}
@@ -10139,9 +10178,9 @@ function PointLogScreen({
                   )
                 </Text>
               </View>
-            )
-          }
-        />
+            ),
+          )}
+        </ScrollView>
       )}
     </SafeAreaView>
   );
@@ -12921,6 +12960,21 @@ function ComposerPanel({
   promotionRemainingMs:number;
 }) {
   if (!tool || tool === "secret") return null;
+  const customBackgroundItem = customPaletteProduct(
+    entitlements,
+    STORE_PRODUCTS.customBackground,
+    "커스텀 배경",
+  );
+  const customBubbleItem = customPaletteProduct(
+    entitlements,
+    STORE_PRODUCTS.customBubbleColor,
+    "커스텀 말풍선",
+  );
+  const customTextItem = customPaletteProduct(
+    entitlements,
+    STORE_PRODUCTS.customTextColor,
+    "커스텀 텍스트",
+  );
   const backgroundColors = [
     "#FFFFFF",
     "#F2F7F4",
@@ -12928,6 +12982,19 @@ function ComposerPanel({
     "#F8F1F4",
     "#EEEAE3",
   ];
+  const backgroundPalette = withCustomPaletteColor(
+    backgroundColors.map((color) => ({
+      color,
+      name: "배경",
+      price: 0,
+    })),
+    customBackgroundItem,
+  );
+  const bubblePalette = withCustomPaletteColor(
+    BUBBLE_COLOR_PRODUCTS,
+    customBubbleItem,
+  );
+  const textPalette = withCustomPaletteColor(TEXT_COLOR_PRODUCTS, customTextItem);
   return (
     <View style={[s.composerPanel, { height: tool === "media" ? 360 : 260 }]}>
       {tool === "media" ? (
@@ -12986,11 +13053,7 @@ function ComposerPanel({
         <ScrollView contentContainerStyle={s.styleTools}>
           <ColorPicker
             label="채팅 배경"
-            values={backgroundColors.map((color) => ({
-              color,
-              name: "배경",
-              price: 0,
-            }))}
+            values={backgroundPalette}
             selected={backgroundColor}
             onSelect={onBackgroundColor}
             entitlements={entitlements}
@@ -12999,7 +13062,7 @@ function ComposerPanel({
           />
           <ColorPicker
             label="말풍선 색상"
-            values={BUBBLE_COLOR_PRODUCTS}
+            values={bubblePalette}
             selected={bubbleColor}
             onSelect={onBubbleColor}
             onCustomColor={() => onCustomColor("bubble")}
@@ -13008,7 +13071,7 @@ function ComposerPanel({
           />
           <ColorPicker
             label="텍스트 색상"
-            values={TEXT_COLOR_PRODUCTS}
+            values={textPalette}
             selected={textColor}
             onSelect={onTextColor}
             onCustomColor={() => onCustomColor("text")}
@@ -13319,12 +13382,14 @@ function CustomColorScreen({
   onBack,
   onComplete,
   entitlements,
+  onEntitlementsChange,
 }: {
   target: "bubble" | "text" | "background";
   initialColor: string;
   onBack: () => void;
   onComplete: (color: string,productId:string) => void;
   entitlements:ChatEntitlement[];
+  onEntitlementsChange: (items: ChatEntitlement[]) => void;
 }) {
   const [selection, setSelection] = useState(initialColor);
   const [purchasing, setPurchasing] = useState(false);
@@ -13335,6 +13400,9 @@ function CustomColorScreen({
       const productId=target==="bubble"?STORE_PRODUCTS.customBubbleColor:target==="text"?STORE_PRODUCTS.customTextColor:STORE_PRODUCTS.customBackground;
       const active=entitlements.some((item)=>item.productId===productId);
       if (!active) await purchaseProduct(productId);
+      await setCustomChatEntitlementValue(productId, selection);
+      const refreshed = await listActiveChatEntitlements();
+      onEntitlementsChange(refreshed);
       onComplete(selection,productId);
       Alert.alert(active?"적용 완료":"구매 완료", active?"선택한 색상이 적용되었습니다.":"7일 동안 모든 채팅방에서 사용할 수 있습니다.");
     } catch (error) {

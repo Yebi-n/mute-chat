@@ -298,16 +298,21 @@ export async function listRoomMembersVisible(roomId: string): Promise<ServerRoom
 
 export async function listPendingRoomJoinRequestsWithAvatars(roomId: string) {
   const client = requireClient();
-  const { data, error } = await client
-    .from('room_join_requests')
-    .select('id,user_id,requested_name,requested_introduction,status,created_at,avatar_asset_path')
-    .eq('room_id', roomId)
-    .eq('status', 'pending')
-    .order('created_at', { ascending: true });
+  const { data, error } = await client.rpc('list_pending_room_join_requests', {
+    p_room_id: roomId,
+  });
   if (error) throw error;
-  const rows = data ?? [];
+  const rows = (data ?? []) as Array<{
+    id: string;
+    user_id: string;
+    requested_name: string;
+    requested_introduction: string;
+    status: string;
+    created_at: string;
+    requested_avatar_path: string | null;
+  }>;
   const avatarPaths = rows
-    .map((row) => row.avatar_asset_path as string | null)
+    .map((row) => row.requested_avatar_path)
     .filter((value): value is string => Boolean(value));
   const avatarUrlByPath = new Map<string, string>();
   if (avatarPaths.length) {
@@ -321,6 +326,6 @@ export async function listPendingRoomJoinRequestsWithAvatars(roomId: string) {
   }
   return rows.map((row) => ({
     ...row,
-    avatar_url: row.avatar_asset_path ? avatarUrlByPath.get(row.avatar_asset_path as string) : undefined,
+    avatar_url: row.requested_avatar_path ? avatarUrlByPath.get(row.requested_avatar_path) : undefined,
   }));
 }
