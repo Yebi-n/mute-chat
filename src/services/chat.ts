@@ -166,6 +166,7 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
     { data: storyRows, error: storyError },
     { data: storyBlockRows, error: storyBlockError },
     { data: styleRows, error: styleError },
+    { data: memberProfileRows, error: memberProfileError },
   ] = await Promise.all([
     client.from('room_profiles').select('user_id,display_name,avatar_asset_path').eq('room_id', roomId).in('user_id', userIds.length ? userIds : ['00000000-0000-0000-0000-000000000000']),
     replyIds.length
@@ -181,6 +182,10 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
       ? client.from('story_blocks').select('story_id,block_type,text_content,storage_path,position').in('story_id', storyIds).order('position')
       : Promise.resolve({ data: [], error: null }),
     client.rpc('get_room_chat_styles',{p_room_id:roomId}),
+    client
+      .from('room_profiles')
+      .select('user_id,display_name,avatar_asset_path')
+      .eq('room_id', roomId),
   ]);
   if (profileError) throw profileError;
   if (replyError) throw replyError;
@@ -188,9 +193,14 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
   if (storyError) throw storyError;
   if (storyBlockError) throw storyBlockError;
   if (styleError) throw styleError;
+  if (memberProfileError) throw memberProfileError;
   const styleByUserId=new Map<string,{bubbleColor:string;textColor:string}>(((styleRows??[]) as Array<{user_id:string;bubble_color:string;text_color:string}>).map((row)=>[row.user_id,{bubbleColor:row.bubble_color,textColor:row.text_color}]));
 
-  const avatarPaths = (profileRows ?? [])
+  const mergedProfileRows = [
+    ...(memberProfileRows ?? []),
+    ...(profileRows ?? []),
+  ];
+  const avatarPaths = mergedProfileRows
     .map((row) => row.avatar_asset_path as string | null)
     .filter((value): value is string => Boolean(value));
   const avatarUrlByPath = new Map<string, string>();
@@ -215,10 +225,10 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
   }
 
   const profileByUserId = new Map(
-    (profileRows ?? []).map((row) => [
+    mergedProfileRows.map((row) => [
       row.user_id as string,
       {
-        name: row.display_name as string,
+        name: String(row.display_name ?? '').trim() || '멤버',
         avatarUrl: row.avatar_asset_path ? avatarUrlByPath.get(row.avatar_asset_path as string) : undefined,
       },
     ]),

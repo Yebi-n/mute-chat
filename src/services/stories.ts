@@ -205,3 +205,4 @@ export async function toggleStoryLike(storyId: string) {
   if (error) throw error;
   return data as { liked: boolean; heartCount: number };
 }
+

@@ -13,13 +13,25 @@ export type ServerNotice = {
   createdAt: string;
 };
 
+let foregroundRoomId: string | null = null;
+
+export function setForegroundRoomId(roomId: string | null) {
+  foregroundRoomId = roomId;
+}
+
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
+  handleNotification: async (notification) => {
+    const data = notification.request.content.data ?? {};
+    const roomId = typeof data.roomId === 'string' ? data.roomId : null;
+    const shouldSuppressRoomAlert =
+      Boolean(foregroundRoomId && roomId && foregroundRoomId === roomId);
+    return {
+      shouldPlaySound: !shouldSuppressRoomAlert,
+      shouldSetBadge: true,
+      shouldShowBanner: !shouldSuppressRoomAlert,
+      shouldShowList: !shouldSuppressRoomAlert,
+    };
+  },
 });
 
 export async function registerPushDevice() {

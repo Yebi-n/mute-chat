@@ -8,6 +8,7 @@ import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { Image as ExpoImage } from "expo-image";
 import { LinearGradient as ExpoLinearGradient } from "expo-linear-gradient";
+import * as Notifications from "expo-notifications";
 import * as ScreenCapture from "expo-screen-capture";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -65,6 +66,7 @@ import {
   clearRoomProfileAvatar,
   createRoom,
   decideRoomJoin,
+  getRoomById,
   listMyActiveRoomIds,
   listPendingRoomJoinRequests,
   listPendingRoomJoinRequestsWithAvatars,
@@ -90,6 +92,7 @@ import {
   markRoomJoinRequestNotificationsRead,
   registerPushDevice,
   ServerNotice,
+  setForegroundRoomId,
   setGlobalNotificationsEnabled,
 } from "./src/services/notifications";
 import {
@@ -2040,14 +2043,27 @@ function AuthenticatedApp({
     setAdminReadOnly(Boolean(isSuperAdmin && !joinedIds.includes(room.id)));
     setScreen("detail");
   };
-  const openNotification = (notice: Notice) => {
+  const openNotification = async (notice: Notice) => {
     if (notice.destination === "promotion") {
       setBottomTab("discover");
       setCategory("promotion");
       setScreen("main");
       return;
     }
-    const room = roomData.find((item) => item.id === notice.roomId);
+    let room = roomData.find((item) => item.id === notice.roomId);
+    if (!room && notice.roomId && isUuid(notice.roomId) && isSupabaseConfigured) {
+      try {
+        const serverRoom = await getRoomById(notice.roomId);
+        if (serverRoom) {
+          room = mapServerRoom(serverRoom);
+          setRoomData((items) =>
+            items.some((item) => item.id === room!.id) ? items : [room!, ...items],
+          );
+        }
+      } catch {
+        room = undefined;
+      }
+    }
     if (!room) {
       Alert.alert("알림 이동 실패", "삭제되었거나 접근할 수 없는 방입니다.");
       return;
@@ -2064,6 +2080,37 @@ function AuthenticatedApp({
     );
     setScreen(joinedIds.includes(room.id) ? "chat" : "detail");
   };
+  useEffect(() => {
+    const toNotice = (
+      data: Record<string, unknown> | undefined,
+    ): Notice | null => {
+      const roomId = typeof data?.roomId === "string" ? data.roomId : undefined;
+      if (!roomId) return null;
+      const type = String(data?.type ?? "chat");
+      return {
+        id: `push-${Date.now()}`,
+        icon: type === "join_request" ? "person-add-outline" : "chatbubble-outline",
+        title: String(data?.roomName ?? ""),
+        body: "",
+        time: "지금",
+        read: true,
+        roomId,
+        destination: type === "join_request" ? "applications" : "chat",
+      };
+    };
+    const handleResponse = (response: Notifications.NotificationResponse | null) => {
+      const notice = toNotice(
+        response?.notification.request.content.data as Record<string, unknown> | undefined,
+      );
+      if (notice) void openNotification(notice);
+    };
+    const subscription =
+      Notifications.addNotificationResponseReceivedListener(handleResponse);
+    Notifications.getLastNotificationResponseAsync()
+      .then(handleResponse)
+      .catch(() => undefined);
+    return () => subscription.remove();
+  }, [joinedIds, roomData, canSeeAdultRooms, isSuperAdmin]);
   const topSpaceCount = (room: Room) =>
     room.topSpaceCount + (boosts[room.id] ?? 0);
   const promoteRoom = async (room: Room) => {
@@ -2671,11 +2718,10 @@ function serverErrorMessage(error: unknown) {
 
 function SplashScreen() {
   return (
-    <SafeAreaView style={s.authScreen}>
-      <LinearGradient colors={["#82B9C1", "#5DBB8C"]} style={s.authSplash}>
-        <MuteLogo variant="white" />
-      </LinearGradient>
-    </SafeAreaView>
+    <LinearGradient colors={["#82B9C1", "#5DBB8C"]} style={s.authSplash}>
+      <StatusBar style="light" hidden />
+      <MuteLogo variant="white" />
+    </LinearGradient>
   );
 }
 
@@ -4932,46 +4978,52 @@ function RoomDetail({
             }}
             style={s.sheetDim}
           />
-          <View style={s.privatePinSheet}>
-            <View style={s.sheetHandle} />
-            <Text style={s.privatePinTitle}>비밀방 PIN 입력</Text>
-            <Text style={s.privatePinBody}>
-              가입 신청 전에 비밀방 PIN 6자리를 먼저 확인해주세요.
-            </Text>
-            <TextInput
-              autoFocus
-              value={pin}
-              onChangeText={(value) => {
-                setPin(value.replace(/\D/g, "").slice(0, 6));
-                setPinError("");
-              }}
-              keyboardType="number-pad"
-              secureTextEntry
-              placeholder="숫자 6자리"
-              placeholderTextColor={colors.textMuted}
-              style={s.input}
-            />
-            {pinError !== "" && <Text style={s.pinError}>{pinError}</Text>}
-            <Pressable
-              disabled={pin.length !== 6 || pinChecking}
-              onPress={verifyJoinPin}
-              style={[
-                s.primary,
-                (pin.length !== 6 || pinChecking) && s.disabled,
-              ]}
-            >
-              <LinearGradient
-                colors={["#82B9C1", "#5DBB8C"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={s.primaryGradient}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            keyboardVerticalOffset={0}
+          >
+            <View style={s.privatePinSheet}>
+              <View style={s.sheetHandle} />
+              <Text style={s.privatePinTitle}>비밀방 PIN 입력</Text>
+              <Text style={s.privatePinBody}>
+                가입 신청 전에 비밀방 PIN 6자리를 먼저 확인해주세요.
+              </Text>
+              <TextInput
+                autoFocus
+                value={pin}
+                onChangeText={(value) => {
+                  setPin(value.replace(/\D/g, "").slice(0, 6));
+                  setPinError("");
+                }}
+                keyboardType="number-pad"
+                secureTextEntry
+                placeholder="숫자 6자리"
+                placeholderTextColor={colors.textMuted}
+                style={[s.input, s.privatePinInput]}
+              />
+              {pinError !== "" && <Text style={s.pinError}>{pinError}</Text>}
+              <Pressable
+                disabled={pin.length !== 6 || pinChecking}
+                onPress={verifyJoinPin}
+                style={[
+                  s.primary,
+                  s.privatePinButton,
+                  (pin.length !== 6 || pinChecking) && s.disabled,
+                ]}
               >
-                <Text style={s.primaryText}>
-                  {pinChecking ? "확인 중..." : "확인"}
-                </Text>
-              </LinearGradient>
-            </Pressable>
-          </View>
+                <LinearGradient
+                  colors={["#82B9C1", "#5DBB8C"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={s.primaryGradient}
+                >
+                  <Text style={s.primaryText}>
+                    {pinChecking ? "확인 중..." : "확인"}
+                  </Text>
+                </LinearGradient>
+              </Pressable>
+            </View>
+          </KeyboardAvoidingView>
         </View>
       )}
       <View style={s.profileTabs}>
@@ -5327,6 +5379,12 @@ function ChatRoom({
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
     room.id === DEMO_ROOM_ID ? membersForRoom(room) : [],
   );
+  useEffect(() => {
+    if (isUuid(room.id)) setForegroundRoomId(room.id);
+    return () => {
+      setForegroundRoomId(null);
+    };
+  }, [room.id]);
   const myProfile =
     roomMembers.find((member) => member.mine) ??
     (room.id === DEMO_ROOM_ID
@@ -5387,13 +5445,17 @@ function ChatRoom({
   });
   const initialScrollDone = useRef(false);
   const nearBottomRef = useRef(true);
+  const lastObservedLatestMessageIdRef = useRef<string | null>(null);
   const prependHeightRef = useRef<number | null>(null);
   const messagePositions = useRef<Record<string, number>>({});
   const [chatReady, setChatReady] = useState(false);
   const [initialMessagesLoaded, setInitialMessagesLoaded] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasOlderMessages, setHasOlderMessages] = useState(true);
-  const [newMessagePreview, setNewMessagePreview] = useState("");
+  const [newMessagePreview, setNewMessagePreview] = useState<{
+    name: string;
+    text: string;
+  } | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [jumpHighlightId, setJumpHighlightId] = useState<string | null>(null);
   const [pendingJoinRequests, setPendingJoinRequests] = useState<
@@ -5633,6 +5695,7 @@ function ChatRoom({
   }, [currentUserId, room.id, room.memberCount]);
   useEffect(() => {
     initialScrollDone.current = false;
+    lastObservedLatestMessageIdRef.current = null;
     setChatReady(false);
     setInitialMessagesLoaded(false);
     setHasOlderMessages(true);
@@ -5670,6 +5733,7 @@ function ChatRoom({
   useEffect(() => {
     if (!supabase || !isUuid(room.id)) return;
     const client = supabase;
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
     const reload = () =>
       listRoomMessages(room.id)
         .then((serverMessages) =>
@@ -5686,6 +5750,10 @@ function ChatRoom({
           }),
         )
         .catch(() => undefined);
+    const scheduleReload = () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(reload, 120);
+    };
     const channel = client
       .channel(`chat-messages-${room.id}`)
       .on(
@@ -5696,10 +5764,11 @@ function ChatRoom({
           table: "messages",
           filter: `room_id=eq.${room.id}`,
         },
-        () => reload(),
+        scheduleReload,
       )
       .subscribe();
     return () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
       client.removeChannel(channel);
     };
   }, [currentUserId, room.id]);
@@ -5877,7 +5946,7 @@ function ChatRoom({
     }
   };
   const scrollToLatest = (animated = true) => {
-    setNewMessagePreview("");
+    setNewMessagePreview(null);
     setShowScrollToBottom(false);
     requestAnimationFrame(() =>
       chatScrollRef.current?.scrollToEnd({ animated }),
@@ -5967,11 +6036,13 @@ function ChatRoom({
       );
     }
   };
-  const send = async () => {
+  const pendingTextSeq = useRef(0);
+  const send = () => {
     const text = message.trim();
     if (!text) return;
     const createdAt = new Date().toISOString();
-    const localId = `pending-text-${Date.now()}`;
+    pendingTextSeq.current += 1;
+    const localId = `pending-text-${Date.now()}-${pendingTextSeq.current}`;
     const reply = replyTo ?? undefined;
     setMessages((items) => [
       ...items,
@@ -5986,12 +6057,14 @@ function ChatRoom({
         createdAt,
         replyTo: reply,
         delivery: "sending",
+        bubbleColor,
+        textColor,
       },
     ]);
     setMessage("");
     setReplyTo(null);
     scrollToLatest();
-    await submitTextMessage(localId, text, reply);
+    void submitTextMessage(localId, text, reply);
   };
   const sendHeart = async () => {
     const createdAt = new Date().toISOString();
@@ -6303,8 +6376,9 @@ function ChatRoom({
   const sendImage = async (source: "camera" | "gallery") => {
     const selected = await pickChatImages(source);
     if (selected.length) {
+      Keyboard.dismiss();
       setTool(null);
-      setImageEditorAssets(selected);
+      requestAnimationFrame(() => setImageEditorAssets(selected));
     }
   };
   const retryMessage = (
@@ -6559,7 +6633,9 @@ function ChatRoom({
       (usesServerReadReceipt
         ? markRoomRead(room.id, latestReadableMessageId)
         : AsyncStorage.setItem(readStorageKey, latestReadableMessageId)
-      ).catch(() => undefined);
+      )
+        .then(() => setReadBoundaryId(null))
+        .catch(() => undefined);
     }, 1200);
     return () => clearTimeout(timer);
   }, [
@@ -6571,19 +6647,29 @@ function ChatRoom({
   ]);
   useEffect(() => {
     const latest = visibleMessages[visibleMessages.length - 1];
+    const latestId = latest?.id ?? null;
+    if (!chatReady || !initialMessagesLoaded) {
+      lastObservedLatestMessageIdRef.current = latestId;
+      return;
+    }
+    if (!latestId || latestId === lastObservedLatestMessageIdRef.current)
+      return;
+    lastObservedLatestMessageIdRef.current = latestId;
     if (!latest || latest.kind === "system" || latest.mine) return;
     if (nearBottomRef.current) scrollToLatest();
     else
-      setNewMessagePreview(
-        latest.kind === "text"
-          ? latest.text
-          : latest.kind === "image"
-            ? "사진을 보냈습니다."
-            : latest.kind === "story"
-              ? "스토리를 올렸습니다."
-              : "비밀 쪽지가 도착했습니다.",
-      );
-  }, [visibleMessages.length]);
+      setNewMessagePreview({
+        name: latest.name,
+        text:
+          latest.kind === "text"
+            ? latest.text
+            : latest.kind === "image"
+              ? "사진을 보냈습니다."
+              : latest.kind === "story"
+                ? "스토리를 올렸습니다."
+                : "비밀 쪽지가 도착했습니다.",
+      });
+  }, [chatReady, initialMessagesLoaded, visibleMessages.length]);
   const chatSearchMatches = chatSearch.trim()
     ? combinedMessages
         .filter(
@@ -6704,6 +6790,8 @@ function ChatRoom({
                 imageUri,
                 time: "지금",
                 createdAt,
+                bubbleColor,
+                textColor,
               },
             ],
       );
@@ -6932,7 +7020,7 @@ function ChatRoom({
             });
             setShowScrollToBottom(!nearBottomRef.current);
             if (nearBottomRef.current && newMessagePreview)
-              setNewMessagePreview("");
+              setNewMessagePreview(null);
           }}
           onContentSizeChange={(width, height) => {
             if (!initialMessagesLoaded) return;
@@ -6950,23 +7038,14 @@ function ChatRoom({
             scrollMetrics.current.contentHeight = height;
             if (!initialScrollDone.current) {
               initialScrollDone.current = true;
-              const saved = ROOM_SCROLL_STATE.get(room.id);
-              if (saved && !saved.nearBottom) {
-                chatScrollRef.current?.scrollTo({
-                  y: Math.max(0, saved.offsetY),
-                  animated: false,
-                });
-                setChatReady(true);
-              } else {
+              chatScrollRef.current?.scrollToEnd({ animated: false });
+              requestAnimationFrame(() => {
                 chatScrollRef.current?.scrollToEnd({ animated: false });
-                requestAnimationFrame(() => {
+                setTimeout(() => {
                   chatScrollRef.current?.scrollToEnd({ animated: false });
-                  setTimeout(() => {
-                    chatScrollRef.current?.scrollToEnd({ animated: false });
-                    setChatReady(true);
-                  }, 40);
-                });
-              }
+                  setChatReady(true);
+                }, 40);
+              });
             } else if (nearBottomRef.current) scrollToLatest();
           }}
         >
@@ -7071,9 +7150,21 @@ function ChatRoom({
                             <Ionicons
                               name="albums-outline"
                               size={16}
-                              color={colors.mint700}
+                              color={
+                                item.textColor ??
+                                (item.mine ? textColor : colors.mint700)
+                              }
                             />
-                            <Text style={s.storyChatPreviewLabel}>
+                            <Text
+                              style={[
+                                s.storyChatPreviewLabel,
+                                {
+                                  color:
+                                    item.textColor ??
+                                    (item.mine ? textColor : colors.mint700),
+                                },
+                              ]}
+                            >
                               {item.name}님이 스토리를 올렸습니다.
                             </Text>
                           </View>
@@ -7223,9 +7314,25 @@ function ChatRoom({
                         {item.replyTo && (
                           <Pressable
                             onPress={() => jumpToMessage(item.replyTo!.id)}
-                            style={s.replyQuote}
+                            style={[
+                              s.replyQuote,
+                              {
+                                borderLeftColor:
+                                  item.textColor ??
+                                  (item.mine ? textColor : colors.mint600),
+                              },
+                            ]}
                           >
-                            <Text style={s.replyQuoteName}>
+                            <Text
+                              style={[
+                                s.replyQuoteName,
+                                {
+                                  color:
+                                    item.textColor ??
+                                    (item.mine ? textColor : colors.mint700),
+                                },
+                              ]}
+                            >
                               {replyLabel(item.replyTo.name, myDisplayName)}
                             </Text>
                             <Text numberOfLines={1} style={s.replyQuoteText}>
@@ -7282,23 +7389,36 @@ function ChatRoom({
                           </View>
                         ) : (
                           <View>
-                            <LinkedText
-                              numberOfLines={
-                                expanded || !shouldCollapse
-                                  ? undefined
-                                  : CHAT_COLLAPSE_LINE_LIMIT
-                              }
-                              style={[
-                                s.messageText,
-                                {
-                                  color:
-                                    item.textColor ??
-                                    (item.mine ? textColor : colors.text),
-                                },
-                              ]}
-                            >
-                              {item.text}
-                            </LinkedText>
+                            {item.text === "삭제된 메시지입니다." ? (
+                              <View style={s.deletedMessageRow}>
+                                <Ionicons
+                                  name="ban-outline"
+                                  size={14}
+                                  color={colors.textMuted}
+                                />
+                                <Text style={s.deletedMessageText}>
+                                  삭제된 메시지입니다.
+                                </Text>
+                              </View>
+                            ) : (
+                              <LinkedText
+                                numberOfLines={
+                                  expanded || !shouldCollapse
+                                    ? undefined
+                                    : CHAT_COLLAPSE_LINE_LIMIT
+                                }
+                                style={[
+                                  s.messageText,
+                                  {
+                                    color:
+                                      item.textColor ??
+                                      (item.mine ? textColor : colors.text),
+                                  },
+                                ]}
+                              >
+                                {item.text}
+                              </LinkedText>
+                            )}
                             {shouldCollapse && (
                               <Pressable
                                 onPress={(event) => {
@@ -7338,15 +7458,22 @@ function ChatRoom({
             );
           })}
         </ScrollView>
-        {newMessagePreview !== "" && (
+        {!chatReady && (
+          <View pointerEvents="none" style={s.chatInitialLoader}>
+            <ActivityIndicator color={colors.mint700} />
+          </View>
+        )}
+        {newMessagePreview && (
           <Pressable
             onPress={() => scrollToLatest()}
             style={s.newMessagePreview}
           >
-            <Text numberOfLines={1} style={s.newMessagePreviewText}>
-              {newMessagePreview}
+            <Text numberOfLines={1} style={s.newMessagePreviewName}>
+              {newMessagePreview.name}
             </Text>
-            <Ionicons name="chevron-down" size={15} color="#FFF" />
+            <Text numberOfLines={1} style={s.newMessagePreviewText}>
+              {newMessagePreview.text}
+            </Text>
           </Pressable>
         )}
         {showScrollToBottom && (
@@ -8846,9 +8973,14 @@ function StoryEditor({
       (block.type === "text" && Boolean(block.text.trim())),
   );
   const content = (
-    <>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={0}
+      style={s.flex}
+    >
       <ScrollView
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
         contentContainerStyle={s.storyEditor}
       >
         <TextInput
@@ -8900,6 +9032,7 @@ function StoryEditor({
                 placeholder="본문을 입력하세요."
                 placeholderTextColor={colors.textMuted}
                 style={s.storyBlockInput}
+                scrollEnabled={false}
               />
               <Pressable
                 onPress={() =>
@@ -8972,7 +9105,7 @@ function StoryEditor({
           </Pressable>
         </View>
       </ScrollView>
-    </>
+    </KeyboardAvoidingView>
   );
   return embedded ? (
     <View style={s.safe}>{content}</View>
@@ -9551,8 +9684,9 @@ function MemberProfile({
   );
   const [avatarRemoved, setAvatarRemoved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [editMode, setEditMode] = useState(false);
   const pick = async () => {
-    if (!editable) {
+    if (!editable || !editMode) {
       setPhotoOpen(true);
       return;
     }
@@ -9614,9 +9748,8 @@ function MemberProfile({
           ? undefined
           : (avatar?.uri ?? member.avatarUri),
       });
-      Alert.alert("프로필 저장 완료", "방 프로필이 저장되었습니다.", [
-        { text: "확인", onPress: onBack },
-      ]);
+      setEditMode(false);
+      Alert.alert("프로필 저장 완료", "방 프로필이 저장되었습니다.");
     } catch (error) {
       Alert.alert("프로필 저장 실패", serverErrorMessage(error));
     } finally {
@@ -9779,7 +9912,7 @@ function MemberProfile({
       <ProfileCaptureGuard />
       <StatusBar style="light" />
       <TopBar
-        title={editable ? "프로필 수정" : "프로필"}
+        title={editable && editMode ? "프로필 수정" : "프로필"}
         onBack={onBack}
         trailing={canShowMenu ? "ellipsis-horizontal" : undefined}
         onTrailingPress={
@@ -9819,13 +9952,38 @@ function MemberProfile({
         >
           <Pressable
             accessibilityLabel={
-              editable ? "프로필 사진 변경" : "프로필 사진 크게 보기"
+              editable && editMode ? "프로필 사진 변경" : "프로필 사진 크게 보기"
             }
             onPress={pick}
           >
             <Avatar uri={displayedAvatarUri} size={96} />
           </Pressable>
-          {editable ? (
+          {editable && !editMode ? (
+            <>
+              <View style={s.memberProfileNameLine}>
+                <Text style={s.memberProfileName}>{member.name}</Text>
+                {member.owner ? (
+                  <Badge text="방장" pink />
+                ) : member.coHost ? (
+                  <Badge text="부방장" />
+                ) : null}
+              </View>
+              <Text style={s.memberProfileRoom}>
+                {room.name}에서 사용하는 프로필
+              </Text>
+              <View style={s.memberProfileCard}>
+                <Text style={s.memberProfileLabel}>자기 소개</Text>
+                <Text style={s.memberProfileIntro}>{member.intro}</Text>
+              </View>
+              <Pressable
+                onPress={() => setEditMode(true)}
+                style={s.profileEditShortcut}
+              >
+                <Ionicons name="create-outline" size={19} color={colors.mint700} />
+                <Text style={s.profileEditShortcutText}>프로필 수정하기</Text>
+              </Pressable>
+            </>
+          ) : editable ? (
             <View style={s.memberProfileEditCard}>
               <LimitedField
                 label="이름"
@@ -12770,10 +12928,14 @@ function RoomImage({
     <View
       style={[
         s.roomImage,
-        s.defaultRoomImage,
-        { width: size, height: size, borderRadius: size / 2 },
+        { width: size, height: size, borderRadius: size / 2, overflow: "hidden" },
       ]}
     >
+      <ExpoImage
+        source={require("./assets/default-room.png")}
+        contentFit="cover"
+        style={StyleSheet.absoluteFill}
+      />
       {blurAdult && <View style={s.adultBlurMask} />}
     </View>
   );
@@ -12786,7 +12948,11 @@ function DefaultRoomCover({ room }: { room?: Room }) {
       style={s.defaultCover}
     />
   ) : (
-    <View style={[s.defaultCover, s.defaultCoverLogo]} />
+    <ExpoImage
+      source={require("./assets/default-room-cover.png")}
+      contentFit="cover"
+      style={s.defaultCover}
+    />
   );
 }
 function ImageGrid({
@@ -12830,12 +12996,6 @@ function ImageGrid({
     </View>
   );
 }
-function imageTouchDistance(touches: ArrayLike<{ pageX: number; pageY: number }>) {
-  if (touches.length < 2) return 0;
-  const first = touches[0];
-  const second = touches[1];
-  return Math.hypot(first.pageX - second.pageX, first.pageY - second.pageY);
-}
 function ChatImageEditor({
   assets,
   onBack,
@@ -12856,9 +13016,7 @@ function ChatImageEditor({
     })),
   );
   const [selected, setSelected] = useState(0);
-  const panStart = useRef({ x: 0, y: 0 });
-  const pinchStart = useRef({ distance: 0, scale: 1 });
-  const freeRatioStart = useRef(1);
+  const cropWindowStart = useRef({ widthFactor: 1, heightFactor: 1 });
   useEffect(() => {
     if (!items.length) onBack();
   }, [items.length, onBack]);
@@ -12910,62 +13068,95 @@ function ChatImageEditor({
   const viewport = Dimensions.get("window");
   const maxPreviewWidth = viewport.width - 36;
   const previewWidth = maxPreviewWidth;
-  const maxPreviewHeight = Math.max(260, viewport.height - 360);
+  const maxPreviewHeight = Math.max(180, Math.min(420, viewport.height - 470));
   const previewHeight = Math.min(maxPreviewHeight, previewWidth / previewRatio);
-  const cropResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => Boolean(current),
-        onMoveShouldSetPanResponder: () => Boolean(current),
-        onPanResponderGrant: (event) => {
-          const offset = current?.cropOffset ?? { x: 0, y: 0 };
-          panStart.current = offset;
-          pinchStart.current = {
-            distance: imageTouchDistance(event.nativeEvent.touches),
-            scale: current?.cropScale ?? 1,
-          };
-        },
-        onPanResponderMove: (event, gesture) => {
-          if (!current) return;
-          const touches = event.nativeEvent.touches;
-          if (touches.length >= 2 && pinchStart.current.distance > 0) {
-            const distance = imageTouchDistance(touches);
-            const nextScale = Math.max(
-              1,
-              Math.min(4, pinchStart.current.scale * (distance / pinchStart.current.distance)),
-            );
-            updateSelected({ cropScale: nextScale });
-            return;
-          }
-          const nextX = Math.max(-1, Math.min(1, panStart.current.x - gesture.dx / 180));
-          const nextY = Math.max(-1, Math.min(1, panStart.current.y - gesture.dy / 180));
-          updateSelected({ cropOffset: { x: nextX, y: nextY } });
-        },
-      }),
-    [current, selected],
-  );
-  const freeResizeResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => current?.cropAspect === "free",
-        onMoveShouldSetPanResponder: () => current?.cropAspect === "free",
-        onPanResponderGrant: () => {
-          freeRatioStart.current = current?.cropFreeRatio ?? previewRatio;
-        },
-        onPanResponderMove: (_event, gesture) => {
-          if (current?.cropAspect !== "free") return;
-          const nextRatio = Math.max(
-            0.45,
-            Math.min(2.4, freeRatioStart.current + gesture.dx / 180 - gesture.dy / 260),
-          );
-          updateSelected({ cropFreeRatio: nextRatio });
-        },
-      }),
-    [current, previewRatio, selected],
-  );
-  const previewOffset = current?.cropOffset ?? { x: 0, y: 0 };
   const previewScale = current?.cropScale ?? 1;
   const previewRotation = current?.cropRotation ?? 0;
+  const cropWindowRatio = previewRatio;
+  const cropMaxWidth =
+    previewWidth / previewHeight > cropWindowRatio
+      ? previewHeight * cropWindowRatio
+      : previewWidth;
+  const cropMaxHeight = cropMaxWidth / cropWindowRatio;
+  const cropFreeWidthFactor = Math.max(
+    0.22,
+    Math.min(1, current?.cropOffset?.x ?? 1),
+  );
+  const cropFreeHeightFactor = Math.max(
+    0.22,
+    Math.min(1, current?.cropOffset?.y ?? 1),
+  );
+  const cropFocusWidth =
+    current?.cropAspect === "free"
+      ? cropMaxWidth * cropFreeWidthFactor
+      : cropMaxWidth / previewScale;
+  const cropFocusHeight =
+    current?.cropAspect === "free"
+      ? cropMaxHeight * cropFreeHeightFactor
+      : cropMaxHeight / previewScale;
+  const createCropHandleResponder = (
+    horizontal: -1 | 1,
+    vertical: -1 | 1,
+  ) =>
+    PanResponder.create({
+      onStartShouldSetPanResponder: () =>
+        Boolean(current && current.cropAspect && current.cropAspect !== "original"),
+      onMoveShouldSetPanResponder: () =>
+        Boolean(current && current.cropAspect && current.cropAspect !== "original"),
+      onPanResponderGrant: () => {
+        cropWindowStart.current = {
+          widthFactor:
+            current?.cropAspect === "free"
+              ? cropFreeWidthFactor
+              : 1 / (current?.cropScale ?? 1),
+          heightFactor:
+            current?.cropAspect === "free"
+              ? cropFreeHeightFactor
+              : 1 / (current?.cropScale ?? 1),
+        };
+      },
+      onPanResponderMove: (_event, gesture) => {
+        if (!current || !current.cropAspect || current.cropAspect === "original")
+          return;
+        const widthDelta = (gesture.dx * horizontal) / cropMaxWidth;
+        const heightDelta = (gesture.dy * vertical) / cropMaxHeight;
+        if (current.cropAspect === "free") {
+          const nextWidth = Math.max(
+            0.22,
+            Math.min(1, cropWindowStart.current.widthFactor + widthDelta),
+          );
+          const nextHeight = Math.max(
+            0.22,
+            Math.min(1, cropWindowStart.current.heightFactor + heightDelta),
+          );
+          updateSelected({
+            cropOffset: { x: nextWidth, y: nextHeight },
+            cropFreeRatio: nextWidth / nextHeight,
+          });
+          return;
+        }
+        const uniformFactor = Math.max(
+          0.25,
+          Math.min(
+            1,
+            Math.min(
+              cropWindowStart.current.widthFactor + widthDelta,
+              cropWindowStart.current.heightFactor + heightDelta,
+            ),
+          ),
+        );
+        updateSelected({ cropScale: 1 / uniformFactor });
+      },
+    });
+  const cropHandles = useMemo(
+    () => ({
+      topLeft: createCropHandleResponder(-1, -1),
+      topRight: createCropHandleResponder(1, -1),
+      bottomLeft: createCropHandleResponder(-1, 1),
+      bottomRight: createCropHandleResponder(1, 1),
+    }),
+    [current, cropFreeWidthFactor, cropFreeHeightFactor, cropMaxWidth, cropMaxHeight],
+  );
   return (
     <SafeAreaView style={s.imageEditorScreen}>
       <StatusBar style="light" />
@@ -12981,7 +13172,6 @@ function ChatImageEditor({
       >
         {current ? (
           <View
-            {...cropResponder.panHandlers}
             style={[
               s.imageEditorPreviewWrap,
               { width: previewWidth, height: previewHeight },
@@ -12994,9 +13184,6 @@ function ChatImageEditor({
                 s.imageEditorPreview,
                 {
                   transform: [
-                    { translateX: previewOffset.x * previewWidth * -0.18 },
-                    { translateY: previewOffset.y * previewHeight * -0.18 },
-                    { scale: previewScale },
                     { rotate: `${previewRotation}deg` },
                   ],
                 },
@@ -13004,17 +13191,38 @@ function ChatImageEditor({
             />
             {current.cropAspect &&
               current.cropAspect !== "original" && (
-                <View pointerEvents="box-none" style={s.imageCropFocus}>
+                <View
+                  pointerEvents="box-none"
+                  style={[
+                    s.imageCropFocus,
+                    {
+                      width: cropFocusWidth,
+                      height: cropFocusHeight,
+                      left: (previewWidth - cropFocusWidth) / 2,
+                      top: (previewHeight - cropFocusHeight) / 2,
+                    },
+                  ]}
+                >
                   <View style={s.imageCropGridLineVertical} />
                   <View style={[s.imageCropGridLineVertical, { left: "66.66%" }]} />
                   <View style={s.imageCropGridLineHorizontal} />
                   <View style={[s.imageCropGridLineHorizontal, { top: "66.66%" }]} />
-                  {current.cropAspect === "free" && (
-                    <View
-                      {...freeResizeResponder.panHandlers}
-                      style={s.imageCropResizeHandle}
-                    />
-                  )}
+                  <View
+                    {...cropHandles.topLeft.panHandlers}
+                    style={[s.imageCropResizeHandle, s.imageCropHandleTopLeft]}
+                  />
+                  <View
+                    {...cropHandles.topRight.panHandlers}
+                    style={[s.imageCropResizeHandle, s.imageCropHandleTopRight]}
+                  />
+                  <View
+                    {...cropHandles.bottomLeft.panHandlers}
+                    style={[s.imageCropResizeHandle, s.imageCropHandleBottomLeft]}
+                  />
+                  <View
+                    {...cropHandles.bottomRight.panHandlers}
+                    style={[s.imageCropResizeHandle, s.imageCropHandleBottomRight]}
+                  />
                 </View>
               )}
           </View>
@@ -14003,14 +14211,24 @@ function ChatDrawer({
       }),
     [slide],
   );
+  const dimOpacity = slide.interpolate({
+    inputRange: [0, 340],
+    outputRange: [1, 0],
+    extrapolate: "clamp",
+  });
   if (!visible) return null;
   return (
     <View style={s.drawerLayer}>
       <Pressable
         accessibilityLabel="채팅 메뉴 닫기"
         onPress={requestClose}
-        style={s.drawerDim}
-      />
+        style={s.drawerDimHit}
+      >
+        <Animated.View
+          pointerEvents="none"
+          style={[s.drawerDim, { opacity: dimOpacity }]}
+        />
+      </Pressable>
       <Animated.View
         {...swipe.panHandlers}
         style={[
@@ -14235,6 +14453,11 @@ function NotificationDrawer({
       }),
     [slide],
   );
+  const dimOpacity = slide.interpolate({
+    inputRange: [0, 340],
+    outputRange: [1, 0],
+    extrapolate: "clamp",
+  });
   if (!visible) return null;
   const markNoticeRead = (notice: Notice) => {
     markNotificationRead(notice.id).catch(() => undefined);
@@ -14259,8 +14482,13 @@ function NotificationDrawer({
       <Pressable
         accessibilityLabel="알림 닫기"
         onPress={requestClose}
-        style={s.drawerDim}
-      />
+        style={s.drawerDimHit}
+      >
+        <Animated.View
+          pointerEvents="none"
+          style={[s.drawerDim, { opacity: dimOpacity }]}
+        />
+      </Pressable>
       <Animated.View
         {...swipe.panHandlers}
         style={[
@@ -16007,6 +16235,16 @@ const s = StyleSheet.create({
     lineHeight: 20,
     flexShrink: 1,
   },
+  deletedMessageRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  deletedMessageText: {
+    color: colors.textMuted,
+    fontSize: 14,
+    lineHeight: 20,
+  },
   mineText: { color: colors.text },
   chatImage: { width: 140, height: 140, borderRadius: 12, resizeMode: "cover" },
   time: {
@@ -16249,7 +16487,15 @@ const s = StyleSheet.create({
   },
   notificationBadgeText: { color: "#FFF", fontSize: 8, fontWeight: "800" },
   drawerLayer: { ...StyleSheet.absoluteFill, zIndex: 50, flexDirection: "row" },
-  drawerDim: { flex: 1, backgroundColor: "rgba(20,23,22,.28)" },
+  drawerDimHit: { flex: 1 },
+  drawerDim: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: "rgba(20,23,22,.28)",
+  },
   drawer: {
     width: "84%",
     maxWidth: 340,
@@ -16637,6 +16883,8 @@ const s = StyleSheet.create({
     lineHeight: 16,
     marginBottom: 16,
   },
+  privatePinInput: { marginBottom: 14 },
+  privatePinButton: { marginTop: 4 },
   coHostSheet: {
     backgroundColor: "#FFF",
     borderTopLeftRadius: 24,
@@ -16909,7 +17157,8 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginVertical: 14,
+    marginTop: 14,
+    marginBottom: 22,
     maxWidth: "100%",
   },
   unreadLine: { flex: 1, height: 1, backgroundColor: "#D7DDD9" },
@@ -18041,28 +18290,66 @@ const s = StyleSheet.create({
     borderColor: colors.border,
     ...shadows.tiny,
   },
-  newMessagePreview: {
-    position: "absolute",
-    left: 22,
-    right: 22,
-    bottom: 126,
-    minHeight: 38,
-    borderRadius: 19,
-    backgroundColor: "rgba(35,39,37,.92)",
+  profileEditShortcut: {
+    marginTop: 18,
+    height: 46,
+    borderRadius: 16,
+    paddingHorizontal: 18,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    paddingHorizontal: 14,
+    gap: 7,
+    backgroundColor: "#F4FBF7",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  profileEditShortcutText: {
+    color: colors.mint700,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  chatInitialLoader: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFFFFF",
+    zIndex: 12,
+  },
+  newMessagePreview: {
+    position: "absolute",
+    left: 82,
+    right: 62,
+    bottom: 108,
+    minHeight: 46,
+    borderRadius: 23,
+    backgroundColor: "#FFFFFF",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    gap: 9,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
     zIndex: 30,
     ...shadows.floating,
   },
+  newMessagePreviewName: {
+    maxWidth: 86,
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "800",
+  },
   newMessagePreviewText: {
     flex: 1,
-    color: "#FFF",
-    fontSize: 12,
-    fontWeight: "700",
-    textAlign: "center",
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "500",
+    textAlign: "left",
   },
   scrollToBottomButton: {
     position: "absolute",
@@ -18111,7 +18398,7 @@ const s = StyleSheet.create({
   imageEditorBodyContent: {
     padding: 18,
     alignItems: "center",
-    paddingBottom: 36,
+    paddingBottom: 18,
   },
   imageEditorPreviewWrap: {
     position: "relative",
@@ -18121,15 +18408,13 @@ const s = StyleSheet.create({
   },
   imageEditorPreview: { width: "100%", height: "100%" },
   imageCropFocus: {
-    ...StyleSheet.absoluteFill,
+    position: "absolute",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,.9)",
     borderStyle: "dashed",
   },
   imageCropResizeHandle: {
     position: "absolute",
-    right: -10,
-    bottom: -10,
     width: 30,
     height: 30,
     borderRadius: 15,
@@ -18137,6 +18422,10 @@ const s = StyleSheet.create({
     borderColor: "#FFF",
     backgroundColor: "rgba(93,187,140,.85)",
   },
+  imageCropHandleTopLeft: { left: -15, top: -15 },
+  imageCropHandleTopRight: { right: -15, top: -15 },
+  imageCropHandleBottomLeft: { left: -15, bottom: -15 },
+  imageCropHandleBottomRight: { right: -15, bottom: -15 },
   imageCropGridLineVertical: {
     position: "absolute",
     left: "33.33%",

@@ -1,4 +1,5 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { dispatchPendingPushes } from './notifications';
 
 export type CreateRoomInput = {
   name: string;
@@ -95,6 +96,31 @@ export async function listRooms() {
     if(signedError)return baseRow;
     return {...baseRow,cover_url:signed?.signedUrl};
   }));
+}
+
+export async function getRoomById(roomId: string) {
+  const client = requireClient();
+  const { data, error } = await client
+    .from('rooms')
+    .select('id,name,description,category,region,max_members,visibility,cover_asset_path,created_at,updated_at')
+    .eq('id', roomId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const row = data as ServerRoom;
+  let memberCount = 1;
+  const { data: countRows } = await client.rpc('get_room_member_counts', {
+    p_room_ids: [roomId],
+  });
+  if (Array.isArray(countRows) && countRows[0])
+    memberCount = Number(countRows[0].member_count ?? 1);
+  const baseRow = { ...row, member_count: memberCount };
+  if (!row.cover_asset_path) return baseRow;
+  const { data: signed } = await client.storage
+    .from('room-covers')
+    .createSignedUrl(row.cover_asset_path, 3600);
+  return { ...baseRow, cover_url: signed?.signedUrl };
 }
 
 export async function listRoomMembers(roomId: string) {
@@ -220,6 +246,7 @@ export async function requestRoomJoin(roomId: string, name: string, introduction
     p_introduction: introduction,
   });
   if (error) throw error;
+  dispatchPendingPushes().catch(() => undefined);
 }
 
 export async function requestRoomJoinWithAvatar(roomId: string, name: string, introduction: string, avatarUploadId?: string) {
@@ -230,6 +257,7 @@ export async function requestRoomJoinWithAvatar(roomId: string, name: string, in
     p_avatar_upload_id: avatarUploadId ?? null,
   });
   if (error) throw error;
+  dispatchPendingPushes().catch(() => undefined);
 }
 
 export async function joinRoomAsSystemAdmin(roomId: string) {
@@ -329,3 +357,4 @@ export async function listPendingRoomJoinRequestsWithAvatars(roomId: string) {
     avatar_url: row.requested_avatar_path ? avatarUrlByPath.get(row.requested_avatar_path) : undefined,
   }));
 }
+

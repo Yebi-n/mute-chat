@@ -151,24 +151,77 @@ export async function updateCurrentUserPassword(password: string) {
   return data.user;
 }
 
+async function changeCurrentUserPasswordLegacy(currentPassword: string, newPassword: string) {
+  const client = requireClient();
+  const [{ data: sessionData, error: sessionError }, { data: userData, error: userError }] =
+    await Promise.all([client.auth.getSession(), client.auth.getUser()]);
+  if (sessionError) throw authError(sessionError);
+  if (userError) throw authError(userError);
+
+  const { data: contactData } = await client.rpc('get_my_auth_contact').maybeSingle();
+  const contact = contactData as { phone?: string | null; email?: string | null } | null;
+  const phone =
+    sessionData.session?.user?.phone ??
+    userData.user?.phone ??
+    contact?.phone ??
+    (typeof sessionData.session?.user?.user_metadata?.phone === 'string'
+      ? sessionData.session.user.user_metadata.phone
+      : null);
+  const email =
+    sessionData.session?.user?.email ??
+    userData.user?.email ??
+    contact?.email ??
+    null;
+
+  if (!phone && !email) throw new Error('인증 전화번호를 확인할 수 없습니다.');
+
+  const { error: signInError } = phone
+    ? await client.auth.signInWithPassword({ phone, password: currentPassword })
+    : await client.auth.signInWithPassword({ email: email!, password: currentPassword });
+  if (signInError) throw new Error('현재 사용 중인 비밀번호가 아닙니다.');
+
+  const { data, error } = await client.auth.updateUser({ password: newPassword });
+  if (error) throw authError(error);
+  return data.user;
+}
+
 export async function changeCurrentUserPassword(currentPassword: string, newPassword: string) {
   const client = requireClient();
   const [{ data: sessionData, error: sessionError }, { data: userData, error: userError }] =
     await Promise.all([client.auth.getSession(), client.auth.getUser()]);
   if (sessionError) throw authError(sessionError);
   if (userError) throw authError(userError);
-  const phone =
-    sessionData.session?.user?.phone ??
-    userData.user?.phone ??
-    (typeof sessionData.session?.user?.user_metadata?.phone === 'string'
-      ? sessionData.session.user.user_metadata.phone
-      : null);
-  if (!phone) throw new Error('인증 전화번호를 확인할 수 없습니다.');
 
-  const { error: signInError } = await client.auth.signInWithPassword({
-    phone,
-    password: currentPassword,
-  });
+  const { data: contactData } = await client.rpc('get_my_auth_contact').maybeSingle();
+  const contact = contactData as { phone?: string | null; email?: string | null } | null;
+  const sessionUser = sessionData.session?.user;
+  const authUser = userData.user;
+  const phone =
+    sessionUser?.phone ??
+    authUser?.phone ??
+    contact?.phone ??
+    (typeof sessionUser?.user_metadata?.phone === 'string'
+      ? sessionUser.user_metadata.phone
+      : null) ??
+    (typeof authUser?.user_metadata?.phone === 'string'
+      ? authUser.user_metadata.phone
+      : null);
+  const email =
+    sessionUser?.email ??
+    authUser?.email ??
+    contact?.email ??
+    (typeof sessionUser?.user_metadata?.email === 'string'
+      ? sessionUser.user_metadata.email
+      : null) ??
+    (typeof authUser?.user_metadata?.email === 'string'
+      ? authUser.user_metadata.email
+      : null);
+
+  if (!phone && !email) throw new Error('인증 전화번호 또는 계정 ID를 확인할 수 없습니다.');
+
+  const { error: signInError } = phone
+    ? await client.auth.signInWithPassword({ phone, password: currentPassword })
+    : await client.auth.signInWithPassword({ email: email!, password: currentPassword });
   if (signInError) throw new Error('현재 사용 중인 비밀번호가 아닙니다.');
 
   const { data, error } = await client.auth.updateUser({ password: newPassword });

@@ -70,6 +70,31 @@ function normalizePurchaseResult(event: Purchase | Purchase[] | null): Purchase 
   return Array.isArray(event) ? event[0] ?? null : event;
 }
 
+function getStoreProductId(product: unknown) {
+  if (!product || typeof product !== 'object') return null;
+  const record = product as Record<string, unknown>;
+  return typeof record.id === 'string'
+    ? record.id
+    : typeof record.productId === 'string'
+      ? record.productId
+      : null;
+}
+
+async function fetchStoreProducts(productId: string, productType: ProductQueryType) {
+  const primary = await fetchProducts({ skus: [productId], type: productType });
+  if (primary?.some((product) => getStoreProductId(product) === productId)) {
+    return primary;
+  }
+  if (Platform.OS === 'ios') {
+    const fallback = await fetchProducts({ skus: [productId], type: 'all' as ProductQueryType });
+    if (fallback?.some((product) => getStoreProductId(product) === productId)) {
+      return fallback;
+    }
+    return [...(primary ?? []), ...(fallback ?? [])];
+  }
+  return primary ?? [];
+}
+
 async function waitForPurchase(productId: string, startPurchase: () => Promise<unknown>) {
   return await new Promise<Purchase>((resolve, reject) => {
     let settled = false;
@@ -138,9 +163,15 @@ async function verifyStorePurchase(productId: string, purchase: Purchase) {
 export async function purchaseStoreProduct(productId: string) {
   await ensureConnection();
   const productType: ProductQueryType = productId === 'mute_ad_free_monthly' ? 'subs' : 'in-app';
-  const products = await fetchProducts({ skus: [productId], type: productType });
-  if (!products?.some((product) => product.id === productId)) {
-    throw new Error(`STORE_PRODUCT_NOT_FOUND:${productId}`);
+  const products = await fetchStoreProducts(productId, productType);
+  if (!products?.some((product) => getStoreProductId(product) === productId)) {
+    const fetched = products
+      .map((product) => getStoreProductId(product))
+      .filter(Boolean)
+      .join(', ');
+    throw new Error(
+      `STORE_PRODUCT_NOT_FOUND:${productId}${fetched ? ` fetched=${fetched}` : ''}`,
+    );
   }
 
   const purchase = await waitForPurchase(productId, () =>
