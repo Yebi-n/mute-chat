@@ -5,7 +5,12 @@ import {
   RewardedAdEventType,
   TestIds,
 } from 'react-native-google-mobile-ads';
-export { claimPointReward, getMyWallet } from './wallet';
+export {
+  claimPointReward,
+  getMyWallet,
+  listPointLedger,
+  transferRoomPoints,
+} from './wallet';
 
 export async function showRewardedAd(): Promise<{ completed: boolean; rewardKey: string }> {
   const unitId = Platform.OS === 'ios'

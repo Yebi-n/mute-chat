@@ -56,6 +56,12 @@ export async function submitReport(input: {
   return reportId;
 }
 
+export async function listReportedRoomIds() {
+  const { data, error } = await requireClient().rpc('list_reported_room_ids');
+  if (error) throw error;
+  return ((data ?? []) as Array<{ room_id: string }>).map((row) => row.room_id);
+}
+
 export async function requestAccountDeletion() {
   const { data, error } = await requireClient().functions.invoke('delete-account', {
     method: 'POST',
