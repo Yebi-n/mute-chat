@@ -1778,6 +1778,22 @@ function AuthenticatedApp({
       })
       .catch(() => undefined);
   }, []);
+  const walletRefreshAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!isSupabaseConfigured || attendanceAvailableAt <= 0) return;
+    if (now < attendanceAvailableAt) return;
+    if (walletRefreshAtRef.current === attendanceAvailableAt) return;
+    walletRefreshAtRef.current = attendanceAvailableAt;
+    getMyWallet()
+      .then((wallet) => {
+        setPoints(wallet.pointBalance);
+        setAttendanceAvailableAt(
+          new Date(wallet.attendanceAvailableAt).getTime(),
+        );
+        setRewardedAdAvailable(wallet.rewardedAdAvailable);
+      })
+      .catch(() => undefined);
+  }, [attendanceAvailableAt, now]);
   useEffect(() => {
     if (!supabase || !isSupabaseConfigured) return;
     const client = supabase;
@@ -5473,6 +5489,21 @@ function ChatRoom({
     index:number;
     menuOpen: boolean;
   } | null>(null);
+  const photoViewerSwipe = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          gesture.x0 < 32 &&
+          gesture.dx > 12 &&
+          Math.abs(gesture.dy) < 28,
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dx > 64 && Math.abs(gesture.dy) < 48) {
+            setPhotoViewer(null);
+          }
+        },
+      }),
+    [],
+  );
   const [imageEditorAssets, setImageEditorAssets] = useState<
     ChatImageAsset[] | null
   >(null);
@@ -7763,7 +7794,7 @@ function ChatRoom({
         </View>
       )}
       {photoViewer && (
-        <View style={s.photoViewer}>
+        <View {...photoViewerSwipe.panHandlers} style={s.photoViewer}>
           <FlatList
             data={photoViewer.uris}
             horizontal
@@ -11122,7 +11153,7 @@ function Profile({
                   : "광고 보고 포인트 더 받기"}
               </Text>
               <Text style={s.rewardPoints}>
-                {rewardedAdAvailable ? "10 P" : "오늘 보상 완료"}
+                {rewardedAdAvailable ? "10 P" : "이번 보상 완료"}
               </Text>
             </LinearGradient>
           </Pressable>

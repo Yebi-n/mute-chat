@@ -8,6 +8,7 @@ import {
   purchaseUpdatedListener,
   requestPurchase,
   restorePurchases,
+  syncIOS,
   type ProductQueryType,
   type Purchase,
 } from 'expo-iap';
@@ -48,6 +49,9 @@ function requireSupabase() {
 async function ensureConnection() {
   if (!connected) {
     await initConnection();
+    if (Platform.OS === 'ios') {
+      await syncIOS().catch(() => undefined);
+    }
     connected = true;
   }
 }
@@ -81,6 +85,7 @@ function getStoreProductId(product: unknown) {
 }
 
 async function fetchStoreProducts(productId: string, productType: ProductQueryType) {
+  const allKnownProductIds = Array.from(storeProductIds);
   const primary = await fetchProducts({ skus: [productId], type: productType });
   if (primary?.some((product) => getStoreProductId(product) === productId)) {
     return primary;
@@ -90,7 +95,8 @@ async function fetchStoreProducts(productId: string, productType: ProductQueryTy
     if (fallback?.some((product) => getStoreProductId(product) === productId)) {
       return fallback;
     }
-    return [...(primary ?? []), ...(fallback ?? [])];
+    const broadFallback = await fetchProducts({ skus: allKnownProductIds, type: 'all' as ProductQueryType });
+    return [...(primary ?? []), ...(fallback ?? []), ...(broadFallback ?? [])];
   }
   return primary ?? [];
 }
