@@ -1,6 +1,9 @@
 ﻿import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { NavigationContainer } from "@react-navigation/native";
+import {
+  NavigationContainer,
+  createNavigationContainerRef,
+} from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import type { Session } from "@supabase/supabase-js";
 import * as Clipboard from "expo-clipboard";
@@ -98,6 +101,7 @@ import {
 import {
   clearRoomMemberMute,
   configureRoomAccess,
+  deleteRoom,
   getRoomNotificationsEnabled,
   kickOrBanRoomMember,
   leaveRoom,
@@ -199,6 +203,7 @@ type AppStackParamList = {
   Create: undefined;
 };
 const AppStack = createNativeStackNavigator<AppStackParamList>();
+const appNavigationRef = createNavigationContainerRef<AppStackParamList>();
 type BottomTab = "discover" | "myRooms" | "stories" | "profile";
 type IconName = keyof typeof Ionicons.glyphMap;
 type ChatPanel =
@@ -376,6 +381,7 @@ const IOS_HIDE_ADULT_UI = Platform.OS === "ios";
 const SCREEN_WIDTH=Dimensions.get("window").width;
 const CHAT_IMAGE_GRID_WIDTH = Math.min(196, Math.floor(SCREEN_WIDTH * 0.48));
 const CHAT_IMAGE_GRID_CELL = Math.floor((CHAT_IMAGE_GRID_WIDTH - 2) / 2);
+const PIN_ICON_SOURCE = require("./assets/pin-gray.png");
 const APP_LOCK_ENABLED_KEY = "mute:app-lock:enabled";
 const APP_LOCK_PIN_KEY = "mute:app-lock:pin";
 const LOCAL_PENDING_MESSAGES = new Map<string, ChatMessage[]>();
@@ -1403,7 +1409,7 @@ export default function App() {
   }
   return (
     <GestureHandlerRootView style={s.flex}>
-      <NavigationContainer>{content}</NavigationContainer>
+      <NavigationContainer ref={appNavigationRef}>{content}</NavigationContainer>
     </GestureHandlerRootView>
   );
 }
@@ -1757,8 +1763,11 @@ function AuthenticatedApp({
     (adultVerified && (!IOS_HIDE_ADULT_UI || iosAdultContentEnabled));
   const canUseAdultFeatures = isSuperAdmin || adultVerified;
   const [chatInitialPanel, setChatInitialPanel] = useState<ChatPanel>(null);
+  const [chatInitialUnreadFocus, setChatInitialUnreadFocus] = useState(false);
   const [returnToNotifications, setReturnToNotifications] = useState(false);
   const [notificationDrawerSignal, setNotificationDrawerSignal] = useState(0);
+  const handledPushResponseIdsRef = useRef<Set<string>>(new Set());
+  const checkedInitialPushResponseRef = useRef(false);
   const appTheme = useAppTheme();
   const primaryForeground = themeForeground(appTheme);
 
@@ -2031,6 +2040,7 @@ function AuthenticatedApp({
       return;
     }
     setChatInitialPanel(null);
+    setChatInitialUnreadFocus(false);
     setReturnToNotifications(false);
     setSelectedRoom(room);
     setUnreadCounts((counts) => ({ ...counts, [room.id]: 0 }));
@@ -2094,7 +2104,12 @@ function AuthenticatedApp({
     setChatInitialPanel(
       notice.destination === "applications" ? "applications" : null,
     );
-    setScreen(joinedIds.includes(room.id) ? "chat" : "detail");
+    setChatInitialUnreadFocus(notice.destination === "chat");
+    if (appNavigationRef.isReady()) {
+      appNavigationRef.navigate(joinedIds.includes(room.id) ? "Chat" : "Detail");
+    } else {
+      setScreen(joinedIds.includes(room.id) ? "chat" : "detail");
+    }
   };
   useEffect(() => {
     const toNotice = (
@@ -2115,16 +2130,29 @@ function AuthenticatedApp({
       };
     };
     const handleResponse = (response: Notifications.NotificationResponse | null) => {
+      if (!response) return;
+      const request = response.notification.request;
+      const responseKey =
+        request.identifier ||
+        `${response.notification.date ?? ""}-${JSON.stringify(
+          request.content.data ?? {},
+        )}`;
+      if (handledPushResponseIdsRef.current.has(responseKey)) return;
+      handledPushResponseIdsRef.current.add(responseKey);
+      Keyboard.dismiss();
       const notice = toNotice(
-        response?.notification.request.content.data as Record<string, unknown> | undefined,
+        request.content.data as Record<string, unknown> | undefined,
       );
       if (notice) void openNotification(notice);
     };
     const subscription =
       Notifications.addNotificationResponseReceivedListener(handleResponse);
-    Notifications.getLastNotificationResponseAsync()
-      .then(handleResponse)
-      .catch(() => undefined);
+    if (!checkedInitialPushResponseRef.current) {
+      checkedInitialPushResponseRef.current = true;
+      Notifications.getLastNotificationResponseAsync()
+        .then(handleResponse)
+        .catch(() => undefined);
+    }
     return () => subscription.remove();
   }, [joinedIds, roomData, canSeeAdultRooms, isSuperAdmin]);
   const topSpaceCount = (room: Room) =>
@@ -2309,6 +2337,7 @@ function AuthenticatedApp({
               return;
             }
             setChatInitialPanel(null);
+            setChatInitialUnreadFocus(false);
             setReturnToNotifications(false);
             setSelectedRoom(room);
             setUnreadCounts((counts) => ({ ...counts, [room.id]: 0 }));
@@ -2350,6 +2379,7 @@ function AuthenticatedApp({
             setChatInitialPanel(
               notice.destination === "applications" ? "applications" : null,
             );
+            setChatInitialUnreadFocus(notice.destination === "chat");
             navigation.navigate(joinedIds.includes(room.id) ? "Chat" : "Detail");
           };
           return (
@@ -2477,11 +2507,13 @@ function AuthenticatedApp({
             onAdminReportUser={(id, label) => adminReport("user", id, label)}
             onEditRoom={() => navigation.navigate("EditRoom")}
             initialPanel={chatInitialPanel}
+            initialFocusUnread={chatInitialUnreadFocus}
             onApplicationsBack={
               returnToNotifications
                 ? () => {
                     setReturnToNotifications(false);
                     setChatInitialPanel(null);
+                    setChatInitialUnreadFocus(false);
                     navigation.popToTop();
                     setNotificationDrawerSignal((value) => value + 1);
                   }
@@ -2501,6 +2533,7 @@ function AuthenticatedApp({
             onBack={() => {
               setReturnToNotifications(false);
               setChatInitialPanel(null);
+              setChatInitialUnreadFocus(false);
               navigation.goBack();
             }}
           />
@@ -4342,7 +4375,7 @@ function MainScreen({
                   (category === "adult" ||
                     (category === "promotion" && Boolean(item.isAdult)))
                 }
-                pinned={pinnedRoomIds.includes(item.id)}
+                pinned={bottomTab === "myRooms" && pinnedRoomIds.includes(item.id)}
                 onLongPress={() =>
                   Alert.alert(item.name, undefined, [
                     ...(bottomTab === "myRooms"
@@ -4679,11 +4712,10 @@ function RoomRow({
             {room.name}
           </Text>
           {pinned && (
-            <Ionicons
-              name="pin-sharp"
-              size={14}
-              color={colors.textMuted}
-              style={s.pinnedIcon}
+            <Image
+              source={PIN_ICON_SOURCE}
+              style={s.pinnedIconImage}
+              tintColor={colors.textMuted}
             />
           )}
         </View>
@@ -5364,6 +5396,7 @@ function ChatRoom({
   onAdminReportUser,
   onEditRoom,
   initialPanel = null,
+  initialFocusUnread = false,
   points,
   promotionAvailableAt,
   topSpaceExpiresAt,
@@ -5381,6 +5414,7 @@ function ChatRoom({
   onAdminReportUser: (id: string, label: string) => void;
   onEditRoom: () => void;
   initialPanel?: ChatPanel;
+  initialFocusUnread?: boolean;
   points: number;
   promotionAvailableAt: number;
   topSpaceExpiresAt?: number;
@@ -5435,6 +5469,9 @@ function ChatRoom({
   const [secretDraft, setSecretDraft] = useState("");
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
   const [pointTarget, setPointTarget] = useState<string | null>(null);
+  const [pointTargetMember, setPointTargetMember] = useState<RoomMember | null>(
+    null,
+  );
   const [pointDraft, setPointDraft] = useState("");
   const [profileMember, setProfileMember] = useState<RoomMember | null>(null);
   const [topSpaceOpen, setTopSpaceOpen] = useState(false);
@@ -5462,6 +5499,8 @@ function ChatRoom({
   const initialScrollDone = useRef(false);
   const nearBottomRef = useRef(true);
   const lastObservedLatestMessageIdRef = useRef<string | null>(null);
+  const latestReadableMessageIdRef = useRef<string | null>(null);
+  const unreadFocusDoneRef = useRef(false);
   const prependHeightRef = useRef<number | null>(null);
   const messagePositions = useRef<Record<string, number>>({});
   const [chatReady, setChatReady] = useState(false);
@@ -5730,6 +5769,9 @@ function ChatRoom({
     setChatReady(false);
     setInitialMessagesLoaded(false);
     setHasOlderMessages(true);
+    setNewMessagePreview(null);
+    setShowScrollToBottom(false);
+    setMessages([]);
     if (!isSupabaseConfigured || !isUuid(room.id)) {
       if (room.id !== DEMO_ROOM_ID)
         setMessages(LOCAL_PENDING_MESSAGES.get(room.id) ?? []);
@@ -6097,9 +6139,9 @@ function ChatRoom({
     scrollToLatest();
     void submitTextMessage(localId, text, reply);
   };
-  const sendHeart = async () => {
+  const sendHeart = async (targetNameOverride?: string) => {
     const createdAt = new Date().toISOString();
-    const targetName = selectedMember ?? "느린준";
+    const targetName = targetNameOverride ?? selectedMember ?? "느린준";
     const body = `${myDisplayName}님이 ${targetName}님에게 하트를 보냈습니다.`;
     try {
       let id = `heart-${Date.now()}`;
@@ -6172,7 +6214,9 @@ function ChatRoom({
     }
     const createdAt = new Date().toISOString();
     const body = `${myDisplayName}님이 ${pointTarget}님에게 ${amount.toLocaleString()}p를 보냈습니다.`;
-    const target = roomMembers.find((member) => member.name === pointTarget);
+    const target =
+      pointTargetMember ??
+      roomMembers.find((member) => member.name === pointTarget);
     try {
       let id = `point-${Date.now()}`;
       if (isSupabaseConfigured && isUuid(room.id)) {
@@ -6195,6 +6239,7 @@ function ChatRoom({
         { id, kind: "system", event: "point", text: body, createdAt },
       ]);
       setPointTarget(null);
+      setPointTargetMember(null);
       setPointDraft("");
       scrollToLatest();
     } catch (error) {
@@ -6616,12 +6661,29 @@ function ChatRoom({
     if (item.kind !== "secret") return true;
     return item.mine || item.recipient === myDisplayName || isSuperAdmin;
   });
+  useEffect(() => {
+    const recentAvatarUris = [...visibleMessages]
+      .reverse()
+      .filter((item) => item.kind !== "system" && Boolean(item.avatarUri))
+      .map((item) => ("avatarUri" in item ? item.avatarUri : undefined))
+      .filter((uri): uri is string => Boolean(uri))
+      .slice(0, 5);
+    const memberAvatarUris = roomMembers
+      .map((member) => member.avatarUri)
+      .filter((uri): uri is string => Boolean(uri));
+    [...new Set([...recentAvatarUris, ...memberAvatarUris])]
+      .slice(0, 24)
+      .forEach((uri) => ExpoImage.prefetch(uri).catch(() => undefined));
+  }, [roomMembers, visibleMessages.length]);
   const usesServerReadReceipt = Boolean(
     isSupabaseConfigured && isUuid(room.id),
   );
   const readStorageKey = `mute:last-read:${currentUserId ?? "local"}:${room.id}`;
   const latestReadableMessageId =
     [...visibleMessages].reverse().find((item) => isUuid(item.id))?.id ?? null;
+  useEffect(() => {
+    latestReadableMessageIdRef.current = latestReadableMessageId;
+  }, [latestReadableMessageId]);
   const unreadMarkerId = useMemo(() => {
     if (!readBoundaryLoaded || !readBoundaryId) return null;
     const boundaryIndex = visibleMessages.findIndex(
@@ -6659,23 +6721,29 @@ function ChatRoom({
     };
   }, [readStorageKey, room.id, usesServerReadReceipt]);
   useEffect(() => {
-    if (!readBoundaryLoaded || !latestReadableMessageId) return;
-    const timer = setTimeout(() => {
+    return () => {
+      const latest = latestReadableMessageIdRef.current;
+      if (!latest) return;
       (usesServerReadReceipt
-        ? markRoomRead(room.id, latestReadableMessageId)
-        : AsyncStorage.setItem(readStorageKey, latestReadableMessageId)
-      )
-        .then(() => setReadBoundaryId(null))
-        .catch(() => undefined);
-    }, 1200);
-    return () => clearTimeout(timer);
-  }, [
-    latestReadableMessageId,
-    readBoundaryLoaded,
-    readStorageKey,
-    room.id,
-    usesServerReadReceipt,
-  ]);
+        ? markRoomRead(room.id, latest)
+        : AsyncStorage.setItem(readStorageKey, latest)
+      ).catch(() => undefined);
+    };
+  }, [readStorageKey, room.id, usesServerReadReceipt]);
+  useEffect(() => {
+    unreadFocusDoneRef.current = false;
+  }, [room.id, initialFocusUnread]);
+  useEffect(() => {
+    if (
+      !initialFocusUnread ||
+      unreadFocusDoneRef.current ||
+      !chatReady ||
+      !unreadMarkerId
+    )
+      return;
+    unreadFocusDoneRef.current = true;
+    setTimeout(() => scrollToMessagePosition(unreadMarkerId), 120);
+  }, [chatReady, initialFocusUnread, unreadMarkerId]);
   useEffect(() => {
     const latest = visibleMessages[visibleMessages.length - 1];
     const latestId = latest?.id ?? null;
@@ -6772,6 +6840,18 @@ function ChatRoom({
             ),
           );
         }}
+        onHeart={() => void sendHeart(profileMember.name)}
+        onPoint={() => {
+          setPointTarget(profileMember.name);
+          setPointTargetMember(profileMember);
+          setPointDraft("");
+          setProfileMember(null);
+        }}
+        onSecret={() => {
+          setSelectedMember(profileMember.name);
+          setTool("secret");
+          setProfileMember(null);
+        }}
       />
     );
   if (customColorTarget)
@@ -6832,7 +6912,6 @@ function ChatRoom({
   };
   const closePanel = () => {
     rememberScrollPosition();
-    initialScrollDone.current = false;
     setStoryPanelInitialId(null);
     setStoryPanelInitialWrite(false);
     setPanel(null);
@@ -6923,6 +7002,10 @@ function ChatRoom({
     (item) => item.name === selectedMember,
   );
   const selectedMemberMuted=Boolean(selectedRoomMember?.mutedUntil&&Date.parse(selectedRoomMember.mutedUntil)>Date.now());
+  const chatAccentColor = (color?: string) =>
+    color && color.toLowerCase() !== colors.text.toLowerCase()
+      ? color
+      : colors.mint700;
   const muteSelectedMember=(seconds:number,label:string)=>{
     if(!selectedRoomMember?.userId)return;
     setRoomMemberMute(room.id,selectedRoomMember.userId,seconds).then((until)=>{setRoomMembers((items)=>items.map((item)=>item.userId===selectedRoomMember.userId?{...item,mutedUntil:until}:item));setSelectedMember(null);setToast(`${selectedRoomMember.name}님을 ${label} 동안 채팅 금지했습니다.`);setTimeout(()=>setToast(""),1800);}).catch((error)=>Alert.alert("채팅 금지 실패",serverErrorMessage(error)));
@@ -7023,7 +7106,9 @@ function ChatRoom({
           }}
           contentContainerStyle={s.messages}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           onTouchStart={() => {
+            Keyboard.dismiss();
             if (tool) setTool(null);
             if (selectedMember) setSelectedMember(null);
           }}
@@ -7130,7 +7215,10 @@ function ChatRoom({
                     {!item.mine && (
                       <Pressable
                         accessibilityLabel={`${item.name} 프로필 메뉴`}
-                        onPress={() => setSelectedMember(item.name)}
+                        onPress={() => {
+                          Keyboard.dismiss();
+                          setSelectedMember(item.name);
+                        }}
                       >
                         <Avatar uri={item.avatarUri} size={46} />
                       </Pressable>
@@ -7182,8 +7270,9 @@ function ChatRoom({
                               name="albums-outline"
                               size={16}
                               color={
-                                item.textColor ??
-                                (item.mine ? textColor : colors.mint700)
+                                chatAccentColor(
+                                  item.textColor ?? (item.mine ? textColor : undefined),
+                                )
                               }
                             />
                             <Text
@@ -7191,8 +7280,9 @@ function ChatRoom({
                                 s.storyChatPreviewLabel,
                                 {
                                   color:
-                                    item.textColor ??
-                                    (item.mine ? textColor : colors.mint700),
+                                    chatAccentColor(
+                                      item.textColor ?? (item.mine ? textColor : undefined),
+                                    ),
                                 },
                               ]}
                             >
@@ -7223,7 +7313,10 @@ function ChatRoom({
                     {item.mine && (
                       <Pressable
                         accessibilityLabel={`${item.name} 프로필 메뉴`}
-                        onPress={() => setSelectedMember(item.name)}
+                        onPress={() => {
+                          Keyboard.dismiss();
+                          setSelectedMember(item.name);
+                        }}
                       >
                         <Avatar uri={item.avatarUri} size={46} />
                       </Pressable>
@@ -7291,7 +7384,10 @@ function ChatRoom({
                     !continuous ? (
                       <Pressable
                         accessibilityLabel={`${item.name} 프로필 메뉴`}
-                        onPress={() => setSelectedMember(item.name)}
+                        onPress={() => {
+                          Keyboard.dismiss();
+                          setSelectedMember(item.name);
+                        }}
                       >
                         <Avatar uri={item.avatarUri} size={46} />
                       </Pressable>
@@ -7349,8 +7445,9 @@ function ChatRoom({
                               s.replyQuote,
                               {
                                 borderLeftColor:
-                                  item.textColor ??
-                                  (item.mine ? textColor : colors.mint600),
+                                  chatAccentColor(
+                                    item.textColor ?? (item.mine ? textColor : undefined),
+                                  ),
                               },
                             ]}
                           >
@@ -7359,8 +7456,9 @@ function ChatRoom({
                                 s.replyQuoteName,
                                 {
                                   color:
-                                    item.textColor ??
-                                    (item.mine ? textColor : colors.mint700),
+                                    chatAccentColor(
+                                      item.textColor ?? (item.mine ? textColor : undefined),
+                                    ),
                                 },
                               ]}
                             >
@@ -7476,7 +7574,10 @@ function ChatRoom({
                     !continuous ? (
                       <Pressable
                         accessibilityLabel={`${item.name} 프로필 메뉴`}
-                        onPress={() => setSelectedMember(item.name)}
+                        onPress={() => {
+                          Keyboard.dismiss();
+                          setSelectedMember(item.name);
+                        }}
                       >
                         <Avatar uri={item.avatarUri} size={46} />
                       </Pressable>
@@ -7673,6 +7774,7 @@ function ChatRoom({
         }}
         onPoint={() => {
           setPointTarget(selectedMember);
+          setPointTargetMember(selectedRoomMember ?? null);
           setPointDraft("");
           setSelectedMember(null);
         }}
@@ -7722,6 +7824,7 @@ function ChatRoom({
             accessibilityLabel="포인트 보내기 닫기"
             onPress={() => {
               setPointTarget(null);
+              setPointTargetMember(null);
               setPointDraft("");
             }}
             style={s.sheetDim}
@@ -7758,6 +7861,7 @@ function ChatRoom({
                 <Pressable
                   onPress={() => {
                     setPointTarget(null);
+                    setPointTargetMember(null);
                     setPointDraft("");
                   }}
                   style={s.pointSendCancel}
@@ -7971,7 +8075,20 @@ function ChatRoom({
             "방을 정말 삭제하시겠습니까? 모든 내역이 삭제됩니다.",
             [
               { text: "취소", style: "cancel" },
-              { text: "삭제하기", style: "destructive" },
+              {
+                text: "삭제하기",
+                style: "destructive",
+                onPress: async () => {
+                  try {
+                    await deleteRoom(room.id);
+                    setDrawerOpen(false);
+                    setToast("방이 삭제되었습니다.");
+                    setTimeout(onBack, 350);
+                  } catch (error) {
+                    Alert.alert("방 삭제 실패", serverErrorMessage(error));
+                  }
+                },
+              },
             ],
           )
         }
@@ -9011,6 +9128,7 @@ function StoryEditor({
     >
       <ScrollView
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
         automaticallyAdjustKeyboardInsets
         contentContainerStyle={s.storyEditor}
       >
@@ -9698,6 +9816,9 @@ function MemberProfile({
   editable = false,
   onBack,
   onSaved,
+  onHeart,
+  onPoint,
+  onSecret,
 }: {
   member: RoomMember;
   room: Room;
@@ -9705,6 +9826,9 @@ function MemberProfile({
   editable?: boolean;
   onBack: () => void;
   onSaved?: (member: RoomMember) => void;
+  onHeart?: () => void;
+  onPoint?: () => void;
+  onSecret?: () => void;
 }) {
   const [photoOpen, setPhotoOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -10070,6 +10194,18 @@ function MemberProfile({
                 <Text style={s.memberProfileLabel}>자기 소개</Text>
                 <Text style={s.memberProfileIntro}>{member.intro}</Text>
               </View>
+              <View style={s.memberProfileActions}>
+                <ProfileQuickAction icon="heart-outline" label="하트" onPress={onHeart} />
+                <ProfileQuickAction icon="cash-outline" label="포인트" onPress={onPoint} />
+                <ProfileQuickAction icon="mail-outline" label="쪽지" onPress={onSecret} />
+                {canShowMenu && (
+                  <ProfileQuickAction
+                    icon="ban-outline"
+                    label={isMuted ? "금지 해제" : "채팅 금지"}
+                    onPress={() => selectAction(isMuted ? "채팅 금지 해제" : "채팅 금지")}
+                  />
+                )}
+              </View>
             </>
           )}
         </ScrollView>
@@ -10093,6 +10229,27 @@ function MemberProfile({
         </View>
       )}
     </SafeAreaView>
+  );
+}
+
+function ProfileQuickAction({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: IconName;
+  label: string;
+  onPress?: () => void;
+}) {
+  return (
+    <Pressable
+      disabled={!onPress}
+      onPress={onPress}
+      style={[s.profileQuickAction, !onPress && s.disabled]}
+    >
+      <Ionicons name={icon} size={18} color={colors.mint700} />
+      <Text style={s.profileQuickActionText}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -10655,15 +10812,17 @@ function PointLogScreen({
           body={error || "출석체크, 광고 보상, 구매 내역이 이곳에 표시됩니다."}
         />
       ) : (
-        <FlatList
-          data={rows}
-          keyExtractor={(item) => item.key}
+        <ScrollView
           contentInsetAdjustmentBehavior="never"
-          renderItem={({ item }) =>
+          contentContainerStyle={s.pointLogScroll}
+        >
+          {rows.map((item) =>
             item.kind === "date" ? (
-              <Text style={s.pointLogDate}>{item.label}</Text>
+              <Text key={item.key} style={s.pointLogDate}>
+                {item.label}
+              </Text>
             ) : (
-              <View style={s.pointLogRow}>
+              <View key={item.key} style={s.pointLogRow}>
                 <Text style={s.pointLogTime}>{item.time}</Text>
                 <Text numberOfLines={2} style={s.pointLogTitle}>
                   {item.title}
@@ -10684,9 +10843,9 @@ function PointLogScreen({
                   )
                 </Text>
               </View>
-            )
-          }
-        />
+            ),
+          )}
+        </ScrollView>
       )}
     </SafeAreaView>
   );
@@ -11005,7 +11164,9 @@ function Profile({
       Alert.alert("열기 실패", serverErrorMessage(error)),
     );
   };
-  const remaining = Math.max(0, attendanceAvailableAt - now);
+  const rawAttendanceRemaining = Math.max(0, attendanceAvailableAt - now);
+  const attendanceReady = rawAttendanceRemaining <= 500;
+  const remaining = attendanceReady ? 0 : rawAttendanceRemaining;
   const minutes = Math.floor(remaining / 60000);
   const seconds = Math.floor((remaining % 60000) / 1000);
   const countdown = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
@@ -11100,17 +11261,17 @@ function Profile({
         </View>
         <View style={s.rewardSection}>
           <Pressable
-            disabled={remaining > 0 || Boolean(rewardLoading)}
+            disabled={!attendanceReady || Boolean(rewardLoading)}
             onPress={attendance}
             style={[
               s.rewardButton,
-              (remaining > 0 || Boolean(rewardLoading)) &&
+              (!attendanceReady || Boolean(rewardLoading)) &&
                 s.rewardButtonDisabled,
             ]}
           >
             <LinearGradient
               colors={
-                remaining > 0 || rewardLoading
+                !attendanceReady || rewardLoading
                   ? ["#C9D8D5", "#BFCAC7"]
                   : ["#82B9C1", "#5DBB8C"]
               }
@@ -11119,7 +11280,7 @@ function Profile({
               style={s.rewardGradient}
             >
               <Text style={s.rewardTitle}>
-                {remaining > 0
+                {!attendanceReady
                   ? `${countdown} 후 출석 체크`
                   : rewardLoading === "attendance"
                     ? "광고 로드 중"
@@ -14179,6 +14340,7 @@ function ChatDrawer({
   const [notificationSaving, setNotificationSaving] = useState(false);
   const requestClose = () => {
     if (Date.now() - openedAtRef.current < 180) return;
+    Keyboard.dismiss();
     onClose();
   };
   useEffect(() => {
@@ -14274,7 +14436,10 @@ function ChatDrawer({
         >
           {!readOnly && (
             <Pressable
-              onPress={onProfileEdit}
+              onPress={() => {
+                Keyboard.dismiss();
+                onProfileEdit();
+              }}
               style={[s.drawerProfile, s.drawerProfileUnified]}
             >
               <View style={s.drawerAvatar}>
@@ -17948,6 +18113,7 @@ const s = StyleSheet.create({
     backgroundColor: "#FFF",
   },
   pointLogPage: { flex: 1, backgroundColor: "#FFF" },
+  pointLogScroll: { paddingBottom: 28 },
   pointLogDate: {
     color: colors.textSubtle,
     fontSize: 15,
@@ -18339,6 +18505,28 @@ const s = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
   },
+  memberProfileActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 14,
+  },
+  profileQuickAction: {
+    minWidth: 74,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: "#F7FAF8",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+  },
+  profileQuickActionText: {
+    color: colors.textSubtle,
+    fontSize: 10,
+    fontWeight: "600",
+  },
   chatInitialLoader: {
     position: "absolute",
     top: 0,
@@ -18634,7 +18822,12 @@ const s = StyleSheet.create({
     gap: 12,
     backgroundColor: "#FFF",
   },
-  pinnedIcon: { marginHorizontal: 5 },
+  pinnedIconImage: {
+    width: 14,
+    height: 14,
+    marginHorizontal: 5,
+    transform: [{ rotate: "-45deg" }],
+  },
   notificationBadgeDot: {
     minWidth: 9,
     width: 9,

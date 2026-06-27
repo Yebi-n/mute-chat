@@ -53,11 +53,16 @@ export async function createStoryWithBlocks(input: {
   title: string;
   blocks: StoryBlockInput[];
 }) {
+  const blocks = input.blocks.filter((block) =>
+    block.type === 'text'
+      ? block.text.trim().length > 0
+      : Boolean(block.uploadId || block.storagePath),
+  );
   const { data, error } = await requireClient().rpc('create_story_v2', {
     p_room_id: input.roomId,
     p_visibility: input.visibility,
     p_title: input.title,
-    p_blocks: input.blocks,
+    p_blocks: blocks,
   });
   if (error) throw error;
   return data as string;
@@ -73,11 +78,16 @@ export async function addStoryComment(storyId: string, body: string) {
 }
 
 export async function updateStoryContent(storyId: string, title: string, blocks: StoryBlockInput[], visibility?: 'room' | 'public') {
+  const normalizedBlocks = blocks.filter((block) =>
+    block.type === 'text'
+      ? block.text.trim().length > 0
+      : Boolean(block.uploadId || block.storagePath),
+  );
   const { error } = await requireClient().rpc('update_story_content_v2', {
     p_story_id: storyId,
     p_visibility: visibility ?? null,
     p_title: title,
-    p_blocks: blocks,
+    p_blocks: normalizedBlocks,
   });
   if (error) throw error;
 }
@@ -205,4 +215,3 @@ export async function toggleStoryLike(storyId: string) {
   if (error) throw error;
   return data as { liked: boolean; heartCount: number };
 }
-

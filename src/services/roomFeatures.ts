@@ -114,6 +114,14 @@ export async function leaveRoom(roomId:string) {
   if (error) throw error;
 }
 
+export async function deleteRoom(roomId: string) {
+  const { error } = await requireClient().rpc('delete_room_as_owner', {
+    p_room_id: roomId,
+  });
+  if (error) throw error;
+  dispatchPendingPushes().catch(() => undefined);
+}
+
 export async function getRoomNotificationsEnabled(roomId:string) {
   const {data,error}=await requireClient().rpc('get_room_notifications_enabled',{p_room_id:roomId});
   if(error)throw error;
