@@ -5,7 +5,7 @@
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "Cache-Control", "value": "no-store" },
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" },
         { "key": "Content-Language", "value": "ko" },
         { "key": "X-Content-Type-Options", "value": "nosniff" }
       ]

@@ -3,16 +3,16 @@ import { Platform, ViewStyle } from 'react-native';
 export const colors = {
   background: '#FFFFFF',
   surface: '#FFFFFF',
-  surfaceAlt: '#F3F5F4',
+  surfaceAlt: '#F3F3F3',
   white: '#FFFFFF',
-  border: '#E7EAE8',
+  border: '#E7E7E7',
   text: '#1C1C1C',
-  textSubtle: '#555F5A',
-  textMuted: '#8E9692',
-  gray050: '#F7F8F7',
-  gray100: '#F0F2F1',
-  gray200: '#D9DEDB',
-  gray300: '#BAC1BD',
+  textSubtle: '#5D5D5D',
+  textMuted: '#8E8E8E',
+  gray050: '#F7F7F7',
+  gray100: '#F1F1F1',
+  gray200: '#DADADA',
+  gray300: '#BDBDBD',
   mint050: '#EFF9F5',
   mint300: '#9ED8BF',
   mint600: '#5DBB8C',
@@ -52,27 +52,27 @@ const shadow = (ios: ViewStyle, elevation: number): ViewStyle =>
 
 export const shadows = {
   tiny: shadow(
-    { shadowColor: '#365440', shadowOpacity: 0.07, shadowRadius: 5, shadowOffset: { width: 0, height: 2 } },
+    { shadowColor: '#5F6461', shadowOpacity: 0.07, shadowRadius: 5, shadowOffset: { width: 0, height: 2 } },
     1,
   ),
   soft: shadow(
-    { shadowColor: '#365440', shadowOpacity: 0.09, shadowRadius: 12, shadowOffset: { width: 0, height: 5 } },
+    { shadowColor: '#5F6461', shadowOpacity: 0.09, shadowRadius: 12, shadowOffset: { width: 0, height: 5 } },
     3,
   ),
   card: shadow(
-    { shadowColor: '#365440', shadowOpacity: 0.08, shadowRadius: 16, shadowOffset: { width: 0, height: 7 } },
+    { shadowColor: '#5F6461', shadowOpacity: 0.08, shadowRadius: 16, shadowOffset: { width: 0, height: 7 } },
     3,
   ),
   floating: shadow(
-    { shadowColor: '#235D39', shadowOpacity: 0.24, shadowRadius: 14, shadowOffset: { width: 0, height: 7 } },
+    { shadowColor: '#4B4F4D', shadowOpacity: 0.24, shadowRadius: 14, shadowOffset: { width: 0, height: 7 } },
     7,
   ),
   nav: shadow(
-    { shadowColor: '#1F3A2C', shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: -4 } },
+    { shadowColor: '#4C4C4C', shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: -4 } },
     6,
   ),
   insetLike: shadow(
-    { shadowColor: '#365440', shadowOpacity: 0.06, shadowRadius: 9, shadowOffset: { width: 0, height: 3 } },
+    { shadowColor: '#5F6461', shadowOpacity: 0.06, shadowRadius: 9, shadowOffset: { width: 0, height: 3 } },
     1,
   ),
 } as const;

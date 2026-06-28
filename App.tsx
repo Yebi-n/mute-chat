@@ -1,4 +1,4 @@
-﻿import { Ionicons } from "@expo/vector-icons";
+import { Ionicons as RNIonicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   NavigationContainer,
@@ -14,35 +14,45 @@ import { LinearGradient as ExpoLinearGradient } from "expo-linear-gradient";
 import * as Notifications from "expo-notifications";
 import * as ScreenCapture from "expo-screen-capture";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentProps } from "react";
 import ExternalColorPicker, {
   BrightnessSlider,
   InputWidget,
   Panel3,
 } from "reanimated-color-picker";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
 import {
-  ActivityIndicator,
+  Gesture,
+  GestureDetector,
+  GestureHandlerRootView,
+} from "react-native-gesture-handler";
+import Reanimated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  ActivityIndicator as RNActivityIndicator,
   Alert,
   Animated,
   AppState,
   FlatList,
   Image,
-  KeyboardAvoidingView,
+  KeyboardAvoidingView as RNKeyboardAvoidingView,
   Linking,
   Platform,
   Pressable as RNPressable,
   RefreshControl,
-  SafeAreaView,
-  ScrollView,
+  SafeAreaView as RNSafeAreaView,
+  ScrollView as RNScrollView,
   Share,
   StyleSheet,
-  Switch,
-  Text,
+  Switch as RNSwitch,
+  Text as RNText,
   TextProps,
-  TextInput,
-  View,
+  TextInput as RNTextInput,
+  View as RNView,
   PanResponder,
   Keyboard,
   Dimensions,
@@ -428,12 +438,17 @@ type AppPressableProps = React.ComponentProps<typeof RNPressable> & {
 };
 
 function Pressable(props: AppPressableProps) {
-  const { allowRapidPress, ...pressableProps } = props;
+  const { allowRapidPress, style, ...pressableProps } = props;
   const lastPressAt = useRef(0);
   const onPress = props.onPress;
   return (
     <RNPressable
       {...pressableProps}
+      style={
+        typeof style === "function"
+          ? (state) => themedStyle(style(state), "view")
+          : themedStyle(style, "view")
+      }
       onPress={
         onPress
           ? (event) => {
@@ -466,7 +481,13 @@ function StatusBar(_props: {
   style?: "auto" | "inverted" | "light" | "dark";
   hidden?: boolean;
 }) {
-  return <ExpoStatusBar style="dark" hidden={false} />;
+  const theme = useAppTheme();
+  return (
+    <ExpoStatusBar
+      style={theme.id === "dark" ? "light" : "dark"}
+      hidden={false}
+    />
+  );
 }
 
 const LINK_PATTERN = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
@@ -481,11 +502,11 @@ type AppTheme = {
 const APP_THEMES: AppTheme[] = [
   { id: "mint", name: "기본 테마", gradient: ["#82B9C1", "#5DBB8C"], accent: "#4FAE7D" },
   { id: "white", name: "화이트", productId: STORE_PRODUCTS.themeWhite, gradient: ["#FFFFFF", "#FFFFFF"], accent: "#1C1C1C" },
-  { id: "ocean", name: "오션", productId: STORE_PRODUCTS.themeOcean, gradient: ["#83B9D8", "#527FBF"], accent: "#527FBF" },
-  { id: "lavender", name: "라벤더", productId: STORE_PRODUCTS.themeLavender, gradient: ["#B9A7D9", "#8D75BC"], accent: "#8D75BC" },
-  { id: "sunset", name: "선셋", productId: STORE_PRODUCTS.themeSunset, gradient: ["#E7A48E", "#D87587"], accent: "#D87587" },
-  { id: "mono", name: "모노", productId: STORE_PRODUCTS.themeMono, gradient: ["#777D82", "#353A3E"], accent: "#535A60" },
-  { id: "dark", name: "다크", productId: STORE_PRODUCTS.themeDark, gradient: ["#1C1C1C", "#000000"], accent: "#1C1C1C" },
+  { id: "ocean", name: "오션", productId: STORE_PRODUCTS.themeOcean, gradient: ["#82B4D3", "#6898C9"], accent: "#5F91C5" },
+  { id: "lavender", name: "라벤더", productId: STORE_PRODUCTS.themeLavender, gradient: ["#B3A1D1", "#9C87C4"], accent: "#927BC0" },
+  { id: "sunset", name: "선셋", productId: STORE_PRODUCTS.themeSunset, gradient: ["#E4A095", "#DB8592"], accent: "#D77E8C" },
+  { id: "mono", name: "모노", productId: STORE_PRODUCTS.themeMono, gradient: ["#747A7E", "#585D61"], accent: "#62686C" },
+  { id: "dark", name: "다크", productId: STORE_PRODUCTS.themeDark, gradient: ["#222222", "#222222"], accent: "#D2D2D2" },
 ];
 let activeAppTheme = APP_THEMES[0];
 const appThemeListeners = new Set<(theme: AppTheme) => void>();
@@ -502,7 +523,7 @@ function selectAppTheme(theme: AppTheme) {
   appThemeListeners.forEach((listener) => listener(theme));
 }
 function themeForeground(theme: AppTheme) {
-  return theme.id === "white" ? "#1C1C1C" : "#FFF";
+  return theme.id === "white" ? "#222222" : "#FFF";
 }
 function useAppTheme() {
   const [theme, setTheme] = useState(activeAppTheme);
@@ -514,16 +535,223 @@ function useAppTheme() {
   }, []);
   return theme;
 }
+
+const ACCENT_COLORS = new Set([
+  "#82B9C1",
+  "#5DBB8C",
+  "#4FAE7D",
+  "#3F9A70",
+  "#2E7654",
+  "#9ED8BF",
+]);
+const SOFT_ACCENT_COLORS = new Set(["#EFF9F5", "#DDF2E7", "#F4FBF7"]);
+const GREEN_SHADOW_COLORS = new Set(["#365440", "#235D39", "#1F3A2C"]);
+const TRANSLUCENT_ACCENT_COLORS = new Map([
+  ["RGBA(93,187,140,.12)", "1F"],
+  ["RGBA(93,187,140,.18)", "2E"],
+  ["RGBA(93,187,140,.45)", "73"],
+  ["RGBA(93,187,140,.85)", "D9"],
+]);
+const GREEN_TINTED_NEUTRALS = new Map([
+  ["#E8ECEA", "#E8E8E8"],
+  ["#E9ECEA", "#E9E9E9"],
+  ["#ECEFED", "#ECECEC"],
+  ["#E7E9E8", "#E8E8E8"],
+  ["#D7DDD9", "#D9D9D9"],
+]);
+
+function normalizeHex(value: unknown) {
+  return typeof value === "string" ? value.toUpperCase() : "";
+}
+
+function themedColor(value: unknown, property: string) {
+  if (typeof value !== "string") return value;
+  const theme = activeAppTheme;
+  const normalized = normalizeHex(value);
+
+  const neutral = GREEN_TINTED_NEUTRALS.get(normalized);
+  if (neutral) return neutral;
+  if (ACCENT_COLORS.has(normalized)) return theme.accent;
+  if (SOFT_ACCENT_COLORS.has(normalized)) {
+    return theme.id === "dark" ? "#303030" : "#F3F3F3";
+  }
+  const accentAlpha = TRANSLUCENT_ACCENT_COLORS.get(normalized);
+  if (accentAlpha) return `${theme.accent}${accentAlpha}`;
+  if (property === "shadowColor" && GREEN_SHADOW_COLORS.has(normalized)) {
+    return "#6B6B6B";
+  }
+  if (
+    theme.id === "white" &&
+    property === "color" &&
+    ["#FFFFFF", "#FFF"].includes(normalized)
+  ) {
+    return "#222222";
+  }
+  if (theme.id !== "dark") return value;
+
+  if (property === "color" || property === "tintColor") {
+    if (["#1C1C1C", "#222222"].includes(normalized)) return "#F5F5F5";
+    if (["#555F5A", "#5F6864", "#5D5D5D"].includes(normalized))
+      return "#D0D0D0";
+    if (["#8E9692", "#BAC1BD", "#8E8E8E", "#BDBDBD"].includes(normalized))
+      return "#A7A7A7";
+  }
+  if (property === "backgroundColor") {
+    if (["#FFFFFF", "#FFF"].includes(normalized)) return "#222222";
+    if (
+      ["#F7F8F7", "#F7F7F7", "#F5F5F5", "#F3F5F4", "#F3F3F3", "#F0F2F1", "#F1F1F1", "#F0F1F1"].includes(
+        normalized,
+      )
+    )
+      return "#2B2B2B";
+  }
+  if (property.toLowerCase().includes("border")) {
+    if (
+      ["#E7EAE8", "#E7E7E7", "#D9DEDB", "#DADADA", "#BAC1BD", "#BDBDBD", "#FFFFFF", "#FFF"].includes(
+        normalized,
+      )
+    )
+      return "#3C3C3C";
+  }
+  return value;
+}
+
+function themedStyle(style: unknown, kind: "text" | "view") {
+  if (!style) return style as never;
+  const flat = StyleSheet.flatten(style as never) as
+    | Record<string, unknown>
+    | undefined;
+  if (!flat) return style as never;
+  const next: Record<string, unknown> = { ...flat };
+  const properties =
+    kind === "text"
+      ? ["color", "backgroundColor", "borderColor", "borderBottomColor"]
+      : [
+          "backgroundColor",
+          "borderColor",
+          "borderTopColor",
+          "borderBottomColor",
+          "borderLeftColor",
+          "borderRightColor",
+          "shadowColor",
+          "tintColor",
+        ];
+  properties.forEach((property) => {
+    if (property in next) next[property] = themedColor(next[property], property);
+  });
+  return next;
+}
+
+function View(props: React.ComponentProps<typeof RNView>) {
+  return <RNView {...props} style={themedStyle(props.style, "view")} />;
+}
+
+function SafeAreaView(props: React.ComponentProps<typeof RNSafeAreaView>) {
+  return (
+    <RNSafeAreaView {...props} style={themedStyle(props.style, "view")} />
+  );
+}
+
+function KeyboardAvoidingView(
+  props: React.ComponentProps<typeof RNKeyboardAvoidingView>,
+) {
+  return (
+    <RNKeyboardAvoidingView
+      {...props}
+      style={themedStyle(props.style, "view")}
+    />
+  );
+}
+
+const ScrollView = forwardRef<
+  React.ElementRef<typeof RNScrollView>,
+  React.ComponentProps<typeof RNScrollView>
+>((props, ref) => (
+  <RNScrollView
+    {...props}
+    ref={ref}
+    style={themedStyle(props.style, "view")}
+    contentContainerStyle={themedStyle(props.contentContainerStyle, "view")}
+  />
+));
+
+function Text(props: React.ComponentProps<typeof RNText>) {
+  return <RNText {...props} style={themedStyle(props.style, "text")} />;
+}
+
+const TextInput = forwardRef<
+  React.ElementRef<typeof RNTextInput>,
+  React.ComponentProps<typeof RNTextInput>
+>((props, ref) => (
+  <RNTextInput
+    {...props}
+    ref={ref}
+    placeholderTextColor={
+      (themedColor(
+        props.placeholderTextColor ?? colors.textMuted,
+        "color",
+      ) as React.ComponentProps<typeof RNTextInput>["placeholderTextColor"])
+    }
+    style={themedStyle(props.style, "text")}
+  />
+));
+
+function ActivityIndicator(
+  props: React.ComponentProps<typeof RNActivityIndicator>,
+) {
+  return (
+    <RNActivityIndicator
+      {...props}
+      color={
+        themedColor(
+          props.color ?? activeAppTheme.accent,
+          "color",
+        ) as string
+      }
+    />
+  );
+}
+
+function Switch(props: React.ComponentProps<typeof RNSwitch>) {
+  return (
+    <RNSwitch
+      {...props}
+      trackColor={{
+        false: props.trackColor?.false ?? colors.gray200,
+        true: activeAppTheme.accent,
+      }}
+    />
+  );
+}
+
+function ThemedIonicons(props: React.ComponentProps<typeof RNIonicons>) {
+  const color =
+    activeAppTheme.id === "white" &&
+    ["#FFFFFF", "#FFF"].includes(normalizeHex(props.color))
+      ? props.color
+      : themedColor(props.color, "color");
+  return (
+    <RNIonicons
+      {...props}
+      color={color as React.ComponentProps<typeof RNIonicons>["color"]}
+    />
+  );
+}
+const Ionicons = Object.assign(ThemedIonicons, {
+  glyphMap: RNIonicons.glyphMap,
+});
+
 function LinearGradient(props: ComponentProps<typeof ExpoLinearGradient>) {
   const theme = useAppTheme();
   const source = props.colors;
   const isPrimary = source[0] === "#82B9C1" && source[1] === "#5DBB8C";
+  const isDisabled = source[0] === "#C9D8D5" && source[1] === "#BFCAC7";
   return (
     <ExpoLinearGradient
       {...props}
-      colors={isPrimary ? theme.gradient : source}
+      colors={isPrimary ? theme.gradient : isDisabled ? ["#D8D8D8", "#C8C8C8"] : source}
       style={[
-        props.style,
+        themedStyle(props.style, "view"),
         isPrimary && theme.id === "white" ? s.primaryWhiteGradient : null,
       ]}
     />
@@ -590,7 +818,7 @@ const BUBBLE_COLOR_PRODUCTS: ColorProduct[] = [
 const TEXT_COLOR_PRODUCTS: ColorProduct[] = [
   { color: "#1C1C1C", name: "기본 블랙", price: 0 },
   { color: "#BAB3AE", name: "웜 그레이", price: 1800, productId: "mute_text_color_01" },
-  { color: "#625756", name: "코코아", price: 1800, productId: "mute_text_color_02" },
+  { color: "#B19DA1", name: "코코아", price: 1800, productId: "mute_text_color_02" },
   { color: "#AA6566", name: "로즈", price: 2500, productId: "mute_text_color_03" },
   { color: "#B28774", name: "테라", price: 2500, productId: "mute_text_color_04" },
   { color: "#DCA279", name: "피치", price: 2500, productId: "mute_text_color_05" },
@@ -1244,8 +1472,8 @@ async function prepareChatImage(asset: ChatImageAsset) {
         ? Math.max(0.45, Math.min(2.4, asset.cropFreeRatio ?? width / height))
       : requested[0] / requested[1];
   const ratio = width / height;
-  const focusX = Math.max(-1, Math.min(1, asset.cropOffset?.x ?? 0));
-  const focusY = Math.max(-1, Math.min(1, asset.cropOffset?.y ?? 0));
+  const focusX = 0;
+  const focusY = 0;
   const baseCrop =
     ratio > target
       ? {
@@ -4282,7 +4510,7 @@ function MainScreen({
               <View style={s.headerActions}>
                 <IconButton
                   name="search"
-                  color="#FFF"
+                  color={primaryForeground}
                   size={22}
                   onPress={
                     bottomTab === "stories"
@@ -4297,7 +4525,7 @@ function MainScreen({
                   <Ionicons
                     name="notifications-outline"
                     size={22}
-                    color="#FFF"
+                    color={primaryForeground}
                   />
                   {hasUnreadNotifications && <NotificationBadge dot />}
                 </Pressable>
@@ -4348,7 +4576,7 @@ function MainScreen({
             <RefreshControl
               refreshing={dataRefreshing}
               onRefresh={onRefresh}
-              tintColor={colors.mint700}
+              tintColor={activeAppTheme.accent}
             />
           }
           ListHeaderComponent={
@@ -4514,7 +4742,7 @@ function MainScreen({
           </LinearGradient>
         </Pressable>
       )}
-      {!storyDetailOpen && (
+      {!storyDetailOpen && !profileSubpageOpen && (
         <BottomNav selected={bottomTab} onSelect={setBottomTab} />
       )}
       <NotificationDrawer
@@ -5453,6 +5681,7 @@ function ChatRoom({
   onApplicationsBack?: () => void;
   onBack: () => void;
 }) {
+  const appTheme = useAppTheme();
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
     room.id === DEMO_ROOM_ID ? membersForRoom(room) : [],
   );
@@ -5479,6 +5708,10 @@ function ChatRoom({
   const [bubbleColor, setBubbleColor] = useState<string>("#F5F5F5");
   const [textColor, setTextColor] = useState<string>(colors.text);
   const [chatBackground, setChatBackground] = useState("#FFFFFF");
+  const effectiveChatBackground =
+    appTheme.id === "dark" && chatBackground === "#FFFFFF"
+      ? "#222222"
+      : chatBackground;
   const [bubbleProductId, setBubbleProductId] = useState<string | undefined>();
   const [textProductId, setTextProductId] = useState<string | undefined>();
   const [backgroundProductId, setBackgroundProductId] = useState<
@@ -5514,8 +5747,8 @@ function ChatRoom({
   const [chatSearchOpen, setChatSearchOpen] = useState(false);
   const [chatSearch, setChatSearch] = useState("");
   const [chatSearchCursor, setChatSearchCursor] = useState(0);
-  const chatScrollRef = useRef<ScrollView | null>(null);
-  const composerInputRef = useRef<TextInput | null>(null);
+  const chatScrollRef = useRef<React.ElementRef<typeof RNScrollView> | null>(null);
+  const composerInputRef = useRef<React.ElementRef<typeof RNTextInput> | null>(null);
   const mountedRef = useRef(true);
   const roomSessionRef = useRef(0);
   const scrollMetrics = useRef({
@@ -5685,7 +5918,6 @@ function ChatRoom({
   const openPanel = (nextPanel: ChatPanel) => {
     rememberScrollPosition();
     restoreScrollAfterPanelRef.current = true;
-    setChatReady(false);
     setPanel(nextPanel);
   };
   useEffect(() => {
@@ -6891,7 +7123,7 @@ function ChatRoom({
       <CustomColorScreen
         target={customColorTarget.target}
         productId={customColorTarget.productId}
-        initialColor={customColorTarget.target === "bubble" ? bubbleColor : customColorTarget.target==="text"?textColor:chatBackground}
+        initialColor={customColorTarget.target === "bubble" ? bubbleColor : customColorTarget.target==="text"?textColor:effectiveChatBackground}
         entitlements={chatEntitlements}
         onEntitlementsChange={setChatEntitlements}
         onBack={() => setCustomColorTarget(null)}
@@ -6946,6 +7178,7 @@ function ChatRoom({
     rememberScrollPosition();
     setStoryPanelInitialId(null);
     setStoryPanelInitialWrite(false);
+    setChatReady(true);
     setPanel(null);
   };
   const panelTitle =
@@ -7120,7 +7353,7 @@ function ChatRoom({
         </View>
       )}
       <KeyboardAvoidingView
-        style={[s.flex, { backgroundColor: chatBackground }]}
+        style={[s.flex, { backgroundColor: effectiveChatBackground }]}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={0}
       >
@@ -7133,7 +7366,7 @@ function ChatRoom({
         <ScrollView
           ref={chatScrollRef}
           style={{
-            backgroundColor: chatBackground,
+            backgroundColor: effectiveChatBackground,
             opacity: chatReady ? 1 : 0,
           }}
           contentContainerStyle={s.messages}
@@ -7694,7 +7927,7 @@ function ChatRoom({
                 onSendSecret={sendSecret}
                 bubbleColor={bubbleColor}
                 textColor={textColor}
-                backgroundColor={chatBackground}
+                backgroundColor={effectiveChatBackground}
                 onBubbleColor={(color,productId)=>{setBubbleColor(color);setBubbleProductId(productId);}}
                 onTextColor={(color,productId)=>{setTextColor(color);setTextProductId(productId);}}
                 onBackgroundColor={(color,productId)=>{setChatBackground(color);setBackgroundProductId(productId);}}
@@ -7731,7 +7964,10 @@ function ChatRoom({
                     Keyboard.dismiss();
                     setTool((value) => (value === "media" ? null : "media"));
                   }}
-                  style={[s.iconCircle, tool === "media" && s.iconCircleActive]}
+                  style={themedStyle(
+                    [s.iconCircle, tool === "media" && s.iconCircleActive],
+                    "view",
+                  )}
                 >
                   <Ionicons
                     name={tool === "media" ? "close" : "add"}
@@ -7750,7 +7986,10 @@ function ChatRoom({
                     Keyboard.dismiss();
                     setTool((value) => (value === "style" ? null : "style"));
                   }}
-                  style={[s.iconCircle, tool === "style" && s.iconCircleActive]}
+                  style={themedStyle(
+                    [s.iconCircle, tool === "style" && s.iconCircleActive],
+                    "view",
+                  )}
                 >
                   <Ionicons
                     name="brush-outline"
@@ -7787,7 +8026,7 @@ function ChatRoom({
                     end={{ x: 1, y: 0 }}
                     style={s.sendGradient}
                   >
-                    <Ionicons name="paper-plane" size={18} color="#FFF" />
+                    <Ionicons name="paper-plane" size={18} color={themeForeground(appTheme)} />
                   </LinearGradient>
                 </Pressable>
               </View>
@@ -8533,7 +8772,7 @@ function StoryPanel({
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => reloadStories(true)}
-            tintColor={colors.mint700}
+            tintColor={activeAppTheme.accent}
           />
         }
         contentContainerStyle={[s.panel, { paddingBottom: joined ? 150 : 100 }]}
@@ -8633,7 +8872,7 @@ function StoryPanel({
               end={{ x: 1, y: 0 }}
               style={s.fabGradient}
             >
-              <Ionicons name="create-outline" size={22} color="#FFF" />
+              <Ionicons name="create-outline" size={22} color={themeForeground(activeAppTheme)} />
             </LinearGradient>
           </Pressable>
         </>
@@ -8683,6 +8922,8 @@ function StoryDetail({
   const [comment, setComment] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  const safeAreaInsets = useSafeAreaInsets();
   const theme = useAppTheme();
   const foreground = themeForeground(theme);
   const canDelete = story.mine || canModerate;
@@ -8706,6 +8947,28 @@ function StoryDetail({
       .then((views) => onChange({ ...story, views }))
       .catch(() => undefined);
   }, [publicMode, story.id]);
+  useEffect(() => {
+    if (Platform.OS !== "ios") return;
+    const frameListener = Keyboard.addListener(
+      "keyboardWillChangeFrame",
+      (event) => {
+        const screenHeight = Dimensions.get("screen").height;
+        setKeyboardInset(
+          Math.max(
+            0,
+            screenHeight - event.endCoordinates.screenY - safeAreaInsets.bottom,
+          ),
+        );
+      },
+    );
+    const hideListener = Keyboard.addListener("keyboardWillHide", () =>
+      setKeyboardInset(0),
+    );
+    return () => {
+      frameListener.remove();
+      hideListener.remove();
+    };
+  }, [safeAreaInsets.bottom]);
   const toggleHeart = async () => {
     try {
       if (isSupabaseConfigured && isUuid(story.id)) {
@@ -8835,7 +9098,7 @@ function StoryDetail({
   return (
     <KeyboardAvoidingView
       style={s.flex}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      behavior={undefined}
       keyboardVerticalOffset={0}
     >
       <EdgeBackLayer onBack={onBack} />
@@ -8884,12 +9147,14 @@ function StoryDetail({
         </View>
       )}
       <ScrollView
+        style={s.flex}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={refreshStory}
-            tintColor={colors.mint700}
+            tintColor={activeAppTheme.accent}
           />
         }
         contentContainerStyle={s.storyDetail}
@@ -8975,7 +9240,12 @@ function StoryDetail({
         </View>
       </ScrollView>
       {joined && (
-        <View style={s.commentComposer}>
+        <View
+          style={[
+            s.commentComposer,
+            keyboardInset > 0 && { marginBottom: keyboardInset },
+          ]}
+        >
           <TextInput
             value={comment}
             onChangeText={setComment}
@@ -8996,7 +9266,7 @@ function StoryDetail({
               end={{ x: 1, y: 0 }}
               style={s.fullGradient}
             >
-              <Ionicons name="paper-plane" size={17} color="#FFF" />
+              <Ionicons name="paper-plane" size={17} color={foreground} />
             </LinearGradient>
           </Pressable>
         </View>
@@ -9450,7 +9720,7 @@ function PublicStoryFeed({
         <RefreshControl
           refreshing={refreshing}
           onRefresh={() => reloadPublicStories(true)}
-          tintColor={colors.mint700}
+          tintColor={activeAppTheme.accent}
         />
       }
       ListEmptyComponent={
@@ -10213,17 +10483,6 @@ function MemberProfile({
           >
             <Avatar uri={displayedAvatarUri} size={96} />
           </Pressable>
-          {editable && !editMode && (
-            <Pressable
-              onPress={() => setEditMode(true)}
-              style={s.profileEditShortcut}
-            >
-              <View style={s.profileEditIcon}>
-                <Ionicons name="create-outline" size={20} color={colors.mint700} />
-              </View>
-              <Text style={s.profileEditShortcutText}>프로필 편집</Text>
-            </Pressable>
-          )}
           {editable && !editMode ? (
             <>
               <View style={s.memberProfileNameLine}>
@@ -10241,6 +10500,19 @@ function MemberProfile({
                 <Text style={s.memberProfileLabel}>자기 소개</Text>
                 <Text style={s.memberProfileIntro}>{member.intro}</Text>
               </View>
+              <Pressable
+                onPress={() => setEditMode(true)}
+                style={s.profileEditShortcut}
+              >
+                <View style={s.profileEditIcon}>
+                  <Ionicons
+                    name="create-outline"
+                    size={20}
+                    color={colors.mint700}
+                  />
+                </View>
+                <Text style={s.profileEditShortcutText}>프로필 편집</Text>
+              </Pressable>
             </>
           ) : editable ? (
             <View style={s.memberProfileEditCard}>
@@ -11150,6 +11422,7 @@ function ItemShopScreen({
     Array<{ productId: string; type: string; expiresAt: string | null }>
   >([]);
   const theme = useAppTheme();
+  const darkTheme = theme.id === "dark";
   const primaryTextColor = themeForeground(theme);
   const [themeChoice, setThemeChoice] = useState(theme.id);
   const reload = async () => {
@@ -11206,10 +11479,15 @@ function ItemShopScreen({
       (!item.expiresAt || Date.parse(item.expiresAt) > Date.now()),
   );
   return (
-    <SafeAreaView style={s.safe}>
+    <SafeAreaView style={[s.safe, darkTheme && { backgroundColor: "#222222" }]}>
       <StatusBar style="dark" />
       <TopBar title="아이템샵" onBack={onBack} />
-      <ScrollView contentContainerStyle={s.itemShopPage}>
+      <ScrollView
+        contentContainerStyle={[
+          s.itemShopPage,
+          darkTheme && { backgroundColor: "#222222" },
+        ]}
+      >
         <Text style={s.itemShopSectionTitle}>앱 테마</Text>
         <View style={s.itemShopThemeList}>
           {APP_THEMES.map((item) => {
@@ -11300,7 +11578,15 @@ function ItemShopScreen({
           )}
         </Pressable>
       </ScrollView>
-      <View style={s.itemShopFooter}>
+      <View
+        style={[
+          s.itemShopFooter,
+          darkTheme && {
+            backgroundColor: "#292929",
+            borderTopColor: "#3C3C3C",
+          },
+        ]}
+      >
         <View>
           <Text style={s.itemShopFooterLabel}>보유 포인트</Text>
           <Text style={s.itemShopFooterPoints}>{points.toLocaleString()} P</Text>
@@ -11954,7 +12240,7 @@ function CreateRoom({
   const [submitting, setSubmitting] = useState(false);
   const [visibility, setVisibility] = useState<"public" | "private">("public");
   const [pin, setPin] = useState("");
-  const formScrollRef = useRef<ScrollView | null>(null);
+  const formScrollRef = useRef<React.ElementRef<typeof RNScrollView> | null>(null);
   const regionFieldY = useRef(0);
   const capacityFieldY = useRef(0);
   const setCapacity = (value: number) =>
@@ -13137,6 +13423,7 @@ function BottomNav({
   selected: BottomTab;
   onSelect: (v: BottomTab) => void;
 }) {
+  const theme = useAppTheme();
   const items: [BottomTab, IconName, IconName, string][] = [
     ["myRooms", "chatbubbles-outline", "chatbubbles", "내 채팅"],
     ["discover", "home-outline", "home", "홈"],
@@ -13150,9 +13437,15 @@ function BottomNav({
           <Ionicons
             name={selected === key ? active : icon}
             size={22}
-            color={selected === key ? colors.mint700 : colors.textMuted}
+            color={selected === key ? theme.accent : colors.textMuted}
           />
-          <Text style={[s.navText, selected === key && s.navActive]}>
+          <Text
+            style={[
+              s.navText,
+              selected === key && s.navActive,
+              selected === key && { color: theme.accent },
+            ]}
+          >
             {label}
           </Text>
         </Pressable>
@@ -13397,11 +13690,12 @@ function ChatImageEditor({
   onBack: () => void;
   onSend: (assets: ChatImageAsset[]) => void;
 }) {
+  const theme = useAppTheme();
   const [items, setItems] = useState<ChatImageAsset[]>(
     assets.map((asset) => ({
       ...asset,
       cropAspect: "original",
-      cropOffset: { x: 0, y: 0 },
+      cropOffset: { x: 1, y: 1 },
       cropScale: 1,
       cropFreeRatio: (asset.width || 4) / (asset.height || 3),
       cropRotation: 0,
@@ -13409,6 +13703,10 @@ function ChatImageEditor({
   );
   const [selected, setSelected] = useState(0);
   const cropWindowStart = useRef({ widthFactor: 1, heightFactor: 1 });
+  const cropBoxWidthFactor = useSharedValue(1);
+  const cropBoxHeightFactor = useSharedValue(1);
+  const cropStartWidthFactor = useSharedValue(1);
+  const cropStartHeightFactor = useSharedValue(1);
   useEffect(() => {
     if (!items.length) onBack();
   }, [items.length, onBack]);
@@ -13448,7 +13746,7 @@ function ChatImageEditor({
     value === "original" || value === "free" || !value
       ? (value ?? "original")
       : `${value[0]}:${value[1]}`;
-  const previewRatio = current
+  const cropRatio = current
     ? current.cropAspect === "original" ||
       current.cropAspect === "free" ||
       !current.cropAspect
@@ -13460,11 +13758,10 @@ function ChatImageEditor({
   const viewport = Dimensions.get("window");
   const maxPreviewWidth = viewport.width - 36;
   const previewWidth = maxPreviewWidth;
-  const maxPreviewHeight = Math.max(180, Math.min(420, viewport.height - 470));
-  const previewHeight = Math.min(maxPreviewHeight, previewWidth / previewRatio);
+  const previewHeight = Math.max(260, Math.min(430, viewport.height - 430));
   const previewScale = current?.cropScale ?? 1;
   const previewRotation = current?.cropRotation ?? 0;
-  const cropWindowRatio = previewRatio;
+  const cropWindowRatio = cropRatio;
   const cropMaxWidth =
     previewWidth / previewHeight > cropWindowRatio
       ? previewHeight * cropWindowRatio
@@ -13486,69 +13783,92 @@ function ChatImageEditor({
     current?.cropAspect === "free"
       ? cropMaxHeight * cropFreeHeightFactor
       : cropMaxHeight / previewScale;
-  const createCropHandleResponder = (
+  useEffect(() => {
+    cropBoxWidthFactor.value = Math.max(0.22, Math.min(1, cropFocusWidth / cropMaxWidth));
+    cropBoxHeightFactor.value = Math.max(0.22, Math.min(1, cropFocusHeight / cropMaxHeight));
+  }, [
+    cropBoxHeightFactor,
+    cropBoxWidthFactor,
+    cropFocusHeight,
+    cropFocusWidth,
+    cropMaxHeight,
+    cropMaxWidth,
+    selected,
+  ]);
+  const commitCropFactors = (widthFactor: number, heightFactor: number) => {
+    if (!current || !current.cropAspect || current.cropAspect === "original")
+      return;
+    if (current.cropAspect === "free") {
+      updateSelected({
+        cropOffset: { x: widthFactor, y: heightFactor },
+        cropFreeRatio: widthFactor / heightFactor,
+        cropScale: 1 / Math.min(widthFactor, heightFactor),
+      });
+      return;
+    }
+    const uniformFactor = Math.max(0.25, Math.min(widthFactor, heightFactor));
+    updateSelected({ cropScale: 1 / uniformFactor });
+  };
+  const createCropHandleGesture = (
     horizontal: -1 | 1,
     vertical: -1 | 1,
-  ) =>
-    PanResponder.create({
-      onStartShouldSetPanResponder: () =>
-        Boolean(current && current.cropAspect && current.cropAspect !== "original"),
-      onMoveShouldSetPanResponder: () =>
-        Boolean(current && current.cropAspect && current.cropAspect !== "original"),
-      onPanResponderGrant: () => {
-        cropWindowStart.current = {
-          widthFactor:
-            current?.cropAspect === "free"
-              ? cropFreeWidthFactor
-              : 1 / (current?.cropScale ?? 1),
-          heightFactor:
-            current?.cropAspect === "free"
-              ? cropFreeHeightFactor
-              : 1 / (current?.cropScale ?? 1),
-        };
-      },
-      onPanResponderMove: (_event, gesture) => {
-        if (!current || !current.cropAspect || current.cropAspect === "original")
-          return;
-        const widthDelta = (gesture.dx * horizontal) / cropMaxWidth;
-        const heightDelta = (gesture.dy * vertical) / cropMaxHeight;
-        if (current.cropAspect === "free") {
-          const nextWidth = Math.max(
-            0.22,
-            Math.min(1, cropWindowStart.current.widthFactor + widthDelta),
-          );
-          const nextHeight = Math.max(
-            0.22,
-            Math.min(1, cropWindowStart.current.heightFactor + heightDelta),
-          );
-          updateSelected({
-            cropOffset: { x: nextWidth, y: nextHeight },
-            cropFreeRatio: nextWidth / nextHeight,
-          });
-          return;
-        }
-        const uniformFactor = Math.max(
-          0.25,
-          Math.min(
-            1,
-            Math.min(
-              cropWindowStart.current.widthFactor + widthDelta,
-              cropWindowStart.current.heightFactor + heightDelta,
-            ),
-          ),
+  ) => Gesture.Pan()
+    .onBegin(() => {
+      cropStartWidthFactor.value = cropBoxWidthFactor.value;
+      cropStartHeightFactor.value = cropBoxHeightFactor.value;
+    })
+    .onUpdate((event) => {
+      const widthDelta = (event.translationX * horizontal) / cropMaxWidth;
+      const heightDelta = (event.translationY * vertical) / cropMaxHeight;
+      if (current?.cropAspect === "free") {
+        cropBoxWidthFactor.value = Math.max(
+          0.22,
+          Math.min(1, cropStartWidthFactor.value + widthDelta),
         );
-        updateSelected({ cropScale: 1 / uniformFactor });
-      },
+        cropBoxHeightFactor.value = Math.max(
+          0.22,
+          Math.min(1, cropStartHeightFactor.value + heightDelta),
+        );
+        return;
+      }
+      const uniformFactor = Math.max(
+        0.25,
+        Math.min(
+          1,
+          Math.min(
+            cropStartWidthFactor.value + widthDelta,
+            cropStartHeightFactor.value + heightDelta,
+          ),
+        ),
+      );
+      cropBoxWidthFactor.value = uniformFactor;
+      cropBoxHeightFactor.value = uniformFactor;
+    })
+    .onEnd(() => {
+      runOnJS(commitCropFactors)(
+        cropBoxWidthFactor.value,
+        cropBoxHeightFactor.value,
+      );
     });
   const cropHandles = useMemo(
     () => ({
-      topLeft: createCropHandleResponder(-1, -1),
-      topRight: createCropHandleResponder(1, -1),
-      bottomLeft: createCropHandleResponder(-1, 1),
-      bottomRight: createCropHandleResponder(1, 1),
+      topLeft: createCropHandleGesture(-1, -1),
+      topRight: createCropHandleGesture(1, -1),
+      bottomLeft: createCropHandleGesture(-1, 1),
+      bottomRight: createCropHandleGesture(1, 1),
     }),
-    [current, cropFreeWidthFactor, cropFreeHeightFactor, cropMaxWidth, cropMaxHeight],
+    [current?.cropAspect, cropMaxWidth, cropMaxHeight],
   );
+  const cropFocusAnimatedStyle = useAnimatedStyle(() => {
+    const width = cropMaxWidth * cropBoxWidthFactor.value;
+    const height = cropMaxHeight * cropBoxHeightFactor.value;
+    return {
+      width,
+      height,
+      left: (previewWidth - width) / 2,
+      top: (previewHeight - height) / 2,
+    };
+  });
   return (
     <SafeAreaView style={s.imageEditorScreen}>
       <StatusBar style="light" />
@@ -13571,7 +13891,7 @@ function ChatImageEditor({
           >
             <ExpoImage
               source={{ uri: current.uri }}
-              contentFit="cover"
+              contentFit="contain"
               style={[
                 s.imageEditorPreview,
                 {
@@ -13583,39 +13903,38 @@ function ChatImageEditor({
             />
             {current.cropAspect &&
               current.cropAspect !== "original" && (
-                <View
+                <Reanimated.View
                   pointerEvents="box-none"
                   style={[
                     s.imageCropFocus,
-                    {
-                      width: cropFocusWidth,
-                      height: cropFocusHeight,
-                      left: (previewWidth - cropFocusWidth) / 2,
-                      top: (previewHeight - cropFocusHeight) / 2,
-                    },
+                    cropFocusAnimatedStyle,
                   ]}
                 >
                   <View style={s.imageCropGridLineVertical} />
                   <View style={[s.imageCropGridLineVertical, { left: "66.66%" }]} />
                   <View style={s.imageCropGridLineHorizontal} />
                   <View style={[s.imageCropGridLineHorizontal, { top: "66.66%" }]} />
-                  <View
-                    {...cropHandles.topLeft.panHandlers}
-                    style={[s.imageCropResizeHandle, s.imageCropHandleTopLeft]}
-                  />
-                  <View
-                    {...cropHandles.topRight.panHandlers}
-                    style={[s.imageCropResizeHandle, s.imageCropHandleTopRight]}
-                  />
-                  <View
-                    {...cropHandles.bottomLeft.panHandlers}
-                    style={[s.imageCropResizeHandle, s.imageCropHandleBottomLeft]}
-                  />
-                  <View
-                    {...cropHandles.bottomRight.panHandlers}
-                    style={[s.imageCropResizeHandle, s.imageCropHandleBottomRight]}
-                  />
-                </View>
+                  <GestureDetector gesture={cropHandles.topLeft}>
+                    <Reanimated.View
+                      style={[s.imageCropResizeHandle, { backgroundColor: theme.accent }, s.imageCropHandleTopLeft]}
+                    />
+                  </GestureDetector>
+                  <GestureDetector gesture={cropHandles.topRight}>
+                    <Reanimated.View
+                      style={[s.imageCropResizeHandle, { backgroundColor: theme.accent }, s.imageCropHandleTopRight]}
+                    />
+                  </GestureDetector>
+                  <GestureDetector gesture={cropHandles.bottomLeft}>
+                    <Reanimated.View
+                      style={[s.imageCropResizeHandle, { backgroundColor: theme.accent }, s.imageCropHandleBottomLeft]}
+                    />
+                  </GestureDetector>
+                  <GestureDetector gesture={cropHandles.bottomRight}>
+                    <Reanimated.View
+                      style={[s.imageCropResizeHandle, { backgroundColor: theme.accent }, s.imageCropHandleBottomRight]}
+                    />
+                  </GestureDetector>
+                </Reanimated.View>
               )}
           </View>
         ) : (
@@ -13661,7 +13980,7 @@ function ChatImageEditor({
                 onPress={() =>
                   updateSelected({
                     cropAspect: ratio.value,
-                    cropOffset: { x: 0, y: 0 },
+                    cropOffset: { x: 1, y: 1 },
                     cropScale: 1,
                     cropFreeRatio:
                       ratio.value === "free"
@@ -13699,7 +14018,7 @@ function ChatImageEditor({
             onPress={() =>
               updateSelected({
                 cropAspect: current?.cropAspect === "original" ? [1, 1] : "original",
-                cropOffset: { x: 0, y: 0 },
+                cropOffset: { x: 1, y: 1 },
                 cropScale: 1,
               })
             }
@@ -13770,6 +14089,8 @@ function MuteLogo({
   variant?: "white" | "color";
   compact?: boolean;
 }) {
+  const theme = useAppTheme();
+  const darkLogoOnWhite = variant === "white" && theme.id === "white";
   return (
     <View
       accessibilityLabel="뮤트"
@@ -13782,7 +14103,11 @@ function MuteLogo({
             : require("./assets/mute-logo-color.png")
         }
         resizeMode="contain"
-        style={[s.muteLogoSymbol, compact && s.muteLogoSymbolCompact]}
+        style={[
+          s.muteLogoSymbol,
+          compact && s.muteLogoSymbolCompact,
+          darkLogoOnWhite && { tintColor: "#222222" },
+        ]}
       />
     </View>
   );
@@ -13889,6 +14214,10 @@ function ComposerPanel({
     "#EDF3F7",
     "#F8F1F4",
     "#EEEAE3",
+    "#222222",
+    "#2B2B2B",
+    "#30343A",
+    "#302A30",
   ];
   const backgroundPalette = withCustomPaletteColor(
     backgroundColors.map((color) => ({
@@ -14099,10 +14428,25 @@ function MemberActionSheet({
       >
         <View style={s.memberSheet}>
           <View style={s.sheetHandle} />
-          <Pressable onPress={onProfile} style={s.sheetProfile}>
+          <Pressable
+            onPress={onProfile}
+            style={[s.sheetProfile, selfOnly && s.sheetProfileSelf]}
+          >
             <Avatar uri={avatarUri} size={58} />
             <Text style={s.sheetName}>{member}</Text>
           </Pressable>
+          {selfOnly && !secretOpen ? (
+            <Pressable onPress={onProfile} style={s.selfProfileEditAction}>
+              <View style={s.memberActionIcon}>
+                <Ionicons
+                  name="create-outline"
+                  size={23}
+                  color={colors.mint700}
+                />
+              </View>
+              <Text style={s.memberActionText}>프로필 편집</Text>
+            </Pressable>
+          ) : null}
           {secretOpen ? (
             <View style={s.secretComposer}>
               <Text style={s.secretTitle}>
@@ -14627,11 +14971,14 @@ function ChatDrawer({
       </Pressable>
       <Animated.View
         {...swipe.panHandlers}
-        style={[
-          s.chatDrawer,
-          s.drawerNarrow,
-          { transform: [{ translateX: slide }] },
-        ]}
+        style={themedStyle(
+          [
+            s.chatDrawer,
+            s.drawerNarrow,
+            { transform: [{ translateX: slide }] },
+          ],
+          "view",
+        )}
       >
         <ScrollView
           contentContainerStyle={[s.chatDrawerMenu, s.drawerMenuUnified]}
@@ -14892,12 +15239,15 @@ function NotificationDrawer({
       </Pressable>
       <Animated.View
         {...swipe.panHandlers}
-        style={[
-          s.chatDrawer,
-          s.drawerNarrow,
-          s.notificationDrawer,
-          { transform: [{ translateX: slide }] },
-        ]}
+        style={themedStyle(
+          [
+            s.chatDrawer,
+            s.drawerNarrow,
+            s.notificationDrawer,
+            { transform: [{ translateX: slide }] },
+          ],
+          "view",
+        )}
       >
         <View style={s.drawerHead}>
           <Text style={s.drawerTitle}>알림</Text>
@@ -17317,8 +17667,21 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
+  sheetProfileSelf: {
+    flexDirection: "column",
+    justifyContent: "center",
+    gap: 10,
+  },
   sheetName: { color: colors.text, fontSize: 15, fontWeight: "800" },
   sheetIntro: { color: colors.textMuted, fontSize: 10, marginTop: 4 },
+  selfProfileEditAction: {
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingTop: 22,
+    paddingBottom: 2,
+  },
   memberActions: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -18449,7 +18812,7 @@ const s = StyleSheet.create({
     ...shadows.tiny,
   },
   itemShopThemeLogo: { width: 20, height: 20 },
-  itemShopThemeLogoDark: { tintColor: "#1C1C1C" },
+  itemShopThemeLogoDark: { tintColor: "#222222" },
   itemShopThemeCopy: { flex: 1, minWidth: 0 },
   itemShopRadio: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: colors.gray300, alignItems: "center", justifyContent: "center" },
   itemShopRadioDot: { width: 12, height: 12, borderRadius: 6 },
@@ -18699,7 +19062,7 @@ const s = StyleSheet.create({
     ...shadows.tiny,
   },
   profileEditShortcut: {
-    marginTop: 12,
+    marginTop: 24,
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
@@ -18862,7 +19225,7 @@ const s = StyleSheet.create({
     borderRadius: 15,
     borderWidth: 2,
     borderColor: "#FFF",
-    backgroundColor: "rgba(93,187,140,.85)",
+    backgroundColor: "#8A8A8A",
   },
   imageCropHandleTopLeft: { left: -15, top: -15 },
   imageCropHandleTopRight: { right: -15, top: -15 },
@@ -19049,7 +19412,7 @@ const s = StyleSheet.create({
     width: 11,
     height: 11,
     marginHorizontal: 4,
-    transform: [{ rotate: "18deg" }],
+    transform: [{ rotate: "-20deg" }],
   },
   notificationBadgeDot: {
     minWidth: 9,

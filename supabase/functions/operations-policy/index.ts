@@ -27,6 +27,7 @@ Deno.serve((request) => {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>뮤트 운영정책</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.portone.io/v2/browser-sdk.js"></script>
     <style>
       * { box-sizing: border-box; }
       body {
@@ -125,9 +126,10 @@ Deno.serve((request) => {
 
     <script>
       const supabaseClient = window.supabase.createClient(${JSON.stringify(supabaseUrl)}, ${JSON.stringify(supabaseAnonKey)}, {
-        auth: { persistSession: false, autoRefreshToken: false }
+        auth: { persistSession: true, autoRefreshToken: true }
       });
       const verifiedParam = ${JSON.stringify(verified)};
+      const urlParams = new URLSearchParams(location.search);
       const loginCard = document.getElementById('loginCard');
       const adultCard = document.getElementById('adultCard');
       const loginButton = document.getElementById('loginButton');
@@ -140,6 +142,7 @@ Deno.serve((request) => {
 
       function normalizePhone(value) {
         const digits = String(value || '').replace(/\\D/g, '');
+        if (!digits) return '';
         if (digits.startsWith('82')) return '+' + digits;
         if (digits.startsWith('0')) return '+82' + digits.slice(1);
         return '+82' + digits;
@@ -159,6 +162,8 @@ Deno.serve((request) => {
       }
       async function refreshStatus() {
         clearError(adultError);
+        adultStatus.textContent = '확인 중';
+        adultDescription.textContent = '';
         const { data, error } = await supabaseClient.rpc('get_my_verification_status');
         if (error) {
           showError(adultError, error.message || '인증 상태를 불러오지 못했습니다.');
@@ -176,9 +181,11 @@ Deno.serve((request) => {
       async function login() {
         clearError(loginError);
         loginButton.disabled = true;
+        loginButton.textContent = '로그인 중...';
         try {
           const phone = normalizePhone(document.getElementById('phone').value);
           const password = document.getElementById('password').value;
+          if (!phone || !password) throw new Error('전화번호와 비밀번호를 입력해주세요.');
           const { error } = await supabaseClient.auth.signInWithPassword({ phone, password });
           if (error) throw error;
           showAdultCard();
@@ -187,23 +194,62 @@ Deno.serve((request) => {
           showError(loginError, error && error.message ? error.message : '로그인에 실패했습니다.');
         } finally {
           loginButton.disabled = false;
+          loginButton.textContent = '로그인';
         }
+      }
+      async function completePortoneVerification(identityVerificationId) {
+        clearError(adultError);
+        showAdultCard();
+        adultStatus.textContent = '성인인증 확인 중';
+        adultDescription.textContent = '인증 결과를 확인하고 있습니다.';
+        const { error } = await supabaseClient.functions.invoke('complete-adult-verification', {
+          body: { identityVerificationId }
+        });
+        if (error) {
+          showError(adultError, error.message || '성인인증 결과 확인에 실패했습니다.');
+          adultButton.disabled = false;
+          adultButton.textContent = '성인인증 시작';
+          return;
+        }
+        await refreshStatus();
       }
       loginButton.addEventListener('click', login);
       refreshButton.addEventListener('click', refreshStatus);
       adultButton.addEventListener('click', async () => {
         clearError(adultError);
         adultButton.disabled = true;
+        adultButton.textContent = '인증 준비 중...';
         try {
           const { data, error } = await supabaseClient.functions.invoke('start-adult-verification', {
             body: { returnUrl: location.origin + location.pathname }
           });
           if (error) throw error;
-          if (!data || !data.url) throw new Error('성인인증 제공사가 아직 설정되지 않았습니다.');
+          if (data && data.mode === 'portone') {
+            if (!window.PortOne) throw new Error('본인인증 SDK를 불러오지 못했습니다.');
+            const response = await window.PortOne.requestIdentityVerification({
+              storeId: data.storeId,
+              channelKey: data.channelKey,
+              identityVerificationId: data.identityVerificationId,
+              redirectUrl: data.redirectUrl,
+            });
+            const identityVerificationId = response && response.identityVerificationId
+              ? response.identityVerificationId
+              : data.identityVerificationId;
+            await completePortoneVerification(identityVerificationId);
+            return;
+          }
+          if (!data || !data.url) throw new Error('성인인증 제공자가 아직 설정되지 않았습니다.');
           location.href = data.url;
         } catch (error) {
           showError(adultError, error && error.message ? error.message : '성인인증을 시작하지 못했습니다.');
           adultButton.disabled = false;
+          adultButton.textContent = '성인인증 시작';
+        }
+      });
+      supabaseClient.auth.getSession().then(async ({ data }) => {
+        const identityVerificationId = urlParams.get('identityVerificationId');
+        if (data && data.session && identityVerificationId) {
+          await completePortoneVerification(identityVerificationId);
         }
       });
     </script>

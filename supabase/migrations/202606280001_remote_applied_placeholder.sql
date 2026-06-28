@@ -1,0 +1,2 @@
+-- Placeholder for a migration version that already exists in the remote Supabase
+-- migration history. Follow-up fixes are applied in later 202606280005+ files.

@@ -13,7 +13,7 @@ export const rooms: Room[] = [
     topSpaceCount: 34,
     isPromoted: true,
     emoji: '☘',
-    imageColor: '#DDEFE4',
+    imageColor: '#E8E8E8',
   },
   {
     id: 'weekend-photo',
