@@ -480,10 +480,11 @@ function GlobalBusyOverlay() {
 
 type AppPressableProps = React.ComponentProps<typeof RNPressable> & {
   allowRapidPress?: boolean;
+  preserveTheme?: boolean;
 };
 
 function Pressable(props: AppPressableProps) {
-  const { allowRapidPress, style, ...pressableProps } = props;
+  const { allowRapidPress, preserveTheme, style, ...pressableProps } = props;
   const lastPressAt = useRef(0);
   const onPress = props.onPress;
   return (
@@ -491,8 +492,11 @@ function Pressable(props: AppPressableProps) {
       {...pressableProps}
       style={
         typeof style === "function"
-          ? (state) => themedStyle(style(state), "view")
-          : themedStyle(style, "view")
+          ? (state) =>
+              preserveTheme ? style(state) : themedStyle(style(state), "view")
+          : preserveTheme
+            ? style
+            : themedStyle(style, "view")
       }
       onPress={
         onPress
@@ -803,11 +807,18 @@ function LinearGradient(props: ComponentProps<typeof ExpoLinearGradient>) {
   );
 }
 
-function LinkedText({ children, ...props }: TextProps) {
-  if (typeof children !== "string") return <Text {...props}>{children}</Text>;
+function LinkedText({
+  children,
+  preserveColor = false,
+  ...props
+}: TextProps & { preserveColor?: boolean }) {
+  const RootText = preserveColor ? RNText : Text;
+  const InlineText = preserveColor ? RNText : Text;
+  if (typeof children !== "string")
+    return <RootText {...props}>{children}</RootText>;
   const parts = children.split(LINK_PATTERN);
   return (
-    <Text {...props}>
+    <RootText {...props}>
       {parts.map((part, index) => {
         if (!/^(https?:\/\/|www\.)/i.test(part)) return part;
         const trailing = part.match(/[),.!?]+$/)?.[0] ?? "";
@@ -816,7 +827,7 @@ function LinkedText({ children, ...props }: TextProps) {
           ? visible
           : `https://${visible}`;
         return (
-          <Text
+          <InlineText
             key={`${visible}-${index}`}
             accessibilityRole="link"
             onPress={(event) => {
@@ -829,10 +840,10 @@ function LinkedText({ children, ...props }: TextProps) {
           >
             {visible}
             {trailing}
-          </Text>
+          </InlineText>
         );
       })}
-    </Text>
+    </RootText>
   );
 }
 
@@ -4626,7 +4637,7 @@ function MainScreen({
             {bottomTab !== "profile" && (
               <View style={s.headerActions}>
                 <IconButton
-                  name="search"
+                  name="search-outline"
                   color={primaryForeground}
                   size={22}
                   onPress={
@@ -5879,6 +5890,10 @@ function ChatRoom({
   const latestReadableMessageIdRef = useRef<string | null>(null);
   const unreadFocusDoneRef = useRef(false);
   const prependHeightRef = useRef<number | null>(null);
+  const prependAnchorRef = useRef<{
+    id: string;
+    viewportOffset: number;
+  } | null>(null);
   const messagePositions = useRef<Record<string, number>>({});
   const restoreScrollAfterPanelRef = useRef(false);
   const [chatReady, setChatReady] = useState(false);
@@ -6365,6 +6380,18 @@ function ChatRoom({
     if (!oldest?.createdAt) return;
     setLoadingOlder(true);
     prependHeightRef.current = scrollMetrics.current.contentHeight;
+    const topVisibleMessage =
+      messages.find((item) => {
+        const y = messagePositions.current[item.id];
+        return y !== undefined && y >= scrollMetrics.current.offsetY - 4;
+      }) ?? oldest;
+    const topVisibleY =
+      messagePositions.current[topVisibleMessage.id] ??
+      scrollMetrics.current.offsetY;
+    prependAnchorRef.current = {
+      id: topVisibleMessage.id,
+      viewportOffset: Math.max(0, topVisibleY - scrollMetrics.current.offsetY),
+    };
     try {
       const older = await listRoomMessages(room.id, 50, oldest.createdAt);
       const mapped = older.map((item) =>
@@ -6382,6 +6409,7 @@ function ChatRoom({
       });
     } catch (error) {
       prependHeightRef.current = null;
+      prependAnchorRef.current = null;
       Alert.alert("이전 채팅 불러오기 실패", serverErrorMessage(error));
     } finally {
       setLoadingOlder(false);
@@ -7524,7 +7552,24 @@ function ChatRoom({
             if (!initialMessagesLoaded) return;
             if (prependHeightRef.current !== null) {
               const previousHeight = prependHeightRef.current;
+              const anchor = prependAnchorRef.current;
               prependHeightRef.current = null;
+              prependAnchorRef.current = null;
+              if (anchor) {
+                requestAnimationFrame(() => {
+                  const y = messagePositions.current[anchor.id];
+                  if (y !== undefined) {
+                    const nextY = Math.max(0, y - anchor.viewportOffset);
+                    chatScrollRef.current?.scrollTo({
+                      y: nextY,
+                      animated: false,
+                    });
+                    scrollMetrics.current.offsetY = nextY;
+                  }
+                });
+                scrollMetrics.current.contentHeight = height;
+                return;
+              }
               const delta = Math.max(0, height - previousHeight);
               chatScrollRef.current?.scrollTo({
                 y: scrollMetrics.current.offsetY + delta,
@@ -7629,6 +7674,7 @@ function ChatRoom({
                           </Text>
                         )}
                         <Pressable
+                          preserveTheme
                           onPress={() => {
                             rememberScrollPosition();
                             initialScrollDone.current = false;
@@ -7657,7 +7703,7 @@ function ChatRoom({
                             />
                           )}
                           <View style={s.storyChatPreviewHead}>
-                            <Ionicons
+                            <RNIonicons
                               name="albums-outline"
                               size={16}
                               color={
@@ -7666,7 +7712,7 @@ function ChatRoom({
                                 )
                               }
                             />
-                            <Text
+                            <RNText
                               style={[
                                 s.storyChatPreviewLabel,
                                 {
@@ -7678,21 +7724,21 @@ function ChatRoom({
                               ]}
                             >
                               {item.name}님이 스토리를 올렸습니다.
-                            </Text>
+                            </RNText>
                           </View>
-                          <Text
+                          <RNText
                             numberOfLines={1}
                             style={s.storyChatPreviewTitle}
                           >
                             {item.title}
-                          </Text>
-                          <Text
+                          </RNText>
+                          <RNText
                             numberOfLines={2}
                             style={s.storyChatPreviewBody}
                           >
                             {item.preview}
-                          </Text>
-                          <Text style={s.storyChatPreviewMore}>바로가기</Text>
+                          </RNText>
+                          <RNText style={s.storyChatPreviewMore}>바로가기</RNText>
                         </Pressable>
                         {!item.mine && (
                           <Text numberOfLines={1} style={s.time}>
@@ -7803,6 +7849,7 @@ function ChatRoom({
                     >
                       {item.mine && deliveryMeta}
                       <Pressable
+                        preserveTheme
                         onLongPress={() =>
                           item.kind === "image"
                             ? undefined
@@ -7831,6 +7878,7 @@ function ChatRoom({
                       >
                         {item.replyTo && (
                           <Pressable
+                            preserveTheme
                             onPress={() => jumpToMessage(item.replyTo!.id)}
                             style={[
                               s.replyQuote,
@@ -7842,7 +7890,7 @@ function ChatRoom({
                               },
                             ]}
                           >
-                            <Text
+                            <RNText
                               style={[
                                 s.replyQuoteName,
                                 {
@@ -7854,10 +7902,10 @@ function ChatRoom({
                               ]}
                             >
                               {replyLabel(item.replyTo.name, myDisplayName)}
-                            </Text>
-                            <Text numberOfLines={1} style={s.replyQuoteText}>
+                            </RNText>
+                            <RNText numberOfLines={1} style={s.replyQuoteText}>
                               {item.replyTo.text}
-                            </Text>
+                            </RNText>
                           </Pressable>
                         )}
                         {item.kind === "image" ? (
@@ -7895,6 +7943,7 @@ function ChatRoom({
                               </RNText>
                             </View>
                             <LinkedText
+                              preserveColor
                               style={[
                                 s.messageText,
                                 {
@@ -7922,6 +7971,7 @@ function ChatRoom({
                               </View>
                             ) : (
                               <LinkedText
+                                preserveColor
                                 numberOfLines={
                                   expanded || !shouldCollapse
                                     ? undefined
@@ -11766,6 +11816,8 @@ function Profile({
   onPointBalanceChange: (value: number) => void;
   onSubpageChange?: (open: boolean) => void;
 }) {
+  const theme = useAppTheme();
+  const rewardTextColor = themeForeground(theme);
   const [shopOpen, setShopOpen] = useState(false);
   const [itemShopOpen, setItemShopOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
@@ -11862,7 +11914,7 @@ function Profile({
           </Pressable>
           <Pressable
             onPress={() =>
-              Linking.openURL(PRIVACY_POLICY_URL).catch((error) =>
+              Linking.openURL(getOperationsPolicyUrl()).catch((error) =>
                 Alert.alert("열기 실패", serverErrorMessage(error)),
               )
             }
@@ -11906,14 +11958,14 @@ function Profile({
               end={{ x: 1, y: 0 }}
               style={s.rewardGradient}
             >
-              <Text style={s.rewardTitle}>
+              <Text style={[s.rewardTitle, { color: rewardTextColor }]}>
                 {!attendanceReady
                   ? `${countdown} 후 출석 체크`
                   : rewardLoading === "attendance"
                     ? "광고 로드 중"
                     : "출석 체크"}
               </Text>
-              <Text style={s.rewardPoints}>20 P</Text>
+              <Text style={[s.rewardPoints, { color: rewardTextColor }]}>20 P</Text>
             </LinearGradient>
           </Pressable>
           <Pressable
@@ -11935,12 +11987,12 @@ function Profile({
               end={{ x: 1, y: 0 }}
               style={s.rewardGradient}
             >
-              <Text style={s.rewardTitle}>
+              <Text style={[s.rewardTitle, { color: rewardTextColor }]}>
                 {rewardLoading === "rewarded_ad"
                   ? "광고 로드 중"
                   : "광고 보고 포인트 더 받기"}
               </Text>
-              <Text style={s.rewardPoints}>
+              <Text style={[s.rewardPoints, { color: rewardTextColor }]}>
                 {rewardedAdAvailable ? "10 P" : "이번 보상 완료"}
               </Text>
             </LinearGradient>
@@ -14296,7 +14348,7 @@ function NotificationBadge({
         dot && s.notificationBadgeDot,
       ]}
     >
-      {!dot && <Text style={s.notificationBadgeText}>{label}</Text>}
+      {!dot && <RNText style={s.notificationBadgeText}>{label}</RNText>}
     </View>
   );
 }
@@ -14471,6 +14523,8 @@ function SystemMessage({
   event: "join" | "heart" | "point" | "leave" | "room" | "kick";
   text: string;
 }) {
+  const appTheme = useAppTheme();
+  const darkNotice = appTheme.id === "dark";
   const icon =
     event === "heart"
       ? "heart"
@@ -14485,7 +14539,7 @@ function SystemMessage({
               : "exit-outline";
   return (
     <View style={s.systemRow}>
-      <View style={s.systemLine} />
+      <View style={[s.systemLine, darkNotice && s.systemLineDark]} />
       <View style={s.systemContent}>
         {event === "point" ? (
           <RNIonicons name={icon} size={15} color={FIXED_POINT_COLOR} />
@@ -14496,9 +14550,9 @@ function SystemMessage({
             color={event === "heart" ? colors.pink600 : colors.textMuted}
           />
         )}
-        <LinkedText style={s.systemText}>{text}</LinkedText>
+        <LinkedText style={[s.systemText, darkNotice && s.systemTextDark]}>{text}</LinkedText>
       </View>
-      <View style={s.systemLine} />
+      <View style={[s.systemLine, darkNotice && s.systemLineDark]} />
     </View>
   );
 }
@@ -17033,8 +17087,8 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "flex-end",
     overflow: "hidden",
-    borderWidth: 2,
-    borderColor: "#FFF",
+    borderWidth: 0,
+    borderColor: "transparent",
   },
   avatarMore: {
     width: 44,
@@ -17782,6 +17836,9 @@ const s = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: colors.border,
   },
+  systemLineDark: {
+    backgroundColor: "#262626",
+  },
   systemContent: {
     maxWidth: "82%",
     flexDirection: "row",
@@ -17795,6 +17852,9 @@ const s = StyleSheet.create({
     fontSize: 10,
     textAlign: "center",
     lineHeight: 16,
+  },
+  systemTextDark: {
+    color: "#787878",
   },
   sheetLayer: {
     ...StyleSheet.absoluteFill,
