@@ -33,7 +33,7 @@
       </dict>
     </array>
     <key>CFBundleVersion</key>
-    <string>25</string>
+    <string>26</string>
     <key>GADApplicationIdentifier</key>
     <string>ca-app-pub-3940256099942544~1458002511</string>
     <key>GADDelayAppMeasurementInit</key>
@@ -53,8 +53,6 @@
     </dict>
     <key>NSCameraUsageDescription</key>
     <string>채팅과 프로필에 보낼 사진을 촬영하기 위해 카메라 권한이 필요합니다.</string>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your microphone</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
     <string>채팅 이미지를 사진첩에 저장하기 위해 권한이 필요합니다.</string>
     <key>NSPhotoLibraryUsageDescription</key>

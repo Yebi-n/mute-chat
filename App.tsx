@@ -13,6 +13,7 @@ import { Image as ExpoImage } from "expo-image";
 import { LinearGradient as ExpoLinearGradient } from "expo-linear-gradient";
 import * as Notifications from "expo-notifications";
 import * as ScreenCapture from "expo-screen-capture";
+import * as SecureStore from "expo-secure-store";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentProps } from "react";
@@ -141,7 +142,12 @@ import {
   ServerRoomMessage,
 } from "./src/services/chat";
 import { sendUploadedImages, uploadValidatedImage } from "./src/services/media";
-import { listReportedRoomIds, requestAccountDeletion, submitReport } from "./src/services/safety";
+import {
+  acceptSignupCompliance,
+  listReportedRoomIds,
+  requestAccountDeletion,
+  submitReport,
+} from "./src/services/safety";
 import {
   addStoryComment,
   createStoryWithBlocks,
@@ -394,6 +400,45 @@ const CHAT_IMAGE_GRID_CELL = Math.floor((CHAT_IMAGE_GRID_WIDTH - 2) / 2);
 const PIN_ICON_SOURCE = require("./assets/pin-gray.png");
 const APP_LOCK_ENABLED_KEY = "mute:app-lock:enabled";
 const APP_LOCK_PIN_KEY = "mute:app-lock:pin";
+const PRIVACY_POLICY_URL =
+  "https://service-introduction-theta.vercel.app/privacy/";
+const FIXED_POINT_COLOR = "#3F9A70";
+const FIXED_POINT_SOFT = "#EFF9F5";
+
+async function readAppLockPin() {
+  if (Platform.OS === "web") return AsyncStorage.getItem(APP_LOCK_PIN_KEY);
+
+  const secured = await SecureStore.getItemAsync(APP_LOCK_PIN_KEY);
+  if (secured !== null) return secured;
+
+  // Migrate PINs saved by versions released before SecureStore was introduced.
+  const legacy = await AsyncStorage.getItem(APP_LOCK_PIN_KEY);
+  if (legacy !== null) {
+    await SecureStore.setItemAsync(APP_LOCK_PIN_KEY, legacy, {
+      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    });
+    await AsyncStorage.removeItem(APP_LOCK_PIN_KEY);
+  }
+  return legacy;
+}
+
+async function writeAppLockPin(pin: string) {
+  if (Platform.OS === "web") {
+    await AsyncStorage.setItem(APP_LOCK_PIN_KEY, pin);
+    return;
+  }
+  await SecureStore.setItemAsync(APP_LOCK_PIN_KEY, pin, {
+    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  });
+  await AsyncStorage.removeItem(APP_LOCK_PIN_KEY);
+}
+
+async function clearAppLockCredentials() {
+  await AsyncStorage.multiRemove([APP_LOCK_ENABLED_KEY, APP_LOCK_PIN_KEY]);
+  if (Platform.OS !== "web") {
+    await SecureStore.deleteItemAsync(APP_LOCK_PIN_KEY);
+  }
+}
 const LOCAL_PENDING_MESSAGES = new Map<string, ChatMessage[]>();
 const ROOM_SCROLL_STATE = new Map<
   string,
@@ -1747,7 +1792,7 @@ function AppLockScreen({
   const [normalizedPhone, setNormalizedPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const checkPin = async (value: string) => {
-    const stored = await AsyncStorage.getItem(APP_LOCK_PIN_KEY);
+    const stored = await readAppLockPin();
     if (value === stored) {
       setError("");
       onUnlocked();
@@ -1790,7 +1835,7 @@ function AppLockScreen({
     setError("");
     try {
       await verifyPhoneOtp(normalizedPhone, otp);
-      await AsyncStorage.multiRemove([APP_LOCK_ENABLED_KEY, APP_LOCK_PIN_KEY]);
+      await clearAppLockCredentials();
       onDisabled();
     } catch (error) {
       setError(serverErrorMessage(error));
@@ -3354,6 +3399,8 @@ function PhoneAuthScreenV2({
     "idle" | "verifying" | "error" | "verified"
   >("idle");
   const [signupOtpError, setSignupOtpError] = useState("");
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
   const signupReveal = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -3406,6 +3453,8 @@ function PhoneAuthScreenV2({
     setSignupPhoneNotice("");
     setSignupOtpStatus("idle");
     setSignupOtpError("");
+    setPrivacyAccepted(false);
+    setAgeConfirmed(false);
     signupReveal.setValue(0);
   };
 
@@ -3582,9 +3631,17 @@ function PhoneAuthScreenV2({
   };
 
   const completeSignup = async () => {
-    if (!signupPhoneVerified || !validPassword || !passwordsMatch) return;
+    if (
+      !signupPhoneVerified ||
+      !validPassword ||
+      !passwordsMatch ||
+      !privacyAccepted ||
+      !ageConfirmed
+    )
+      return;
     setLoading(true);
     try {
+      await acceptSignupCompliance();
       await updateCurrentUserPassword(password);
       await signOut();
       resetFlow("login");
@@ -3924,13 +3981,73 @@ function PhoneAuthScreenV2({
                           ? "비밀번호가 일치합니다."
                           : "비밀번호가 일치하지 않습니다."}
                     </Text>
+                    <View style={s.signupConsentGroup}>
+                      <Pressable
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: privacyAccepted }}
+                        onPress={() => setPrivacyAccepted((value) => !value)}
+                        style={s.signupConsentRow}
+                      >
+                        <View
+                          style={[
+                            s.signupConsentBox,
+                            privacyAccepted && s.signupConsentBoxChecked,
+                          ]}
+                        >
+                          {privacyAccepted && (
+                            <Ionicons name="checkmark" size={14} color="#FFF" />
+                          )}
+                        </View>
+                        <Text style={s.signupConsentText}>
+                          [필수] 개인정보 수집·이용에 동의합니다.
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
+                        style={s.signupPolicyLink}
+                      >
+                        <Text style={s.signupPolicyLinkText}>
+                          전화번호·인증정보 / 계정·서비스 제공 / 탈퇴 시까지 · 내용 보기
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: ageConfirmed }}
+                        onPress={() => setAgeConfirmed((value) => !value)}
+                        style={s.signupConsentRow}
+                      >
+                        <View
+                          style={[
+                            s.signupConsentBox,
+                            ageConfirmed && s.signupConsentBoxChecked,
+                          ]}
+                        >
+                          {ageConfirmed && (
+                            <Ionicons name="checkmark" size={14} color="#FFF" />
+                          )}
+                        </View>
+                        <Text style={s.signupConsentText}>
+                          [필수] 만 14세 이상입니다.
+                        </Text>
+                      </Pressable>
+                    </View>
                     <Pressable
-                      disabled={loading || !validPassword || !passwordsMatch}
+                      disabled={
+                        loading ||
+                        !validPassword ||
+                        !passwordsMatch ||
+                        !privacyAccepted ||
+                        !ageConfirmed
+                      }
                       onPress={completeSignup}
                       style={[
                         s.primary,
-                        (loading || !validPassword || !passwordsMatch) &&
-                          s.disabled,
+                        (loading ||
+                          !validPassword ||
+                          !passwordsMatch ||
+                          !privacyAccepted ||
+                          !ageConfirmed) &&
+                        s.disabled,
                       ]}
                     >
                       <LinearGradient
@@ -5349,12 +5466,12 @@ function RoomDetail({
         <ScrollView contentContainerStyle={s.spaceProfile}>
           <DefaultRoomCover room={room} />
           <View style={s.coverMeta}>
-            <Text style={s.coverMetaText}>
+            <RNText style={s.coverMetaText}>
               {formatCompactDate(room.createdAt)}
-            </Text>
-            <Text style={s.coverMetaText}>
+            </RNText>
+            <RNText style={s.coverMetaText}>
               {room.memberCount}/{room.maxMembers}명
-            </Text>
+            </RNText>
           </View>
           <View style={s.spaceIntro}>
             <Text style={s.spaceTitle}>{room.name}</Text>
@@ -5390,9 +5507,9 @@ function RoomDetail({
                 <View style={s.detailMemberAvatar}>
                   <Avatar uri={member.avatarUri} size={64} />
                   {member.owner && (
-                    <View style={s.crown}>
-                      <Ionicons name="trophy" size={13} color="#FFF" />
-                    </View>
+                    <RNView style={s.crown}>
+                      <RNIonicons name="trophy" size={13} color="#FFF" />
+                    </RNView>
                   )}
                 </View>
                 <View style={s.detailMemberNameLine}>
@@ -7768,14 +7885,14 @@ function ChatRoom({
                         ) : item.kind === "secret" ? (
                           <View style={s.secretContent}>
                             <View style={s.secretLabel}>
-                              <Ionicons
+                              <RNIonicons
                                 name="lock-closed"
                                 size={12}
-                                color={colors.pink600}
+                                color={FIXED_POINT_COLOR}
                               />
-                              <Text style={s.secretLabelText}>
+                              <RNText style={s.secretLabelText}>
                                 {item.recipient}님에게만 보이는 쪽지
-                              </Text>
+                              </RNText>
                             </View>
                             <LinkedText
                               style={[
@@ -10490,7 +10607,7 @@ function MemberProfile({
                 {member.owner ? (
                   <Badge text="방장" pink />
                 ) : member.coHost ? (
-                  <Badge text="부방장" />
+                  <RNText style={s.badge}>부방장</RNText>
                 ) : null}
               </View>
               <Text style={s.memberProfileRoom}>
@@ -10707,15 +10824,36 @@ function ProfileQuickAction({
   onPress?: () => void;
 }) {
   const pink = icon === "heart-outline" || icon === "heart";
+  const fixedPoint = icon === "cash-outline" || icon === "mail-outline";
   return (
     <Pressable
       disabled={!onPress}
       onPress={onPress}
       style={[s.profileQuickAction, !onPress && s.disabled]}
     >
-      <View style={[s.profileQuickActionIcon, pink && s.profileQuickActionIconPink]}>
-        <Ionicons name={icon} size={22} color={pink ? colors.pink600 : colors.mint700} />
-      </View>
+      {fixedPoint ? (
+        <RNView
+          style={[
+            s.profileQuickActionIcon,
+            { backgroundColor: FIXED_POINT_SOFT },
+          ]}
+        >
+          <RNIonicons name={icon} size={22} color={FIXED_POINT_COLOR} />
+        </RNView>
+      ) : (
+        <View
+          style={[
+            s.profileQuickActionIcon,
+            pink && s.profileQuickActionIconPink,
+          ]}
+        >
+          <Ionicons
+            name={icon}
+            size={22}
+            color={pink ? colors.pink600 : colors.mint700}
+          />
+        </View>
+      )}
       <Text style={s.profileQuickActionText}>{label}</Text>
     </Pressable>
   );
@@ -11695,7 +11833,7 @@ function Profile({
             <Text style={s.pointValue}>{points.toLocaleString()} P</Text>
           </View>
           <Pressable onPress={() => setShopOpen(true)} style={s.pointButton}>
-            <Text style={s.pointButtonText}>충전하기</Text>
+            <RNText style={s.pointButtonText}>충전하기</RNText>
           </Pressable>
         </View>
         <View style={s.profileMenuGroup}>
@@ -11722,7 +11860,14 @@ function Profile({
             <Text style={s.menuTitle}>명예의 전당</Text>
             <Ionicons name="chevron-forward" size={17} color={colors.gray300} />
           </Pressable>
-          <Pressable onPress={openOperationsPolicy} style={s.profileMenu}>
+          <Pressable
+            onPress={() =>
+              Linking.openURL(PRIVACY_POLICY_URL).catch((error) =>
+                Alert.alert("열기 실패", serverErrorMessage(error)),
+              )
+            }
+            style={s.profileMenu}
+          >
             <Ionicons
               name="shield-checkmark-outline"
               size={19}
@@ -12847,7 +12992,7 @@ function Settings({
     setProcessingAccount(true);
     try {
       await signOut();
-      await AsyncStorage.multiRemove([APP_LOCK_ENABLED_KEY, APP_LOCK_PIN_KEY]);
+      await clearAppLockCredentials();
       onSignedOut();
     } catch (error) {
       setProcessingAccount(false);
@@ -12867,6 +13012,7 @@ function Settings({
       try {
         await signOut();
       } catch {}
+      await clearAppLockCredentials();
       onSignedOut();
     } catch (error) {
       setProcessingAccount(false);
@@ -12958,7 +13104,7 @@ function Settings({
           <Menu
             icon="document-text-outline"
             title="개인정보 처리방침"
-            onPress={() => openUrl("https://mute.app/privacy")}
+            onPress={() => openUrl(PRIVACY_POLICY_URL)}
           />
           <Menu
             icon="mail-outline"
@@ -13130,7 +13276,7 @@ function AppLockSettings({
       .catch(() => undefined);
   }, []);
   const verifyCurrent = async () => {
-    const stored = await AsyncStorage.getItem(APP_LOCK_PIN_KEY);
+    const stored = await readAppLockPin();
     if (current !== stored) {
       setMessage("현재 PIN이 일치하지 않습니다.");
       return false;
@@ -13145,10 +13291,8 @@ function AppLockSettings({
       setMessage("4자리 PIN이 일치하지 않습니다.");
       return;
     }
-    await AsyncStorage.multiSet([
-      [APP_LOCK_ENABLED_KEY, "1"],
-      [APP_LOCK_PIN_KEY, pin],
-    ]);
+    await writeAppLockPin(pin);
+    await AsyncStorage.setItem(APP_LOCK_ENABLED_KEY, "1");
     setEnabled(true);
     setDesiredEnabled(true);
     setUnlocked(true);
@@ -13161,7 +13305,7 @@ function AppLockSettings({
   };
   const disable = async () => {
     if (!(await verifyCurrent())) return;
-    await AsyncStorage.multiRemove([APP_LOCK_ENABLED_KEY, APP_LOCK_PIN_KEY]);
+    await clearAppLockCredentials();
     setEnabled(false);
     setDesiredEnabled(false);
     setUnlocked(true);
@@ -13186,10 +13330,7 @@ function AppLockSettings({
       <LockSettingsRecovery
         onBack={() => setRecovering(false)}
         onRecovered={async () => {
-          await AsyncStorage.multiRemove([
-            APP_LOCK_ENABLED_KEY,
-            APP_LOCK_PIN_KEY,
-          ]);
+          await clearAppLockCredentials();
           setEnabled(false);
           setDesiredEnabled(false);
           setUnlocked(true);
@@ -14346,17 +14487,15 @@ function SystemMessage({
     <View style={s.systemRow}>
       <View style={s.systemLine} />
       <View style={s.systemContent}>
-        <Ionicons
-          name={icon}
-          size={15}
-          color={
-            event === "heart"
-              ? colors.pink600
-              : event === "point"
-                ? colors.mint700
-                : colors.textMuted
-          }
-        />
+        {event === "point" ? (
+          <RNIonicons name={icon} size={15} color={FIXED_POINT_COLOR} />
+        ) : (
+          <Ionicons
+            name={icon}
+            size={15}
+            color={event === "heart" ? colors.pink600 : colors.textMuted}
+          />
+        )}
         <LinkedText style={s.systemText}>{text}</LinkedText>
       </View>
       <View style={s.systemLine} />
@@ -14488,13 +14627,28 @@ function MemberActionSheet({
             <View style={s.memberActions}>
               {actions.map(([icon, label, onPress, pink]) => (
                 <Pressable key={label} onPress={onPress} style={s.memberAction}>
-                  <View style={[s.memberActionIcon, pink && s.heartAction]}>
-                    <Ionicons
-                      name={icon}
-                      size={23}
-                      color={pink ? colors.pink600 : colors.mint700}
-                    />
-                  </View>
+                  {icon === "cash-outline" || icon === "mail-outline" ? (
+                    <RNView
+                      style={[
+                        s.memberActionIcon,
+                        { backgroundColor: FIXED_POINT_SOFT },
+                      ]}
+                    >
+                      <RNIonicons
+                        name={icon}
+                        size={23}
+                        color={FIXED_POINT_COLOR}
+                      />
+                    </RNView>
+                  ) : (
+                    <View style={[s.memberActionIcon, pink && s.heartAction]}>
+                      <Ionicons
+                        name={icon}
+                        size={23}
+                        color={pink ? colors.pink600 : colors.mint700}
+                      />
+                    </View>
+                  )}
                   <Text style={s.memberActionText}>{label}</Text>
                 </Pressable>
               ))}
@@ -16325,6 +16479,43 @@ const s = StyleSheet.create({
   authTimerExpired: { color: colors.pink600 },
   authPasswordHint: { color: colors.mint700, fontSize: 10, marginTop: -5 },
   authPasswordMismatch: { color: colors.pink600 },
+  signupConsentGroup: {
+    gap: 10,
+    marginTop: 4,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 14,
+    backgroundColor: colors.gray050,
+  },
+  signupConsentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    minHeight: 28,
+  },
+  signupConsentBox: {
+    width: 20,
+    height: 20,
+    borderWidth: 1,
+    borderColor: colors.gray300,
+    borderRadius: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFF",
+  },
+  signupConsentBoxChecked: {
+    borderColor: colors.mint700,
+    backgroundColor: colors.mint700,
+  },
+  signupConsentText: { flex: 1, color: colors.text, fontSize: 12 },
+  signupPolicyLink: { paddingLeft: 29, marginTop: -7 },
+  signupPolicyLinkText: {
+    color: colors.textSubtle,
+    fontSize: 10,
+    lineHeight: 15,
+    textDecorationLine: "underline",
+  },
   authInlineNotice: {
     color: colors.mint700,
     fontSize: 10,
@@ -17574,7 +17765,11 @@ const s = StyleSheet.create({
     gap: 4,
     marginBottom: 7,
   },
-  secretLabelText: { color: colors.pink600, fontSize: 9, fontWeight: "700" },
+  secretLabelText: {
+    color: FIXED_POINT_COLOR,
+    fontSize: 9,
+    fontWeight: "700",
+  },
   systemRow: {
     flexDirection: "row",
     alignItems: "center",

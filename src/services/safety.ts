@@ -62,6 +62,13 @@ export async function listReportedRoomIds() {
   return ((data ?? []) as Array<{ room_id: string }>).map((row) => row.room_id);
 }
 
+export async function acceptSignupCompliance() {
+  const { error } = await requireClient().rpc('complete_signup_compliance', {
+    p_privacy_version: '1.0',
+  });
+  if (error) throw error;
+}
+
 export async function requestAccountDeletion() {
   const { data, error } = await requireClient().functions.invoke('delete-account', {
     method: 'POST',
