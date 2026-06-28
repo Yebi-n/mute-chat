@@ -70,6 +70,7 @@ Deno.serve((request) => {
         font-size: 15px;
         font-weight: 600;
       }
+      button.secondary { color: #1c1c1c; background: #f3f6f4; }
       button:disabled { opacity: .55; }
       .status {
         display: inline-flex;
@@ -82,7 +83,8 @@ Deno.serve((request) => {
         font-weight: 600;
       }
       .error { margin-top: 10px; color: #d95073; font-size: 13px; }
-      .hidden { display: none; }
+      .ok { margin-top: 10px; color: #338863; font-size: 13px; }
+      .hidden { display: none !important; }
     </style>
   </head>
   <body>
@@ -102,11 +104,12 @@ Deno.serve((request) => {
         <div id="loginError" class="error hidden"></div>
       </section>
 
-      <section id="adultCard" class="card hidden">
+      <section id="adultCard" class="card hidden" aria-hidden="true">
         <h2>성인 카테고리 접근</h2>
         <div id="adultStatus" class="status">확인 중</div>
         <p id="adultDescription"></p>
-        <button id="adultButton">성인인증</button>
+        <button id="adultButton">성인인증 시작</button>
+        <button id="refreshButton" class="secondary">상태 새로고침</button>
         <div id="adultError" class="error hidden"></div>
       </section>
 
@@ -122,13 +125,14 @@ Deno.serve((request) => {
 
     <script>
       const supabaseClient = window.supabase.createClient(${JSON.stringify(supabaseUrl)}, ${JSON.stringify(supabaseAnonKey)}, {
-        auth: { persistSession: true, autoRefreshToken: true }
+        auth: { persistSession: false, autoRefreshToken: false }
       });
       const verifiedParam = ${JSON.stringify(verified)};
       const loginCard = document.getElementById('loginCard');
       const adultCard = document.getElementById('adultCard');
       const loginButton = document.getElementById('loginButton');
       const adultButton = document.getElementById('adultButton');
+      const refreshButton = document.getElementById('refreshButton');
       const loginError = document.getElementById('loginError');
       const adultError = document.getElementById('adultError');
       const adultStatus = document.getElementById('adultStatus');
@@ -148,6 +152,11 @@ Deno.serve((request) => {
         el.textContent = '';
         el.classList.add('hidden');
       }
+      function showAdultCard() {
+        loginCard.classList.add('hidden');
+        adultCard.classList.remove('hidden');
+        adultCard.setAttribute('aria-hidden', 'false');
+      }
       async function refreshStatus() {
         clearError(adultError);
         const { data, error } = await supabaseClient.rpc('get_my_verification_status');
@@ -162,16 +171,9 @@ Deno.serve((request) => {
           ? '이 계정은 성인 카테고리 접근 조건을 충족했습니다.'
           : '성인 카테고리 접근을 위해 성인인증이 필요합니다.';
         adultButton.classList.toggle('hidden', isVerified);
-        if (verifiedParam === '1') {
-          adultDescription.textContent = '성인인증이 완료되었습니다.';
-        }
+        if (verifiedParam === '1') adultDescription.textContent = '성인인증이 완료되었습니다.';
       }
-      async function enterLoggedIn() {
-        loginCard.classList.add('hidden');
-        adultCard.classList.remove('hidden');
-        await refreshStatus();
-      }
-      loginButton.addEventListener('click', async () => {
+      async function login() {
         clearError(loginError);
         loginButton.disabled = true;
         try {
@@ -179,13 +181,16 @@ Deno.serve((request) => {
           const password = document.getElementById('password').value;
           const { error } = await supabaseClient.auth.signInWithPassword({ phone, password });
           if (error) throw error;
-          await enterLoggedIn();
+          showAdultCard();
+          await refreshStatus();
         } catch (error) {
           showError(loginError, error && error.message ? error.message : '로그인에 실패했습니다.');
         } finally {
           loginButton.disabled = false;
         }
-      });
+      }
+      loginButton.addEventListener('click', login);
+      refreshButton.addEventListener('click', refreshStatus);
       adultButton.addEventListener('click', async () => {
         clearError(adultError);
         adultButton.disabled = true;
@@ -201,11 +206,6 @@ Deno.serve((request) => {
           adultButton.disabled = false;
         }
       });
-      if (verifiedParam === '1') {
-        supabaseClient.auth.getSession().then(({ data }) => {
-          if (data && data.session) enterLoggedIn();
-        });
-      }
     </script>
   </body>
 </html>`);

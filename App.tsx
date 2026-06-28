@@ -2106,9 +2106,17 @@ function AuthenticatedApp({
     );
     setChatInitialUnreadFocus(notice.destination === "chat");
     if (appNavigationRef.isReady()) {
-      appNavigationRef.navigate(joinedIds.includes(room.id) ? "Chat" : "Detail");
+      appNavigationRef.navigate(
+        notice.destination === "chat" || joinedIds.includes(room.id)
+          ? "Chat"
+          : "Detail",
+      );
     } else {
-      setScreen(joinedIds.includes(room.id) ? "chat" : "detail");
+      setScreen(
+        notice.destination === "chat" || joinedIds.includes(room.id)
+          ? "chat"
+          : "detail",
+      );
     }
   };
   useEffect(() => {
@@ -2380,7 +2388,11 @@ function AuthenticatedApp({
               notice.destination === "applications" ? "applications" : null,
             );
             setChatInitialUnreadFocus(notice.destination === "chat");
-            navigation.navigate(joinedIds.includes(room.id) ? "Chat" : "Detail");
+            navigation.navigate(
+              notice.destination === "chat" || joinedIds.includes(room.id)
+                ? "Chat"
+                : "Detail",
+            );
           };
           return (
             <MainScreenBridge
@@ -2530,6 +2542,17 @@ function AuthenticatedApp({
             )}
             onBoost={(option) => boostRoom(selectedRoom, option)}
             onPromote={() => promoteRoom(selectedRoom)}
+            onDeleted={(roomId) => {
+              setRoomData((items) => items.filter((item) => item.id !== roomId));
+              setJoinedIds((ids) => ids.filter((id) => id !== roomId));
+              setOwnedRoomIds((ids) => ids.filter((id) => id !== roomId));
+              setUnreadCounts((counts) => {
+                const next = { ...counts };
+                delete next[roomId];
+                return next;
+              });
+              navigation.popToTop();
+            }}
             onBack={() => {
               setReturnToNotifications(false);
               setChatInitialPanel(null);
@@ -2723,8 +2746,10 @@ function serverErrorMessage(error: unknown) {
     return "현재 기기에서는 인앱결제를 사용할 수 없습니다.";
   if (message.includes("PURCHASE_TIMEOUT"))
     return "구매 응답 시간이 초과되었습니다. 결제 상태를 확인한 뒤 다시 시도해주세요.";
-  if (message.includes("STORE_PRODUCT_NOT_FOUND"))
-    return "App Store Connect에서 상품을 찾지 못했습니다. 상품 ID와 심사 상태를 확인해주세요.";
+  if (message.includes("STORE_PRODUCT_NOT_FOUND")) {
+    const id = message.match(/STORE_PRODUCT_NOT_FOUND:(\S+)/)?.[1];
+    return `App Store Connect에서 상품을 찾지 못했습니다.${id ? ` (${id})` : ""} 상품 ID와 심사 상태를 확인해주세요.`;
+  }
   if (message.includes("UNSUPPORTED_PRODUCT"))
     return "서버 검증 대상에 등록되지 않은 상품입니다. 앱 버전과 서버 설정을 같이 확인해주세요.";
   if (message.includes("REWARDED_AD_ATTENDANCE_REQUIRED"))
@@ -2749,7 +2774,7 @@ function serverErrorMessage(error: unknown) {
     return "활성화된 구독을 확인하지 못했습니다.";
   if (message.includes("ROOM_MUTED")) return "채팅 금지 상태입니다.";
   if (message.includes("POINT_PRODUCT_NOT_SUPPORTED"))
-    return "아직 준비되지 않은 상품입니다.";
+    return "아직 준비되지 않은 상품입니다. 상품 ID와 서버 상품 설정을 확인해주세요.";
   if (message.includes("MEDIA_VALIDATION_FAILED"))
     return "이미지 검증 서버가 응답하지 않았습니다. 잠시 후 다시 시도해주세요.";
   if (message.includes("MEDIA_VALIDATION_REJECTED"))
@@ -5403,6 +5428,7 @@ function ChatRoom({
   topSpaceRemaining,
   onBoost,
   onPromote,
+  onDeleted,
   onApplicationsBack,
   onBack,
 }: {
@@ -5423,6 +5449,7 @@ function ChatRoom({
   onPromote: () => Promise<
     { ok: true; remainingMs: number } | { ok: false; remainingMs: number }
   >;
+  onDeleted?: (roomId: string) => void;
   onApplicationsBack?: () => void;
   onBack: () => void;
 }) {
@@ -5503,6 +5530,7 @@ function ChatRoom({
   const unreadFocusDoneRef = useRef(false);
   const prependHeightRef = useRef<number | null>(null);
   const messagePositions = useRef<Record<string, number>>({});
+  const restoreScrollAfterPanelRef = useRef(false);
   const [chatReady, setChatReady] = useState(false);
   const [initialMessagesLoaded, setInitialMessagesLoaded] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -5654,6 +5682,12 @@ function ChatRoom({
       nearBottom: nearBottomRef.current,
     });
   };
+  const openPanel = (nextPanel: ChatPanel) => {
+    rememberScrollPosition();
+    restoreScrollAfterPanelRef.current = true;
+    setChatReady(false);
+    setPanel(nextPanel);
+  };
   useEffect(() => {
     mountedRef.current = true;
     roomSessionRef.current += 1;
@@ -5696,22 +5730,8 @@ function ChatRoom({
     };
   }, [currentUserId, room.id]);
   useEffect(() => {
-    if (!initialMessagesLoaded || chatReady) return;
-    const timer = setTimeout(() => {
-      if (messages.length === 0) {
-        setChatReady(true);
-        return;
-      }
-      chatScrollRef.current?.scrollToEnd({ animated: false });
-      requestAnimationFrame(() => {
-        chatScrollRef.current?.scrollToEnd({ animated: false });
-        setTimeout(() => {
-          chatScrollRef.current?.scrollToEnd({ animated: false });
-          setChatReady(true);
-        }, 40);
-      });
-    }, 80);
-    return () => clearTimeout(timer);
+    if (initialMessagesLoaded && !chatReady && messages.length === 0)
+      setChatReady(true);
   }, [chatReady, initialMessagesLoaded, messages.length]);
   useEffect(() => {
     if (
@@ -6139,7 +6159,7 @@ function ChatRoom({
     scrollToLatest();
     void submitTextMessage(localId, text, reply);
   };
-  const sendHeart = async (targetNameOverride?: string) => {
+  const sendHeart = async (targetNameOverride?: string): Promise<boolean> => {
     const createdAt = new Date().toISOString();
     const targetName = targetNameOverride ?? selectedMember ?? "느린준";
     const body = `${myDisplayName}님이 ${targetName}님에게 하트를 보냈습니다.`;
@@ -6152,16 +6172,20 @@ function ChatRoom({
         { id, kind: "system", event: "heart", text: body, createdAt },
       ]);
       setTool(null);
+      return true;
     } catch (error) {
       Alert.alert("하트 보내기 실패", serverErrorMessage(error));
+      return false;
     }
   };
-  const sendSecret = async () => {
-    const text = secretDraft.trim();
-    if (!text) return;
+  const sendSecretTo = async (
+    target: RoomMember | undefined,
+    draft: string,
+  ): Promise<boolean> => {
+    const text = draft.trim();
+    if (!text) return false;
     const createdAt = new Date().toISOString();
-    const targetName = selectedMember ?? "느린준";
-    const target = roomMembers.find((member) => member.name === targetName);
+    const targetName = target?.name ?? selectedMember ?? "느린준";
     try {
       let id = `secret-${Date.now()}`;
       if (isSupabaseConfigured && isUuid(room.id)) {
@@ -6170,7 +6194,7 @@ function ChatRoom({
             "비밀 쪽지 실패",
             "서버에 등록된 멤버에게만 보낼 수 있습니다.",
           );
-          return;
+          return false;
         }
         id = await sendSecretMessage({
           roomId: room.id,
@@ -6194,29 +6218,37 @@ function ChatRoom({
       ]);
       setSecretDraft("");
       setTool(null);
+      return true;
     } catch (error) {
       Alert.alert("비밀 쪽지 실패", serverErrorMessage(error));
+      return false;
     }
   };
-  const sendPoint = async () => {
-    const amount = Number(pointDraft.replace(/[^0-9]/g, ""));
-    if (!pointTarget) return;
+  const sendSecret = async () =>
+    sendSecretTo(
+      roomMembers.find((member) => member.name === selectedMember),
+      secretDraft,
+    );
+  const sendPointTo = async (
+    target: RoomMember | undefined,
+    rawAmount: string,
+  ): Promise<boolean> => {
+    const amount = Number(rawAmount.replace(/[^0-9]/g, ""));
+    const targetName = target?.name;
+    if (!targetName) return false;
     if (!Number.isFinite(amount) || amount < 1) {
       Alert.alert("포인트 보내기", "1p 이상 입력해주세요.");
-      return;
+      return false;
     }
     if (amount > points) {
       Alert.alert(
         "포인트 부족",
         `현재 보유 포인트는 ${points.toLocaleString()}p입니다.`,
       );
-      return;
+      return false;
     }
     const createdAt = new Date().toISOString();
-    const body = `${myDisplayName}님이 ${pointTarget}님에게 ${amount.toLocaleString()}p를 보냈습니다.`;
-    const target =
-      pointTargetMember ??
-      roomMembers.find((member) => member.name === pointTarget);
+    const body = `${myDisplayName}님이 ${targetName}님에게 ${amount.toLocaleString()}p를 보냈습니다.`;
     try {
       let id = `point-${Date.now()}`;
       if (isSupabaseConfigured && isUuid(room.id)) {
@@ -6225,7 +6257,7 @@ function ChatRoom({
             "포인트 보내기 실패",
             "서버에 등록된 멤버에게만 보낼 수 있습니다.",
           );
-          return;
+          return false;
         }
         const result = await transferRoomPoints({
           roomId: room.id,
@@ -6242,10 +6274,18 @@ function ChatRoom({
       setPointTargetMember(null);
       setPointDraft("");
       scrollToLatest();
+      return true;
     } catch (error) {
       Alert.alert("포인트 보내기 실패", serverErrorMessage(error));
+      return false;
     }
   };
+  const sendPoint = async () =>
+    sendPointTo(
+      pointTargetMember ??
+        roomMembers.find((member) => member.name === pointTarget),
+      pointDraft,
+    );
   const uploadImageMessage = async (
     selected: ChatImageAsset[],
     existingId?: string,
@@ -6840,18 +6880,10 @@ function ChatRoom({
             ),
           );
         }}
-        onHeart={() => void sendHeart(profileMember.name)}
-        onPoint={() => {
-          setPointTarget(profileMember.name);
-          setPointTargetMember(profileMember);
-          setPointDraft("");
-          setProfileMember(null);
-        }}
-        onSecret={() => {
-          setSelectedMember(profileMember.name);
-          setTool("secret");
-          setProfileMember(null);
-        }}
+        availablePoints={points}
+        onHeart={() => sendHeart(profileMember.name)}
+        onPoint={(amount) => sendPointTo(profileMember, amount)}
+        onSecret={(body) => sendSecretTo(profileMember, body)}
       />
     );
   if (customColorTarget)
@@ -7031,7 +7063,7 @@ function ChatRoom({
           Keyboard.dismiss();
           setTool(null);
           setChatSearchOpen(false);
-          readOnly && !isSuperAdmin ? setPanel("members") : setDrawerOpen(true);
+          readOnly && !isSuperAdmin ? openPanel("members") : setDrawerOpen(true);
         }}
       />
       {chatSearchOpen && (
@@ -7154,14 +7186,23 @@ function ChatRoom({
             scrollMetrics.current.contentHeight = height;
             if (!initialScrollDone.current) {
               initialScrollDone.current = true;
+              const saved = ROOM_SCROLL_STATE.get(room.id);
+              if (
+                restoreScrollAfterPanelRef.current &&
+                saved &&
+                !saved.nearBottom
+              ) {
+                restoreScrollAfterPanelRef.current = false;
+                chatScrollRef.current?.scrollTo({
+                  y: Math.max(0, saved.offsetY),
+                  animated: false,
+                });
+                setChatReady(true);
+                return;
+              }
+              restoreScrollAfterPanelRef.current = false;
               chatScrollRef.current?.scrollToEnd({ animated: false });
-              requestAnimationFrame(() => {
-                chatScrollRef.current?.scrollToEnd({ animated: false });
-                setTimeout(() => {
-                  chatScrollRef.current?.scrollToEnd({ animated: false });
-                  setChatReady(true);
-                }, 40);
-              });
+              requestAnimationFrame(() => setChatReady(true));
             } else if (nearBottomRef.current) scrollToLatest();
           }}
         >
@@ -8045,21 +8086,21 @@ function ChatRoom({
         }}
         onApplications={() => {
           setDrawerOpen(false);
-          setPanel("applications");
+          openPanel("applications");
         }}
         onStories={() => {
           setDrawerOpen(false);
           setStoryPanelInitialId(null);
           setStoryPanelInitialWrite(false);
-          setPanel("overview");
+          openPanel("overview");
         }}
         onOpenMembers={() => {
           setDrawerOpen(false);
-          setPanel("members");
+          openPanel("members");
         }}
         onBlocked={() => {
           setDrawerOpen(false);
-          setPanel("blocked");
+          openPanel("blocked");
         }}
         onEditRoom={() => {
           setDrawerOpen(false);
@@ -8067,7 +8108,7 @@ function ChatRoom({
         }}
         onRoomSettings={() => {
           setDrawerOpen(false);
-          setPanel("roomSettings");
+          openPanel("roomSettings");
         }}
         onDelete={() =>
           Alert.alert(
@@ -8083,7 +8124,10 @@ function ChatRoom({
                     await deleteRoom(room.id);
                     setDrawerOpen(false);
                     setToast("방이 삭제되었습니다.");
-                    setTimeout(onBack, 350);
+                    setTimeout(() => {
+                      onDeleted?.(room.id);
+                      if (!onDeleted) onBack();
+                    }, 350);
                   } catch (error) {
                     Alert.alert("방 삭제 실패", serverErrorMessage(error));
                   }
@@ -8225,7 +8269,7 @@ function mapServerStory(story: ServerStory, currentUserId?: string): StoryItem {
       author: comment.author,
       authorAvatarUri: comment.authorAvatarUrl,
       body: comment.body,
-      createdAt: formatStoryTime(comment.createdAt),
+      createdAt: comment.createdAt,
       mine: comment.authorUserId === currentUserId,
     })),
     mine: story.authorUserId === currentUserId,
@@ -8264,7 +8308,7 @@ function StoryPanel({
   onWriteRequest?: () => void;
 }) {
   const [filter, setFilter] = useState<"all" | StoryVisibility>(
-    joined ? "all" : "public",
+    room.isAdult ? (joined ? "all" : "room") : joined ? "all" : "public",
   );
   const [staff, setStaff] = useState(initialStaff);
   const isStaff = staff;
@@ -8277,6 +8321,9 @@ function StoryPanel({
   const [currentProfile, setCurrentProfile] = useState<RoomMember | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const seededSelection = useRef(false);
+  useEffect(() => {
+    if (room.isAdult && filter === "public") setFilter(joined ? "all" : "room");
+  }, [filter, joined, room.isAdult]);
   const visible =
     filter === "all"
       ? items
@@ -8464,20 +8511,22 @@ function StoryPanel({
             </Pressable>
           </>
         )}
-        <Pressable
-          onPress={() => setFilter("public")}
-          style={[
-            s.visibilityOption,
-            filter === "public" && s.visibilityOptionActive,
-          ]}
-        >
-          <Ionicons
-            name="earth-outline"
-            size={14}
-            color={filter === "public" ? colors.mint700 : colors.textMuted}
-          />
-          <Text style={s.visibilityText}>전체 공개</Text>
-        </Pressable>
+        {!room.isAdult && (
+          <Pressable
+            onPress={() => setFilter("public")}
+            style={[
+              s.visibilityOption,
+              filter === "public" && s.visibilityOptionActive,
+            ]}
+          >
+            <Ionicons
+              name="earth-outline"
+              size={14}
+              color={filter === "public" ? colors.mint700 : colors.textMuted}
+            />
+            <Text style={s.visibilityText}>전체 공개</Text>
+          </Pressable>
+        )}
       </View>
       <ScrollView
         refreshControl={
@@ -8701,7 +8750,7 @@ function StoryDetail({
             author: currentProfile?.name ?? "나",
             authorAvatarUri: currentProfile?.avatarUri,
             body,
-            createdAt: "방금",
+            createdAt: new Date().toISOString(),
             mine: true,
           },
         ],
@@ -8973,7 +9022,7 @@ function StoryEditor({
 }) {
   const [title, setTitle] = useState(initial?.title ?? "");
   const [visibility, setVisibility] = useState<StoryVisibility>(
-    initial?.visibility ?? "room",
+    room.isAdult ? "room" : initial?.visibility ?? "room",
   );
   const [blocks, setBlocks] = useState<StoryBlock[]>(
     initial?.blocks ?? [{ id: "text-1", type: "text", text: "" }],
@@ -9068,18 +9117,19 @@ function StoryEditor({
             },
       );
       let id = initial?.id ?? `story-${Date.now()}`;
+      const effectiveVisibility: StoryVisibility = room.isAdult ? "room" : visibility;
       if (isSupabaseConfigured && isUuid(room.id)) {
         if (initial && isUuid(initial.id))
           await updateStoryContent(
             initial.id,
             normalizedTitle,
             payload,
-            visibility,
+            effectiveVisibility,
           );
         else
           id = await createStoryWithBlocks({
             roomId: room.id,
-            visibility,
+            visibility: effectiveVisibility,
             title: normalizedTitle,
             blocks: payload,
           });
@@ -9101,7 +9151,7 @@ function StoryEditor({
         author: initial?.author ?? currentProfile?.name ?? "나",
         authorAvatarUri: initial?.authorAvatarUri ?? currentProfile?.avatarUri,
         createdAt: initial?.createdAt ?? new Date().toISOString(),
-        visibility,
+        visibility: effectiveVisibility,
         blocks: normalized,
         comments: initial?.comments ?? [],
         views: initial?.views ?? 0,
@@ -9161,15 +9211,17 @@ function StoryEditor({
           >
             <Text style={s.visibilityText}>방 멤버</Text>
           </Pressable>
-          <Pressable
-            onPress={() => setVisibility("public")}
-            style={[
-              s.visibilityOption,
-              visibility === "public" && s.visibilityOptionActive,
-            ]}
-          >
-            <Text style={s.visibilityText}>전체 공개</Text>
-          </Pressable>
+          {!room.isAdult && (
+            <Pressable
+              onPress={() => setVisibility("public")}
+              style={[
+                s.visibilityOption,
+                visibility === "public" && s.visibilityOptionActive,
+              ]}
+            >
+              <Text style={s.visibilityText}>전체 공개</Text>
+            </Pressable>
+          )}
         </View>
         {blocks.map((block) =>
           block.type === "text" ? (
@@ -9819,6 +9871,7 @@ function MemberProfile({
   onHeart,
   onPoint,
   onSecret,
+  availablePoints = 0,
 }: {
   member: RoomMember;
   room: Room;
@@ -9826,9 +9879,10 @@ function MemberProfile({
   editable?: boolean;
   onBack: () => void;
   onSaved?: (member: RoomMember) => void;
-  onHeart?: () => void;
-  onPoint?: () => void;
-  onSecret?: () => void;
+  onHeart?: () => Promise<boolean>;
+  onPoint?: (amount: string) => Promise<boolean>;
+  onSecret?: (body: string) => Promise<boolean>;
+  availablePoints?: number;
 }) {
   const [photoOpen, setPhotoOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -9840,6 +9894,52 @@ function MemberProfile({
   const [avatarRemoved, setAvatarRemoved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  const [quickAction, setQuickAction] = useState<"point" | "secret" | null>(
+    null,
+  );
+  const [quickDraft, setQuickDraft] = useState("");
+  const [quickSending, setQuickSending] = useState(false);
+  const closeQuickAction = () => {
+    if (quickSending) return;
+    Keyboard.dismiss();
+    setQuickAction(null);
+    setQuickDraft("");
+  };
+  const submitQuickAction = async () => {
+    if (quickSending || !quickAction || !quickDraft.trim()) return;
+    setQuickSending(true);
+    try {
+      const sent =
+        quickAction === "point"
+          ? await onPoint?.(quickDraft)
+          : await onSecret?.(quickDraft);
+      if (sent) {
+        setQuickAction(null);
+        setQuickDraft("");
+        onBack();
+      }
+    } finally {
+      setQuickSending(false);
+    }
+  };
+  const confirmHeart = () => {
+    if (!onHeart) return;
+    Alert.alert(
+      "하트 보내기",
+      `${member.name}님에게 하트를 보내시겠습니까?`,
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "보내기",
+          onPress: () => {
+            void onHeart().then((sent) => {
+              if (sent) onBack();
+            });
+          },
+        },
+      ],
+    );
+  };
   const pick = async () => {
     if (!editable || !editMode) {
       setPhotoOpen(true);
@@ -10113,6 +10213,17 @@ function MemberProfile({
           >
             <Avatar uri={displayedAvatarUri} size={96} />
           </Pressable>
+          {editable && !editMode && (
+            <Pressable
+              onPress={() => setEditMode(true)}
+              style={s.profileEditShortcut}
+            >
+              <View style={s.profileEditIcon}>
+                <Ionicons name="create-outline" size={20} color={colors.mint700} />
+              </View>
+              <Text style={s.profileEditShortcutText}>프로필 편집</Text>
+            </Pressable>
+          )}
           {editable && !editMode ? (
             <>
               <View style={s.memberProfileNameLine}>
@@ -10130,13 +10241,6 @@ function MemberProfile({
                 <Text style={s.memberProfileLabel}>자기 소개</Text>
                 <Text style={s.memberProfileIntro}>{member.intro}</Text>
               </View>
-              <Pressable
-                onPress={() => setEditMode(true)}
-                style={s.profileEditShortcut}
-              >
-                <Ionicons name="create-outline" size={19} color={colors.mint700} />
-                <Text style={s.profileEditShortcutText}>프로필 수정하기</Text>
-              </Pressable>
             </>
           ) : editable ? (
             <View style={s.memberProfileEditCard}>
@@ -10195,9 +10299,17 @@ function MemberProfile({
                 <Text style={s.memberProfileIntro}>{member.intro}</Text>
               </View>
               <View style={s.memberProfileActions}>
-                <ProfileQuickAction icon="heart-outline" label="하트" onPress={onHeart} />
-                <ProfileQuickAction icon="cash-outline" label="포인트" onPress={onPoint} />
-                <ProfileQuickAction icon="mail-outline" label="쪽지" onPress={onSecret} />
+                <ProfileQuickAction icon="heart-outline" label="하트" onPress={confirmHeart} />
+                <ProfileQuickAction
+                  icon="cash-outline"
+                  label="포인트"
+                  onPress={onPoint ? () => setQuickAction("point") : undefined}
+                />
+                <ProfileQuickAction
+                  icon="mail-outline"
+                  label="쪽지"
+                  onPress={onSecret ? () => setQuickAction("secret") : undefined}
+                />
                 {canShowMenu && (
                   <ProfileQuickAction
                     icon="ban-outline"
@@ -10228,6 +10340,87 @@ function MemberProfile({
           />
         </View>
       )}
+      {quickAction && (
+        <View style={s.sheetLayer}>
+          <Pressable
+            accessibilityLabel={`${quickAction === "point" ? "포인트" : "비밀 쪽지"} 보내기 닫기`}
+            onPress={closeQuickAction}
+            style={s.sheetDim}
+          />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={s.sheetKeyboard}
+          >
+            <View style={s.pointSendSheet}>
+              <View style={s.sheetHandle} />
+              <Text style={s.pointSendTitle}>
+                {quickAction === "point" ? "포인트 보내기" : "비밀 쪽지 보내기"}
+              </Text>
+              <Text style={s.pointSendBody}>
+                {quickAction === "point"
+                  ? `${member.name}님에게 1p부터 ${availablePoints.toLocaleString()}p까지 보낼 수 있어요.`
+                  : `${member.name}님에게 보낼 비밀 쪽지를 입력해주세요.`}
+              </Text>
+              <TextInput
+                autoFocus
+                value={quickDraft}
+                onChangeText={(value) =>
+                  setQuickDraft(
+                    quickAction === "point"
+                      ? value.replace(/[^0-9]/g, "")
+                      : value,
+                  )
+                }
+                keyboardType={quickAction === "point" ? "number-pad" : "default"}
+                multiline={quickAction === "secret"}
+                maxLength={quickAction === "secret" ? 500 : 9}
+                placeholder={quickAction === "point" ? "보낼 포인트" : "비밀 쪽지를 입력해주세요."}
+                placeholderTextColor={colors.textMuted}
+                style={[
+                  s.pointSendInput,
+                  quickAction === "secret" && s.profileSecretInput,
+                  Platform.OS === "web" && ({ outlineStyle: "none" } as object),
+                ]}
+              />
+              <View style={s.pointSendActions}>
+                <Pressable
+                  disabled={quickSending}
+                  onPress={closeQuickAction}
+                  style={s.pointSendCancel}
+                >
+                  <Text style={s.pointSendCancelText}>취소</Text>
+                </Pressable>
+                <Pressable
+                  disabled={
+                    quickSending ||
+                    !quickDraft.trim() ||
+                    (quickAction === "point" &&
+                      (Number(quickDraft) < 1 || Number(quickDraft) > availablePoints))
+                  }
+                  onPress={() => void submitQuickAction()}
+                  style={[
+                    s.pointSendButton,
+                    (quickSending ||
+                      !quickDraft.trim() ||
+                      (quickAction === "point" &&
+                        (Number(quickDraft) < 1 || Number(quickDraft) > availablePoints))) &&
+                      s.disabled,
+                  ]}
+                >
+                  <LinearGradient
+                    colors={["#82B9C1", "#5DBB8C"]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={s.pointSendGradient}
+                  >
+                    <Text style={s.primaryText}>{quickSending ? "전송 중..." : "보내기"}</Text>
+                  </LinearGradient>
+                </Pressable>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -10241,13 +10434,16 @@ function ProfileQuickAction({
   label: string;
   onPress?: () => void;
 }) {
+  const pink = icon === "heart-outline" || icon === "heart";
   return (
     <Pressable
       disabled={!onPress}
       onPress={onPress}
       style={[s.profileQuickAction, !onPress && s.disabled]}
     >
-      <Ionicons name={icon} size={18} color={colors.mint700} />
+      <View style={[s.profileQuickActionIcon, pink && s.profileQuickActionIconPink]}>
+        <Ionicons name={icon} size={22} color={pink ? colors.pink600 : colors.mint700} />
+      </View>
       <Text style={s.profileQuickActionText}>{label}</Text>
     </Pressable>
   );
@@ -11431,7 +11627,11 @@ function StoreCard({
       return;
     }
     try {
-      await purchaseProduct(productId);
+      if (productId === STORE_PRODUCTS.adFreeMonthly) {
+        await purchaseStoreProduct(productId);
+      } else {
+        await purchaseProduct(productId);
+      }
       Alert.alert("구매 완료", "상품이 계정에 적용되었습니다.");
     } catch (error) {
       Alert.alert("구매 준비 필요", serverErrorMessage(error));
@@ -13740,6 +13940,9 @@ function ComposerPanel({
               label="새 스토리"
               onPress={onNewStory}
             />
+          </View>
+          <View style={s.toolDivider} />
+          <View style={s.toolGrid}>
             <ToolAction
               icon="podium-outline"
               label="랭킹"
@@ -14557,9 +14760,11 @@ function mapServerNotice(row: ServerNotice): Notice {
     icon:
       type === "join_request"
         ? "person-add-outline"
-        : type === "secret_message"
-          ? "mail-outline"
-          : "chatbubble-outline",
+        : type === "story" || type === "story_comment"
+          ? "reader-outline"
+          : type === "secret_message"
+            ? "mail-outline"
+            : "chatbubble-outline",
     title: row.title,
     body: row.body,
     time: formatStoryTime(row.createdAt),
@@ -15383,6 +15588,12 @@ const s = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     marginTop: 16,
+  },
+  profileSecretInput: {
+    height: 112,
+    paddingTop: 14,
+    textAlignVertical: "top",
+    fontWeight: "500",
   },
   pointSendActions: {
     flexDirection: "row",
@@ -16362,7 +16573,7 @@ const s = StyleSheet.create({
     height: 2,
     backgroundColor: colors.mint600,
   },
-  messages: { padding: 20, paddingBottom: 28, maxWidth: "100%" },
+  messages: { padding: 20, paddingBottom: 8, maxWidth: "100%" },
   date: {
     alignSelf: "center",
     color: colors.textMuted,
@@ -18488,44 +18699,55 @@ const s = StyleSheet.create({
     ...shadows.tiny,
   },
   profileEditShortcut: {
-    marginTop: 18,
-    height: 46,
-    borderRadius: 16,
-    paddingHorizontal: 18,
-    flexDirection: "row",
+    marginTop: 12,
     alignItems: "center",
     justifyContent: "center",
-    gap: 7,
-    backgroundColor: "#F4FBF7",
+    gap: 6,
+  },
+  profileEditIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.mint050,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderColor: colors.mint300,
   },
   profileEditShortcutText: {
     color: colors.mint700,
-    fontSize: 13,
+    fontSize: 10,
     fontWeight: "700",
   },
   memberProfileActions: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
-    marginTop: 14,
+    justifyContent: "space-around",
+    rowGap: 18,
+    alignSelf: "stretch",
+    marginTop: 24,
   },
   profileQuickAction: {
-    minWidth: 74,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: "#F7FAF8",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    width: "25%",
     alignItems: "center",
     justifyContent: "center",
-    gap: 3,
+    gap: 8,
+  },
+  profileQuickActionIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: colors.mint050,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  profileQuickActionIconPink: {
+    backgroundColor: colors.pink050,
   },
   profileQuickActionText: {
     color: colors.textSubtle,
     fontSize: 10,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   chatInitialLoader: {
     position: "absolute",
@@ -18606,12 +18828,13 @@ const s = StyleSheet.create({
   deliveryFailed: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 2,
-    paddingBottom: 2,
+    gap: 5,
+    paddingBottom: 4,
+    marginTop: 6,
   },
-  deliveryRetry: { color: colors.mint700, fontSize: 9, fontWeight: "600" },
-  deliveryDivider: { color: colors.gray300, fontSize: 9 },
-  deliveryDelete: { color: colors.pink600, fontSize: 9, fontWeight: "600" },
+  deliveryRetry: { color: colors.mint700, fontSize: 11, fontWeight: "600" },
+  deliveryDivider: { color: colors.gray300, fontSize: 10 },
+  deliveryDelete: { color: colors.pink600, fontSize: 11, fontWeight: "600" },
   imageEditorScreen: { flex: 1, backgroundColor: "#111" },
   imageEditorBody: { flex: 1 },
   imageEditorBodyContent: {
@@ -18823,10 +19046,10 @@ const s = StyleSheet.create({
     backgroundColor: "#FFF",
   },
   pinnedIconImage: {
-    width: 14,
-    height: 14,
-    marginHorizontal: 5,
-    transform: [{ rotate: "-45deg" }],
+    width: 11,
+    height: 11,
+    marginHorizontal: 4,
+    transform: [{ rotate: "18deg" }],
   },
   notificationBadgeDot: {
     minWidth: 9,

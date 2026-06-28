@@ -1,4 +1,5 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { dispatchPendingPushes } from './notifications';
 
 export type StoryBlockInput =
   | { type: 'text'; text: string }
@@ -37,6 +38,7 @@ export async function createStory(input: {
     p_body: input.body,
   });
   if (error) throw error;
+  dispatchPendingPushes().catch(() => undefined);
   return data as string;
 }
 
@@ -65,6 +67,7 @@ export async function createStoryWithBlocks(input: {
     p_blocks: blocks,
   });
   if (error) throw error;
+  dispatchPendingPushes().catch(() => undefined);
   return data as string;
 }
 
@@ -74,6 +77,7 @@ export async function addStoryComment(storyId: string, body: string) {
     p_body: body,
   });
   if (error) throw error;
+  dispatchPendingPushes().catch(() => undefined);
   return data as string;
 }
 

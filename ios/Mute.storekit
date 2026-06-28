@@ -1,225 +1,247 @@
 {
-  "identifier" : "Mute.storekit",
-  "nonRenewingSubscriptions" : [
-
-  ],
-  "products" : [
+  "identifier": "Mute.storekit",
+  "nonRenewingSubscriptions": [],
+  "products": [
     {
-      "displayPrice" : "₩1,200",
-      "familyShareable" : false,
-      "internalID" : "mute_points_5000",
-      "localizations" : [
+      "displayPrice": "₩1,200",
+      "familyShareable": false,
+      "internalID": "mute_points_5000",
+      "localizations": [
         {
-          "description" : "5,000 포인트",
-          "displayName" : "5,000P",
-          "locale" : "ko_KR"
+          "description": "5,000 포인트",
+          "displayName": "5,000P",
+          "locale": "ko_KR"
         }
       ],
-      "productID" : "mute_points_5000",
-      "referenceName" : "5,000P",
-      "type" : "Consumable"
+      "productID": "mute_points_5000",
+      "referenceName": "5,000P",
+      "type": "Consumable"
     },
     {
-      "displayPrice" : "₩2,500",
-      "familyShareable" : false,
-      "internalID" : "mute_points_11000",
-      "localizations" : [
+      "displayPrice": "₩2,500",
+      "familyShareable": false,
+      "internalID": "mute_points_11000",
+      "localizations": [
         {
-          "description" : "11,000 포인트",
-          "displayName" : "11,000P",
-          "locale" : "ko_KR"
+          "description": "11,000 포인트",
+          "displayName": "11,000P",
+          "locale": "ko_KR"
         }
       ],
-      "productID" : "mute_points_11000",
-      "referenceName" : "11,000P",
-      "type" : "Consumable"
+      "productID": "mute_points_11000",
+      "referenceName": "11,000P",
+      "type": "Consumable"
     },
     {
-      "displayPrice" : "₩5,900",
-      "familyShareable" : false,
-      "internalID" : "mute_points_28000",
-      "localizations" : [
+      "displayPrice": "₩5,900",
+      "familyShareable": false,
+      "internalID": "mute_points_28000",
+      "localizations": [
         {
-          "description" : "28,000 포인트",
-          "displayName" : "28,000P",
-          "locale" : "ko_KR"
+          "description": "28,000 포인트",
+          "displayName": "28,000P",
+          "locale": "ko_KR"
         }
       ],
-      "productID" : "mute_points_28000",
-      "referenceName" : "28,000P",
-      "type" : "Consumable"
+      "productID": "mute_points_28000",
+      "referenceName": "28,000P",
+      "type": "Consumable"
     },
     {
-      "displayPrice" : "₩12,000",
-      "familyShareable" : false,
-      "internalID" : "mute_points_60000",
-      "localizations" : [
+      "displayPrice": "₩12,000",
+      "familyShareable": false,
+      "internalID": "mute_points_60000",
+      "localizations": [
         {
-          "description" : "60,000 포인트",
-          "displayName" : "60,000P",
-          "locale" : "ko_KR"
+          "description": "60,000 포인트",
+          "displayName": "60,000P",
+          "locale": "ko_KR"
         }
       ],
-      "productID" : "mute_points_60000",
-      "referenceName" : "60,000P",
-      "type" : "Consumable"
+      "productID": "mute_points_60000",
+      "referenceName": "60,000P",
+      "type": "Consumable"
     },
     {
-      "displayPrice" : "₩37,000",
-      "familyShareable" : false,
-      "internalID" : "mute_points_200000",
-      "localizations" : [
+      "displayPrice": "₩37,000",
+      "familyShareable": false,
+      "internalID": "mute_points_200000",
+      "localizations": [
         {
-          "description" : "200,000 포인트",
-          "displayName" : "200,000P",
-          "locale" : "ko_KR"
+          "description": "200,000 포인트",
+          "displayName": "200,000P",
+          "locale": "ko_KR"
         }
       ],
-      "productID" : "mute_points_200000",
-      "referenceName" : "200,000P",
-      "type" : "Consumable"
+      "productID": "mute_points_200000",
+      "referenceName": "200,000P",
+      "type": "Consumable"
     },
     {
-      "displayPrice" : "₩65,000",
-      "familyShareable" : false,
-      "internalID" : "mute_points_390000",
-      "localizations" : [
+      "displayPrice": "₩65,000",
+      "familyShareable": false,
+      "internalID": "mute_points_390000",
+      "localizations": [
         {
-          "description" : "390,000 포인트",
-          "displayName" : "390,000P",
-          "locale" : "ko_KR"
+          "description": "390,000 포인트",
+          "displayName": "390,000P",
+          "locale": "ko_KR"
         }
       ],
-      "productID" : "mute_points_390000",
-      "referenceName" : "390,000P",
-      "type" : "Consumable"
+      "productID": "mute_points_390000",
+      "referenceName": "390,000P",
+      "type": "Consumable"
     },
     {
-      "displayPrice" : "₩4,900",
-      "familyShareable" : false,
-      "internalID" : "mute_theme_mint",
-      "localizations" : [
+      "displayPrice": "₩4,900",
+      "familyShareable": false,
+      "internalID": "mute_theme_mint",
+      "localizations": [
         {
-          "description" : "민트 앱 테마",
-          "displayName" : "민트 테마",
-          "locale" : "ko_KR"
+          "description": "민트 앱 테마",
+          "displayName": "민트 테마",
+          "locale": "ko_KR"
         }
       ],
-      "productID" : "mute_theme_mint",
-      "referenceName" : "Theme Mint",
-      "type" : "NonConsumable"
+      "productID": "mute_theme_mint",
+      "referenceName": "Theme Mint",
+      "type": "NonConsumable"
     },
     {
-      "displayPrice" : "₩4,900",
-      "familyShareable" : false,
-      "internalID" : "mute_theme_ocean",
-      "localizations" : [
+      "displayPrice": "₩4,900",
+      "familyShareable": false,
+      "internalID": "mute_theme_ocean",
+      "localizations": [
         {
-          "description" : "오션 앱 테마",
-          "displayName" : "오션 테마",
-          "locale" : "ko_KR"
+          "description": "오션 앱 테마",
+          "displayName": "오션 테마",
+          "locale": "ko_KR"
         }
       ],
-      "productID" : "mute_theme_ocean",
-      "referenceName" : "Theme Ocean",
-      "type" : "NonConsumable"
+      "productID": "mute_theme_ocean",
+      "referenceName": "Theme Ocean",
+      "type": "NonConsumable"
     },
     {
-      "displayPrice" : "₩4,900",
-      "familyShareable" : false,
-      "internalID" : "mute_theme_lavender",
-      "localizations" : [
+      "displayPrice": "₩4,900",
+      "familyShareable": false,
+      "internalID": "mute_theme_lavender",
+      "localizations": [
         {
-          "description" : "라벤더 앱 테마",
-          "displayName" : "라벤더 테마",
-          "locale" : "ko_KR"
+          "description": "라벤더 앱 테마",
+          "displayName": "라벤더 테마",
+          "locale": "ko_KR"
         }
       ],
-      "productID" : "mute_theme_lavender",
-      "referenceName" : "Theme Lavender",
-      "type" : "NonConsumable"
+      "productID": "mute_theme_lavender",
+      "referenceName": "Theme Lavender",
+      "type": "NonConsumable"
     },
     {
-      "displayPrice" : "₩4,900",
-      "familyShareable" : false,
-      "internalID" : "mute_theme_sunset",
-      "localizations" : [
+      "displayPrice": "₩4,900",
+      "familyShareable": false,
+      "internalID": "mute_theme_sunset",
+      "localizations": [
         {
-          "description" : "선셋 앱 테마",
-          "displayName" : "선셋 테마",
-          "locale" : "ko_KR"
+          "description": "선셋 앱 테마",
+          "displayName": "선셋 테마",
+          "locale": "ko_KR"
         }
       ],
-      "productID" : "mute_theme_sunset",
-      "referenceName" : "Theme Sunset",
-      "type" : "NonConsumable"
+      "productID": "mute_theme_sunset",
+      "referenceName": "Theme Sunset",
+      "type": "NonConsumable"
     },
     {
-      "displayPrice" : "₩4,900",
-      "familyShareable" : false,
-      "internalID" : "mute_theme_mono",
-      "localizations" : [
+      "displayPrice": "₩4,900",
+      "familyShareable": false,
+      "internalID": "mute_theme_mono",
+      "localizations": [
         {
-          "description" : "모노 앱 테마",
-          "displayName" : "모노 테마",
-          "locale" : "ko_KR"
+          "description": "모노 앱 테마",
+          "displayName": "모노 테마",
+          "locale": "ko_KR"
         }
       ],
-      "productID" : "mute_theme_mono",
-      "referenceName" : "Theme Mono",
-      "type" : "NonConsumable"
+      "productID": "mute_theme_mono",
+      "referenceName": "Theme Mono",
+      "type": "NonConsumable"
+    },
+    {
+      "displayPrice": "?3,900",
+      "familyShareable": false,
+      "internalID": "mute_theme_white",
+      "localizations": [
+        {
+          "description": "??? ? ??",
+          "displayName": "??? ??",
+          "locale": "ko_KR"
+        }
+      ],
+      "productID": "mute_theme_white",
+      "referenceName": "Theme White",
+      "type": "NonConsumable"
+    },
+    {
+      "displayPrice": "?3,900",
+      "familyShareable": false,
+      "internalID": "mute_theme_dark",
+      "localizations": [
+        {
+          "description": "?? ? ??",
+          "displayName": "?? ??",
+          "locale": "ko_KR"
+        }
+      ],
+      "productID": "mute_theme_dark",
+      "referenceName": "Theme Dark",
+      "type": "NonConsumable"
     }
   ],
-  "settings" : {
-    "_failTransactionsEnabled" : false,
-    "_locale" : "ko_KR",
-    "_storefront" : "KOR",
-    "_storeKitErrors" : [
-
-    ]
+  "settings": {
+    "_failTransactionsEnabled": false,
+    "_locale": "ko_KR",
+    "_storefront": "KOR",
+    "_storeKitErrors": []
   },
-  "subscriptionGroups" : [
+  "subscriptionGroups": [
     {
-      "id" : "mute_ad_free_group",
-      "localizations" : [
+      "id": "mute_ad_free_group",
+      "localizations": [
         {
-          "customAppName" : "뮤트",
-          "locale" : "ko_KR",
-          "name" : "광고 제거"
+          "customAppName": "뮤트",
+          "locale": "ko_KR",
+          "name": "광고 제거"
         }
       ],
-      "name" : "Ad Free",
-      "subscriptions" : [
+      "name": "Ad Free",
+      "subscriptions": [
         {
-          "adHocOffers" : [
-
-          ],
-          "codeOffers" : [
-
-          ],
-          "displayPrice" : "₩5,900",
-          "familyShareable" : false,
-          "groupNumber" : 1,
-          "internalID" : "mute_ad_free_monthly",
-          "introductoryOffer" : null,
-          "localizations" : [
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "₩5,900",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "mute_ad_free_monthly",
+          "introductoryOffer": null,
+          "localizations": [
             {
-              "description" : "한 달 동안 광고를 제거합니다.",
-              "displayName" : "광고 없는 계정",
-              "locale" : "ko_KR"
+              "description": "한 달 동안 광고를 제거합니다.",
+              "displayName": "광고 없는 계정",
+              "locale": "ko_KR"
             }
           ],
-          "productID" : "mute_ad_free_monthly",
-          "recurringSubscriptionPeriod" : "P1M",
-          "referenceName" : "Ad Free Monthly",
-          "subscriptionGroupID" : "mute_ad_free_group",
-          "type" : "RecurringSubscription"
+          "productID": "mute_ad_free_monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Ad Free Monthly",
+          "subscriptionGroupID": "mute_ad_free_group",
+          "type": "RecurringSubscription"
         }
       ]
     }
   ],
-  "version" : {
-    "major" : 4,
-    "minor" : 0
+  "version": {
+    "major": 4,
+    "minor": 0
   }
 }

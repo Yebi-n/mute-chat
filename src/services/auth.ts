@@ -238,6 +238,12 @@ export async function getCurrentSession(): Promise<Session | null> {
 
 export async function signOut() {
   if (!supabase) return;
+  try {
+    const { unregisterPushDevice } = await import('./notifications');
+    await unregisterPushDevice();
+  } catch {
+    // Push-token cleanup is best effort. The local logout must still proceed.
+  }
   const { error } = await supabase.auth.signOut({ scope: 'local' });
   if (!error) return;
   try {

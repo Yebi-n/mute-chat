@@ -62,6 +62,18 @@ export async function registerPushDevice() {
   return token;
 }
 
+export async function unregisterPushDevice() {
+  if (!Device.isDevice || Platform.OS === 'web') return;
+  if (!isSupabaseConfigured || !supabase) return;
+  const token = (await Notifications.getExpoPushTokenAsync()).data;
+  if (!token) return;
+  const { error } = await supabase
+    .from('push_devices')
+    .update({ enabled: false, last_seen_at: new Date().toISOString() })
+    .eq('push_token', token);
+  if (error) throw error;
+}
+
 export async function listMyRoomSummaries() {
   if (!isSupabaseConfigured || !supabase) return [];
   const { data, error } = await supabase.rpc('get_my_room_summaries');
@@ -104,7 +116,7 @@ export async function listNotificationInbox(limit = 50): Promise<ServerNotice[]>
   const { data, error } = await supabase
     .from('user_notifications')
     .select('id,event_type,title,body,data,read_at,created_at')
-    .in('event_type', ['join_request', 'room_kicked'])
+    .in('event_type', ['join_request', 'room_kicked', 'story', 'story_comment'])
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;

@@ -6,7 +6,7 @@ set search_path = public
 as $$
 begin
   if not (
-    public.is_system_admin(auth.uid())
+    public.is_system_admin()
     or exists (
       select 1
       from public.room_memberships membership
