@@ -1477,6 +1477,7 @@ async function pickCroppedImageBatch({
 type ChatImageAsset = ImagePicker.ImagePickerAsset & {
   cropAspect?: "original" | "free" | [number, number];
   cropOffset?: { x: number; y: number };
+  cropPosition?: { x: number; y: number };
   cropScale?: number;
   cropFreeRatio?: number;
   cropRotation?: number;
@@ -1539,8 +1540,8 @@ async function prepareChatImage(asset: ChatImageAsset) {
         ? Math.max(0.45, Math.min(2.4, asset.cropFreeRatio ?? width / height))
       : requested[0] / requested[1];
   const ratio = width / height;
-  const focusX = 0;
-  const focusY = 0;
+  const focusX = Math.max(-1, Math.min(1, asset.cropPosition?.x ?? 0));
+  const focusY = Math.max(-1, Math.min(1, asset.cropPosition?.y ?? 0));
   const baseCrop =
     ratio > target
       ? {
@@ -1563,14 +1564,14 @@ async function prepareChatImage(asset: ChatImageAsset) {
       0,
       Math.min(
         width - cropWidth,
-        Math.round(baseCrop.originX + ((baseCrop.width - cropWidth) * (focusX + 1)) / 2),
+        Math.round(((width - cropWidth) * (focusX + 1)) / 2),
       ),
     ),
     originY: Math.max(
       0,
       Math.min(
         height - cropHeight,
-        Math.round(baseCrop.originY + ((baseCrop.height - cropHeight) * (focusY + 1)) / 2),
+        Math.round(((height - cropHeight) * (focusY + 1)) / 2),
       ),
     ),
     width: cropWidth,
@@ -11994,7 +11995,7 @@ function Profile({
   };
   const rawAttendanceRemaining = Math.max(0, attendanceAvailableAt - now);
   const attendanceReady = rawAttendanceRemaining <= 500;
-  const rewardedAdReady = rewardedAdAvailable && !attendanceReady;
+  const rewardedAdReady = rewardedAdAvailable;
   const remaining = attendanceReady ? 0 : rawAttendanceRemaining;
   const minutes = Math.floor(remaining / 60000);
   const seconds = Math.floor((remaining % 60000) / 1000);
@@ -14041,6 +14042,7 @@ function ChatImageEditor({
       ...asset,
       cropAspect: "original",
       cropOffset: { x: 1, y: 1 },
+      cropPosition: { x: 0, y: 0 },
       cropScale: 1,
       cropFreeRatio: (asset.width || 4) / (asset.height || 3),
       cropRotation: 0,
@@ -14052,6 +14054,10 @@ function ChatImageEditor({
   const cropBoxHeightFactor = useSharedValue(1);
   const cropStartWidthFactor = useSharedValue(1);
   const cropStartHeightFactor = useSharedValue(1);
+  const cropTranslateX = useSharedValue(0);
+  const cropTranslateY = useSharedValue(0);
+  const cropStartTranslateX = useSharedValue(0);
+  const cropStartTranslateY = useSharedValue(0);
   useEffect(() => {
     if (!items.length) onBack();
   }, [items.length, onBack]);
@@ -14077,6 +14083,7 @@ function ChatImageEditor({
     updateSelected({
       cropRotation: (((current.cropRotation ?? 0) + direction * 90) % 360 + 360) % 360,
       cropOffset: { x: 0, y: 0 },
+      cropPosition: { x: 0, y: 0 },
     });
   };
   const ratios: { label: string; value: ChatImageAsset["cropAspect"] }[] = [
@@ -14148,6 +14155,12 @@ function ChatImageEditor({
   useEffect(() => {
     cropBoxWidthFactor.value = Math.max(0.22, Math.min(1, cropFocusWidth / cropMaxWidth));
     cropBoxHeightFactor.value = Math.max(0.22, Math.min(1, cropFocusHeight / cropMaxHeight));
+    const maxTranslateX = Math.max(0, (displayedImageWidth - cropFocusWidth) / 2);
+    const maxTranslateY = Math.max(0, (displayedImageHeight - cropFocusHeight) / 2);
+    cropTranslateX.value =
+      Math.max(-1, Math.min(1, current?.cropPosition?.x ?? 0)) * maxTranslateX;
+    cropTranslateY.value =
+      Math.max(-1, Math.min(1, current?.cropPosition?.y ?? 0)) * maxTranslateY;
   }, [
     cropBoxHeightFactor,
     cropBoxWidthFactor,
@@ -14155,6 +14168,8 @@ function ChatImageEditor({
     cropFocusWidth,
     cropMaxHeight,
     cropMaxWidth,
+    displayedImageHeight,
+    displayedImageWidth,
     selected,
   ]);
   const commitCropFactors = (widthFactor: number, heightFactor: number) => {
@@ -14221,14 +14236,67 @@ function ChatImageEditor({
     }),
     [current?.cropAspect, cropMaxWidth, cropMaxHeight],
   );
+  const commitCropPosition = (
+    translateX: number,
+    translateY: number,
+    widthFactor: number,
+    heightFactor: number,
+  ) => {
+    const width = cropMaxWidth * widthFactor;
+    const height = cropMaxHeight * heightFactor;
+    const maxX = Math.max(0, (displayedImageWidth - width) / 2);
+    const maxY = Math.max(0, (displayedImageHeight - height) / 2);
+    updateSelected({
+      cropPosition: {
+        x: maxX > 0 ? Math.max(-1, Math.min(1, translateX / maxX)) : 0,
+        y: maxY > 0 ? Math.max(-1, Math.min(1, translateY / maxY)) : 0,
+      },
+    });
+  };
+  const cropMoveGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .minDistance(3)
+        .onBegin(() => {
+          cropStartTranslateX.value = cropTranslateX.value;
+          cropStartTranslateY.value = cropTranslateY.value;
+        })
+        .onUpdate((event) => {
+          const width = cropMaxWidth * cropBoxWidthFactor.value;
+          const height = cropMaxHeight * cropBoxHeightFactor.value;
+          const maxX = Math.max(0, (displayedImageWidth - width) / 2);
+          const maxY = Math.max(0, (displayedImageHeight - height) / 2);
+          cropTranslateX.value = Math.max(
+            -maxX,
+            Math.min(maxX, cropStartTranslateX.value + event.translationX),
+          );
+          cropTranslateY.value = Math.max(
+            -maxY,
+            Math.min(maxY, cropStartTranslateY.value + event.translationY),
+          );
+        })
+        .onEnd(() => {
+          runOnJS(commitCropPosition)(
+            cropTranslateX.value,
+            cropTranslateY.value,
+            cropBoxWidthFactor.value,
+            cropBoxHeightFactor.value,
+          );
+        }),
+    [cropMaxHeight, cropMaxWidth, displayedImageHeight, displayedImageWidth],
+  );
   const cropFocusAnimatedStyle = useAnimatedStyle(() => {
     const width = cropMaxWidth * cropBoxWidthFactor.value;
     const height = cropMaxHeight * cropBoxHeightFactor.value;
+    const maxX = Math.max(0, (displayedImageWidth - width) / 2);
+    const maxY = Math.max(0, (displayedImageHeight - height) / 2);
+    const translateX = Math.max(-maxX, Math.min(maxX, cropTranslateX.value));
+    const translateY = Math.max(-maxY, Math.min(maxY, cropTranslateY.value));
     return {
       width,
       height,
-      left: (previewWidth - width) / 2,
-      top: (previewHeight - height) / 2,
+      left: (previewWidth - width) / 2 + translateX,
+      top: (previewHeight - height) / 2 + translateY,
     };
   });
   return (
@@ -14276,6 +14344,9 @@ function ChatImageEditor({
                     cropFocusAnimatedStyle,
                   ]}
                 >
+                  <GestureDetector gesture={cropMoveGesture}>
+                    <Reanimated.View style={s.imageCropMoveSurface} />
+                  </GestureDetector>
                   <View style={s.imageCropGridLineVertical} />
                   <View style={[s.imageCropGridLineVertical, { left: "66.66%" }]} />
                   <View style={s.imageCropGridLineHorizontal} />
@@ -14347,6 +14418,7 @@ function ChatImageEditor({
                   updateSelected({
                     cropAspect: ratio.value,
                     cropOffset: { x: 1, y: 1 },
+                    cropPosition: { x: 0, y: 0 },
                     cropScale: 1,
                     cropFreeRatio:
                       ratio.value === "free"
@@ -14385,6 +14457,7 @@ function ChatImageEditor({
               updateSelected({
                 cropAspect: current?.cropAspect === "original" ? [1, 1] : "original",
                 cropOffset: { x: 1, y: 1 },
+                cropPosition: { x: 0, y: 0 },
                 cropScale: 1,
               })
             }
@@ -19690,6 +19763,10 @@ const s = StyleSheet.create({
     borderColor: "rgba(255,255,255,.9)",
     borderStyle: "dashed",
   },
+  imageCropMoveSurface: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 1,
+  },
   imageCropResizeHandle: {
     position: "absolute",
     width: 30,
@@ -19698,6 +19775,7 @@ const s = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#FFF",
     backgroundColor: "#8A8A8A",
+    zIndex: 2,
   },
   imageCropHandleTopLeft: { left: -15, top: -15 },
   imageCropHandleTopRight: { right: -15, top: -15 },
