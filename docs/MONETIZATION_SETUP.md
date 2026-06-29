@@ -42,6 +42,9 @@ Set these EAS environment variables before production:
 - `EXPO_PUBLIC_ADMOB_REWARDED_IOS_ID` (currently `ca-app-pub-4013454985021474/1566965165`)
 - `EXPO_PUBLIC_ADMOB_REWARDED_ANDROID_ID`
 - `EXPO_PUBLIC_ADMOB_USE_TEST_ADS=false`
+- `EXPO_PUBLIC_ADMOB_BANNER_MAIN_IOS_ID` (currently `ca-app-pub-4013454985021474/9051959127`)
+- `EXPO_PUBLIC_ADMOB_BANNER_CHAT_IOS_ID` (optional placement override)
+- `EXPO_PUBLIC_ADMOB_BANNER_STORY_IOS_ID` (optional placement override)
 
 Use official Google test IDs until all production identifiers are configured.
 The repository defaults to test ads even in TestFlight. Set

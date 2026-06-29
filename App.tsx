@@ -15,7 +15,7 @@ import * as Notifications from "expo-notifications";
 import * as ScreenCapture from "expo-screen-capture";
 import * as SecureStore from "expo-secure-store";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
-import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, forwardRef, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentProps } from "react";
 import ExternalColorPicker, {
   BrightnessSlider,
@@ -197,6 +197,7 @@ import {
 } from "./src/services/chatStyles";
 import { colors, radius, shadows, spacing } from "./src/theme";
 import { MainTab, Room } from "./src/types";
+import InlineBannerAd from "./src/components/InlineBannerAd";
 
 type Screen =
   | "main"
@@ -456,6 +457,8 @@ const BASE_CATEGORIES: { key: MainTab; label: string }[] = [
 ];
 
 const MainScreenBridge = MainScreen as unknown as (props: any) => any;
+const AdFreeContext = createContext(false);
+const useAdFree = () => useContext(AdFreeContext);
 
 let globalBusyCount = 0;
 const globalBusyListeners = new Set<(busy: boolean) => void>();
@@ -2032,6 +2035,7 @@ function AuthenticatedApp({
     Date.now(),
   );
   const [rewardedAdAvailable, setRewardedAdAvailable] = useState(true);
+  const [adFreeActive, setAdFreeActive] = useState(false);
   const [rewardLoading, setRewardLoading] = useState<
     "attendance" | "rewarded_ad" | null
   >(null);
@@ -2211,8 +2215,10 @@ function AuthenticatedApp({
   }, [session?.user.id]);
   useEffect(() => {
     let active = true;
+    let entitlementExpiryTimer: ReturnType<typeof setTimeout> | null = null;
     const userId = session?.user.id;
     if (!userId) {
+      setAdFreeActive(false);
       applyAppTheme(APP_THEMES[0]);
       return;
     }
@@ -2222,17 +2228,59 @@ function AuthenticatedApp({
       userId,
       APP_THEMES.flatMap((theme) => (theme.productId ? [theme.productId] : [])),
     );
-    listStoreEntitlements()
+    const reloadEntitlements = () => listStoreEntitlements()
       .then((items) => {
         if (!active) return;
+        const now = Date.now();
+        const activeAdFree = items.find(
+          (item) =>
+            item.type === "ad_free" &&
+            (!item.expiresAt || Date.parse(item.expiresAt) > now),
+        );
+        setAdFreeActive(
+          Boolean(activeAdFree),
+        );
+        if (entitlementExpiryTimer) clearTimeout(entitlementExpiryTimer);
+        const expiresAt = activeAdFree?.expiresAt
+          ? Date.parse(activeAdFree.expiresAt)
+          : Number.NaN;
+        if (Number.isFinite(expiresAt))
+          entitlementExpiryTimer = setTimeout(
+            () => void reloadEntitlements(),
+            Math.max(1000, expiresAt - now + 1000),
+          );
         void loadStoredAppTheme(
           userId,
           items.map((item) => item.productId),
         );
       })
       .catch(() => undefined);
+    void reloadEntitlements();
+    const entitlementChannel =
+      supabase && isSupabaseConfigured
+        ? supabase
+            .channel(`store-entitlements-${userId}`)
+            .on(
+              "postgres_changes",
+              {
+                event: "*",
+                schema: "public",
+                table: "user_entitlements",
+                filter: `user_id=eq.${userId}`,
+              },
+              () => void reloadEntitlements(),
+            )
+            .subscribe()
+        : null;
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void reloadEntitlements();
+    });
     return () => {
       active = false;
+      if (entitlementExpiryTimer) clearTimeout(entitlementExpiryTimer);
+      appStateSubscription.remove();
+      if (entitlementChannel && supabase)
+        supabase.removeChannel(entitlementChannel);
     };
   }, [session?.user.id]);
   const reloadAppData = async (showSpinner = false) => {
@@ -2735,6 +2783,7 @@ function AuthenticatedApp({
       ),
     );
   return (
+    <AdFreeContext.Provider value={adFreeActive}>
     <AppStack.Navigator
       initialRouteName="Main"
       screenOptions={{
@@ -3040,6 +3089,7 @@ function AuthenticatedApp({
         )}
       </AppStack.Screen>
     </AppStack.Navigator>
+    </AdFreeContext.Provider>
   );
 }
 
@@ -4580,6 +4630,7 @@ function MainScreen({
   onAttendance: () => void;
   onRewardedAd: () => void;
 }) {
+  const adsDisabled = useAdFree();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
   const [toast, setToast] = useState("");
@@ -5017,7 +5068,14 @@ function MainScreen({
         </Pressable>
       )}
       {!storyDetailOpen && !profileSubpageOpen && (
-        <BottomNav selected={bottomTab} onSelect={setBottomTab} />
+        <>
+          <InlineBannerAd
+            placement="main"
+            disabled={adsDisabled}
+            dark={appTheme.id === "dark"}
+          />
+          <BottomNav selected={bottomTab} onSelect={setBottomTab} />
+        </>
       )}
       <NotificationDrawer
         open={drawerOpen}
@@ -5963,6 +6021,20 @@ function ChatRoom({
   onBack: () => void;
 }) {
   const appTheme = useAppTheme();
+  const adsDisabled = useAdFree();
+  const [chatKeyboardVisible, setChatKeyboardVisible] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener("keyboardDidShow", () =>
+      setChatKeyboardVisible(true),
+    );
+    const hide = Keyboard.addListener("keyboardDidHide", () =>
+      setChatKeyboardVisible(false),
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
     room.id === DEMO_ROOM_ID ? membersForRoom(room) : [],
   );
@@ -8442,6 +8514,13 @@ function ChatRoom({
                 </Pressable>
               </View>
             )}
+            {!readOnly && chatKeyboardVisible && (
+              <InlineBannerAd
+                placement="chat"
+                disabled={adsDisabled}
+                dark={appTheme.id === "dark"}
+              />
+            )}
           </>
         )}
       </KeyboardAvoidingView>
@@ -9362,6 +9441,7 @@ function StoryDetail({
   onDelete: () => void;
   onOpenRoom?: () => void;
 }) {
+  const adsDisabled = useAdFree();
   const [comment, setComment] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -9655,6 +9735,11 @@ function StoryDetail({
             />
           ),
         )}
+        <InlineBannerAd
+          placement="story"
+          disabled={adsDisabled}
+          dark={theme.id === "dark"}
+        />
         <View style={s.commentSection}>
           <Text style={s.commentCount}>댓글 {story.comments.length}</Text>
           {story.comments.map((item) => (
