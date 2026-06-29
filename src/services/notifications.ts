@@ -105,10 +105,24 @@ export async function setGlobalNotificationsEnabled(enabled: boolean) {
   if (error) throw error;
 }
 
-export async function dispatchPendingPushes() {
+async function invokePushOutbox() {
   if (!isSupabaseConfigured || !supabase) return;
   const { error } = await supabase.functions.invoke('send-push-outbox', { body: {} });
   if (error) throw error;
+}
+
+let lastPushFlushScheduledAt = 0;
+
+export async function dispatchPendingPushes() {
+  await invokePushOutbox();
+  const now = Date.now();
+  if (now - lastPushFlushScheduledAt < 2000) return;
+  lastPushFlushScheduledAt = now;
+  [800, 2200, 5000].forEach((delay) => {
+    setTimeout(() => {
+      invokePushOutbox().catch(() => undefined);
+    }, delay);
+  });
 }
 
 export async function listNotificationInbox(limit = 50): Promise<ServerNotice[]> {

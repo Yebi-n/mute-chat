@@ -11927,6 +11927,7 @@ function Profile({
   };
   const rawAttendanceRemaining = Math.max(0, attendanceAvailableAt - now);
   const attendanceReady = rawAttendanceRemaining <= 500;
+  const rewardedAdReady = rewardedAdAvailable && !attendanceReady;
   const remaining = attendanceReady ? 0 : rawAttendanceRemaining;
   const minutes = Math.floor(remaining / 60000);
   const seconds = Math.floor((remaining % 60000) / 1000);
@@ -12059,17 +12060,17 @@ function Profile({
             </LinearGradient>
           </Pressable>
           <Pressable
-            disabled={!rewardedAdAvailable || Boolean(rewardLoading)}
+            disabled={!rewardedAdReady || Boolean(rewardLoading)}
             onPress={onRewardedAd}
             style={[
               s.rewardButton,
-              (!rewardedAdAvailable || Boolean(rewardLoading)) &&
+              (!rewardedAdReady || Boolean(rewardLoading)) &&
                 s.rewardButtonDisabled,
             ]}
           >
             <LinearGradient
               colors={
-                rewardedAdAvailable && !rewardLoading
+                rewardedAdReady && !rewardLoading
                   ? rewardActiveColors
                   : rewardDisabledColors
               }
@@ -12083,7 +12084,7 @@ function Profile({
                   : "광고 보고 포인트 더 받기"}
               </Text>
               <Text style={[s.rewardPoints, { color: rewardTextColor }]}>
-                {rewardedAdAvailable ? "10 P" : "이번 보상 완료"}
+                {rewardedAdReady ? "10 P" : "이번 보상 완료"}
               </Text>
             </LinearGradient>
           </Pressable>

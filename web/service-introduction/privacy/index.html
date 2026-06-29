@@ -10,10 +10,10 @@
       :root {
         color-scheme: light;
         --text: #1c1c1c;
-        --sub: #66706b;
-        --line: #e8ecea;
-        --soft: #f6f8f7;
-        --point: #399f72;
+        --sub: #6f6f6f;
+        --line: #e5e5e5;
+        --soft: #f6f6f6;
+        --point: #555;
       }
       * { box-sizing: border-box; }
       html { scroll-behavior: smooth; }
@@ -26,18 +26,9 @@
         word-break: keep-all;
       }
       a { color: var(--point); text-underline-offset: 3px; }
-      header {
-        position: sticky;
-        top: 0;
-        z-index: 10;
-        border-bottom: 1px solid var(--line);
-        background: rgba(255, 255, 255, .94);
-        backdrop-filter: blur(12px);
-      }
+      header { display: none; }
       .header-inner, main, footer { width: min(760px, calc(100% - 40px)); margin: 0 auto; }
       .header-inner { height: 64px; display: flex; align-items: center; justify-content: space-between; }
-      .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 700; text-decoration: none; }
-      .brand img { width: 32px; height: 32px; object-fit: contain; }
       .updated { color: var(--sub); font-size: 12px; }
       main { padding: 52px 0 72px; }
       h1 { margin: 0; font-size: clamp(30px, 7vw, 42px); line-height: 1.2; letter-spacing: -.045em; }
@@ -53,9 +44,9 @@
       ul, ol { padding-left: 21px; font-size: 14px; }
       li + li { margin-top: 6px; }
       .table-wrap { overflow-x: auto; margin: 16px 0; border: 1px solid var(--line); border-radius: 14px; }
-      table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 13px; }
+      table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 14px; }
       th, td { padding: 13px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
-      th { background: var(--soft); font-weight: 650; }
+      th { background: var(--soft); font-weight: 600; }
       tr:last-child td { border-bottom: 0; }
       .notice { padding: 18px; border-radius: 14px; background: var(--soft); color: var(--sub); font-size: 13px; }
       .contact { padding: 22px; border: 1px solid var(--line); border-radius: 16px; }
@@ -75,13 +66,6 @@
     </style>
   </head>
   <body>
-    <header>
-      <div class="header-inner">
-        <a class="brand" href="../"><img src="../mute-logo-color.png" alt="" /><span>뮤트</span></a>
-        <span class="updated">시행일 2026년 6월 29일</span>
-      </div>
-    </header>
-
     <main>
       <h1>개인정보 처리방침</h1>
       <p class="lead">
