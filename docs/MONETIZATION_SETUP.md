@@ -12,6 +12,9 @@ The app uses `expo-iap` to open the native purchase sheet. Supabase `verify-stor
 
 ## AdMob
 
+광고 형식과 화면별 배치 기준은
+`docs/ADMOB_AD_FORMAT_AND_PLACEMENT.md`를 따른다.
+
 Development builds use Google's rewarded test ad unit when production IDs are absent.
 
 Only rewarded ads are enabled. Banner and interstitial ads are intentionally
