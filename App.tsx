@@ -2270,10 +2270,19 @@ function AuthenticatedApp({
     const client = supabase;
     let active = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const reload = () =>
-      listMyRoomSummaries()
-        .then((rows) => {
-          if (!active) return;
+    let reloadInFlight = false;
+    let reloadPending = false;
+    const reload = async () => {
+      if (reloadInFlight) {
+        reloadPending = true;
+        return;
+      }
+      reloadInFlight = true;
+      try {
+        do {
+          reloadPending = false;
+          const rows = await listMyRoomSummaries();
+          if (!active) break;
           setUnreadCounts(
             Object.fromEntries(rows.map((row) => [row.roomId, row.unreadCount])),
           );
@@ -2290,13 +2299,18 @@ function AuthenticatedApp({
               ]),
             ),
           );
-        })
-        .catch(() => undefined);
+        } while (reloadPending);
+      } catch {
+        // Keep the last successful summary and wait for the next event.
+      } finally {
+        reloadInFlight = false;
+      }
+    };
     const scheduleReload = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(reload, 120);
+      timer = setTimeout(() => void reload(), 300);
     };
-    reload();
+    void reload();
     const messageChannel = client
       .channel(`my-room-summaries-${session.user.id}`)
       .on(
@@ -3021,6 +3035,8 @@ function serverErrorMessage(error: unknown) {
   }
   if (!message || message === "[object Object]")
     message = "알 수 없는 오류가 발생했습니다.";
+  if (message.includes("MESSAGE_RATE_LIMIT"))
+    return "메시지를 너무 빠르게 보내고 있어요. 잠시 후 다시 시도해주세요.";
   if (message.includes("RATE_LIMITED")) return "잠시 후 다시 시도해주세요.";
   if (message.includes("PHONE_ALREADY_REGISTERED"))
     return "이미 가입된 전화번호입니다.";
@@ -6243,9 +6259,18 @@ function ChatRoom({
     if (!supabase || !isUuid(room.id)) return;
     const client = supabase;
     let reloadTimer: ReturnType<typeof setTimeout> | null = null;
-    const reload = () =>
-      listRoomMessages(room.id)
-        .then((serverMessages) =>
+    let reloadInFlight = false;
+    let reloadPending = false;
+    const reload = async () => {
+      if (reloadInFlight) {
+        reloadPending = true;
+        return;
+      }
+      reloadInFlight = true;
+      try {
+        do {
+          reloadPending = false;
+          const serverMessages = await listRoomMessages(room.id);
           setMessages((current) => {
             const byId = new Map(current.map((item) => [item.id, item]));
             serverMessages.forEach((item) => {
@@ -6256,12 +6281,17 @@ function ChatRoom({
               (Date.parse(first.createdAt ?? "") || 0) -
               (Date.parse(second.createdAt ?? "") || 0),
             );
-          }),
-        )
-        .catch(() => undefined);
+          });
+        } while (reloadPending);
+      } catch {
+        // Realtime will deliver a later event; avoid retry storms here.
+      } finally {
+        reloadInFlight = false;
+      }
+    };
     const scheduleReload = () => {
       if (reloadTimer) clearTimeout(reloadTimer);
-      reloadTimer = setTimeout(reload, 120);
+      reloadTimer = setTimeout(() => void reload(), 250);
     };
     const channel = client
       .channel(`chat-messages-${room.id}`)

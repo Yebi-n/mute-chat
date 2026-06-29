@@ -1,5 +1,6 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { dispatchPendingPushes } from './notifications';
+import { getCachedSignedUrls } from './signedUrls';
 
 export type CreateRoomInput = {
   name: string;
@@ -89,13 +90,15 @@ export async function listRooms() {
       );
     }
   }
-  return Promise.all(rows.map(async(row)=>{
+  const coverUrlByPath = await getCachedSignedUrls(
+    'room-covers',
+    rows.map((row) => row.cover_asset_path),
+  );
+  return rows.map((row)=>{
     const baseRow = { ...row, member_count: memberCountByRoom.get(row.id) ?? 0 };
     if(!row.cover_asset_path)return baseRow;
-    const {data:signed,error:signedError}=await client.storage.from('room-covers').createSignedUrl(row.cover_asset_path,3600);
-    if(signedError)return baseRow;
-    return {...baseRow,cover_url:signed?.signedUrl};
-  }));
+    return {...baseRow,cover_url:coverUrlByPath.get(row.cover_asset_path)};
+  });
 }
 
 export async function getRoomById(roomId: string) {
@@ -117,10 +120,8 @@ export async function getRoomById(roomId: string) {
     memberCount = Number(countRows[0].member_count ?? 1);
   const baseRow = { ...row, member_count: memberCount };
   if (!row.cover_asset_path) return baseRow;
-  const { data: signed } = await client.storage
-    .from('room-covers')
-    .createSignedUrl(row.cover_asset_path, 3600);
-  return { ...baseRow, cover_url: signed?.signedUrl };
+  const signed = await getCachedSignedUrls('room-covers', [row.cover_asset_path]);
+  return { ...baseRow, cover_url: signed.get(row.cover_asset_path) };
 }
 
 export async function listRoomMembers(roomId: string) {
@@ -153,16 +154,7 @@ export async function listRoomMembers(roomId: string) {
   const avatarPaths = (profileRows ?? [])
     .map((row) => row.avatar_asset_path as string | null)
     .filter((value): value is string => Boolean(value));
-  const avatarUrlByPath = new Map<string, string>();
-  if (avatarPaths.length) {
-    const { data: signedRows, error: signedError } = await client.storage
-      .from('profile-avatars')
-      .createSignedUrls(avatarPaths, 3600);
-    if (!signedError)
-      signedRows?.forEach((row, index) => {
-        if (row.signedUrl) avatarUrlByPath.set(avatarPaths[index], row.signedUrl);
-      });
-  }
+  const avatarUrlByPath = await getCachedSignedUrls('profile-avatars', avatarPaths);
 
   const profileByUserId = new Map(
     (profileRows ?? []).map((row) => [
@@ -304,16 +296,7 @@ export async function listRoomMembersVisible(roomId: string): Promise<ServerRoom
   const avatarPaths = rows
     .map((row) => row.avatar_asset_path)
     .filter((value): value is string => Boolean(value));
-  const avatarUrlByPath = new Map<string, string>();
-  if (avatarPaths.length) {
-    const { data: signedRows, error: signedError } = await client.storage
-      .from('profile-avatars')
-      .createSignedUrls(avatarPaths, 3600);
-    if (!signedError)
-      signedRows?.forEach((row, index) => {
-        if (row.signedUrl) avatarUrlByPath.set(avatarPaths[index], row.signedUrl);
-      });
-  }
+  const avatarUrlByPath = await getCachedSignedUrls('profile-avatars', avatarPaths);
   return rows.map((row) => ({
     userId: row.user_id,
     name: row.display_name?.trim() || '멤버',
@@ -342,19 +325,9 @@ export async function listPendingRoomJoinRequestsWithAvatars(roomId: string) {
   const avatarPaths = rows
     .map((row) => row.requested_avatar_path)
     .filter((value): value is string => Boolean(value));
-  const avatarUrlByPath = new Map<string, string>();
-  if (avatarPaths.length) {
-    const { data: signedRows, error: signedError } = await client.storage
-      .from('profile-avatars')
-      .createSignedUrls(avatarPaths, 3600);
-    if (!signedError)
-      signedRows?.forEach((row, index) => {
-        if (row.signedUrl) avatarUrlByPath.set(avatarPaths[index], row.signedUrl);
-      });
-  }
+  const avatarUrlByPath = await getCachedSignedUrls('profile-avatars', avatarPaths);
   return rows.map((row) => ({
     ...row,
     avatar_url: row.requested_avatar_path ? avatarUrlByPath.get(row.requested_avatar_path) : undefined,
   }));
 }
-

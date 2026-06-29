@@ -1,5 +1,6 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { dispatchPendingPushes } from './notifications';
+import { getCachedSignedUrls } from './signedUrls';
 
 function requireClient() {
   if (!isSupabaseConfigured || !supabase) {
@@ -56,11 +57,7 @@ export async function listDepartedRoomMembers(roomId: string) {
     left_at: string | null;
   }[];
   const paths = [...new Set(rows.map((row) => row.avatar_asset_path).filter((value): value is string => Boolean(value)))];
-  const signedByPath = new Map<string, string>();
-  await Promise.all(paths.map(async (path) => {
-    const { data: signed } = await client.storage.from('chat-media').createSignedUrl(path, 3600);
-    if (signed?.signedUrl) signedByPath.set(path, signed.signedUrl);
-  }));
+  const signedByPath = await getCachedSignedUrls('chat-media', paths);
   return rows.map((row) => ({
     userId: row.user_id as string,
     name: row.display_name as string,

@@ -2,21 +2,46 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const supabase = createClient(supabaseUrl, serviceRoleKey);
+const supabase = createClient(supabaseUrl, serviceRoleKey, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+
+type PushJob = {
+  id: number;
+  recipient_user_id: string;
+  title: string;
+  body: string;
+  data: Record<string, unknown>;
+  attempt_count: number;
+};
+
+function chunks<T>(items: T[], size: number) {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += size)
+    result.push(items.slice(index, index + size));
+  return result;
+}
+
+async function authenticate(request: Request) {
+  const authorization = request.headers.get('authorization');
+  if (!authorization?.startsWith('Bearer ')) return false;
+  const token = authorization.slice('Bearer '.length);
+  if (token === serviceRoleKey) return true;
+  const { data, error } = await supabase.auth.getUser(token);
+  return !error && Boolean(data.user);
+}
 
 Deno.serve(async (request) => {
-  const authorization=request.headers.get('authorization');
-  if(!authorization?.startsWith('Bearer '))return new Response('Unauthorized',{status:401});
-  const { data: jobs, error: jobsError } = await supabase
-    .from('push_outbox')
-    .select('id,recipient_user_id,title,body,data')
-    .is('sent_at', null)
-    .is('failed_at', null)
-    .order('created_at')
-    .limit(100);
+  if (!(await authenticate(request)))
+    return new Response('Unauthorized', { status: 401 });
 
-  if (jobsError) return new Response(jobsError.message, { status: 500 });
-  if (!jobs?.length) return Response.json({ processed: 0 });
+  const { data: claimed, error: claimError } = await supabase.rpc(
+    'claim_push_outbox',
+    { p_limit: 100 },
+  );
+  if (claimError) return new Response(claimError.message, { status: 500 });
+  const jobs = (claimed ?? []) as PushJob[];
+  if (!jobs.length) return Response.json({ processed: 0 });
 
   const userIds = [...new Set(jobs.map((job) => job.recipient_user_id))];
   const { data: devices, error: devicesError } = await supabase
@@ -24,7 +49,13 @@ Deno.serve(async (request) => {
     .select('user_id,push_token')
     .in('user_id', userIds)
     .eq('enabled', true);
-  if (devicesError) return new Response(devicesError.message, { status: 500 });
+  if (devicesError) {
+    await supabase
+      .from('push_outbox')
+      .update({ processing_started_at: null, failure_reason: devicesError.message })
+      .in('id', jobs.map((job) => job.id));
+    return new Response(devicesError.message, { status: 500 });
+  }
 
   const tokensByUser = new Map<string, string[]>();
   for (const device of devices ?? []) {
@@ -33,56 +64,126 @@ Deno.serve(async (request) => {
     tokensByUser.set(device.user_id, tokens);
   }
 
-  const notificationImageByJob = new Map<string, string>();
-  await Promise.all(jobs.map(async (job) => {
-    const path = job.data?.senderAvatarPath ?? job.data?.roomCoverPath;
-    if (typeof path !== 'string' || !path) return;
-    const { data: signed } = await supabase.storage
-      .from('chat-media')
-      .createSignedUrl(path, 60 * 60);
-    if (signed?.signedUrl) notificationImageByJob.set(job.id, signed.signedUrl);
-  }));
+  const imageRequests = new Map<string, { bucket: string; path: string }>();
+  for (const job of jobs) {
+    const avatarPath = job.data?.senderAvatarPath;
+    const coverPath = job.data?.roomCoverPath;
+    if (typeof avatarPath === 'string' && avatarPath)
+      imageRequests.set(`profile-avatars:${avatarPath}`, {
+        bucket: 'profile-avatars',
+        path: avatarPath,
+      });
+    else if (typeof coverPath === 'string' && coverPath)
+      imageRequests.set(`room-covers:${coverPath}`, {
+        bucket: 'room-covers',
+        path: coverPath,
+      });
+  }
 
+  const signedByKey = new Map<string, string>();
+  for (const bucket of ['profile-avatars', 'room-covers']) {
+    const paths = [...imageRequests.values()]
+      .filter((item) => item.bucket === bucket)
+      .map((item) => item.path);
+    if (!paths.length) continue;
+    const { data } = await supabase.storage.from(bucket).createSignedUrls(paths, 3600);
+    data?.forEach((row, index) => {
+      if (row.signedUrl) signedByKey.set(`${bucket}:${paths[index]}`, row.signedUrl);
+    });
+  }
+
+  const noDeviceIds: number[] = [];
+  const envelopes: Array<{
+    jobId: number;
+    message: Record<string, unknown>;
+  }> = [];
   for (const job of jobs) {
     const tokens = tokensByUser.get(job.recipient_user_id) ?? [];
     if (!tokens.length) {
-      await supabase.from('push_outbox').update({
-        failed_at: new Date().toISOString(),
-        failure_reason: 'NO_ACTIVE_DEVICE',
-      }).eq('id', job.id);
+      noDeviceIds.push(job.id);
       continue;
     }
-
-    const notificationImage = notificationImageByJob.get(job.id);
-    const messages = tokens.map((to) => ({
-      to,
-      sound: 'default',
-      channelId: 'messages',
-      priority: 'high',
-      title: job.title,
-      body: job.body,
-      data: {
-        ...job.data,
-        notificationId: job.id,
-        notificationImageUrl: notificationImage,
-      },
-      ...(notificationImage
-        ? { richContent: { image: notificationImage } }
-        : {}),
-    }));
-    const response = await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(messages),
-    });
-    await supabase.from('push_outbox').update(response.ok ? {
-      sent_at: new Date().toISOString(),
-      failure_reason: null,
-    } : {
-      failed_at: new Date().toISOString(),
-      failure_reason: `EXPO_${response.status}`,
-    }).eq('id', job.id);
+    const avatarPath = job.data?.senderAvatarPath;
+    const coverPath = job.data?.roomCoverPath;
+    const notificationImage =
+      typeof avatarPath === 'string'
+        ? signedByKey.get(`profile-avatars:${avatarPath}`)
+        : typeof coverPath === 'string'
+          ? signedByKey.get(`room-covers:${coverPath}`)
+          : undefined;
+    tokens.forEach((to) =>
+      envelopes.push({
+        jobId: job.id,
+        message: {
+          to,
+          sound: 'default',
+          channelId: 'messages',
+          priority: 'high',
+          title: job.title,
+          body: job.body,
+          data: {
+            ...job.data,
+            notificationId: job.id,
+            notificationImageUrl: notificationImage,
+          },
+          ...(notificationImage
+            ? { richContent: { image: notificationImage } }
+            : {}),
+        },
+      }),
+    );
   }
 
-  return Response.json({ processed: jobs.length });
+  const failedJobIds = new Set<number>();
+  for (const batch of chunks(envelopes, 100)) {
+    try {
+      const response = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(batch.map((item) => item.message)),
+      });
+      if (!response.ok) batch.forEach((item) => failedJobIds.add(item.jobId));
+    } catch {
+      batch.forEach((item) => failedJobIds.add(item.jobId));
+    }
+  }
+
+  const deliveredIds = jobs
+    .map((job) => job.id)
+    .filter((id) => !noDeviceIds.includes(id) && !failedJobIds.has(id));
+  const terminalFailureIds = jobs
+    .filter((job) => failedJobIds.has(job.id) && job.attempt_count >= 5)
+    .map((job) => job.id);
+  const retryIds = [...failedJobIds].filter(
+    (id) => !terminalFailureIds.includes(id),
+  );
+  const now = new Date().toISOString();
+
+  if (deliveredIds.length)
+    await supabase
+      .from('push_outbox')
+      .update({ sent_at: now, processing_started_at: null, failure_reason: null })
+      .in('id', deliveredIds);
+  if (noDeviceIds.length)
+    await supabase
+      .from('push_outbox')
+      .update({ failed_at: now, processing_started_at: null, failure_reason: 'NO_ACTIVE_DEVICE' })
+      .in('id', noDeviceIds);
+  if (terminalFailureIds.length)
+    await supabase
+      .from('push_outbox')
+      .update({ failed_at: now, processing_started_at: null, failure_reason: 'EXPO_RETRY_EXHAUSTED' })
+      .in('id', terminalFailureIds);
+  if (retryIds.length)
+    await supabase
+      .from('push_outbox')
+      .update({ processing_started_at: null, failure_reason: 'EXPO_RETRY_PENDING' })
+      .in('id', retryIds);
+
+  return Response.json({
+    processed: jobs.length,
+    delivered: deliveredIds.length,
+    retrying: retryIds.length,
+    failed: noDeviceIds.length + terminalFailureIds.length,
+  });
 });

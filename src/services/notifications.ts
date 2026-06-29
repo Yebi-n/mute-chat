@@ -111,18 +111,27 @@ async function invokePushOutbox() {
   if (error) throw error;
 }
 
-let lastPushFlushScheduledAt = 0;
+let pushFlushPromise: Promise<void> | null = null;
+let lastPushFlushAt = 0;
+const PUSH_FLUSH_MIN_INTERVAL_MS = 1500;
 
 export async function dispatchPendingPushes() {
-  await invokePushOutbox();
-  const now = Date.now();
-  if (now - lastPushFlushScheduledAt < 2000) return;
-  lastPushFlushScheduledAt = now;
-  [800, 2200, 5000].forEach((delay) => {
-    setTimeout(() => {
-      invokePushOutbox().catch(() => undefined);
-    }, delay);
-  });
+  if (pushFlushPromise) return pushFlushPromise;
+  const waitMs = Math.max(
+    0,
+    PUSH_FLUSH_MIN_INTERVAL_MS - (Date.now() - lastPushFlushAt),
+  );
+  pushFlushPromise = new Promise<void>((resolve) => {
+    setTimeout(resolve, waitMs);
+  })
+    .then(async () => {
+      lastPushFlushAt = Date.now();
+      await invokePushOutbox();
+    })
+    .finally(() => {
+      pushFlushPromise = null;
+    });
+  return pushFlushPromise;
 }
 
 export async function listNotificationInbox(limit = 50): Promise<ServerNotice[]> {

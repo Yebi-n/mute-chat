@@ -1,5 +1,6 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { dispatchPendingPushes } from './notifications';
+import { getCachedSignedUrls } from './signedUrls';
 
 export type StoryBlockInput =
   | { type: 'text'; text: string }
@@ -133,8 +134,8 @@ export async function listStories(input: { roomId?: string; publicOnly?: boolean
     { data: profileRows, error: profileError },
     { data: likeRows },
   ] = await Promise.all([
-    client.from('story_blocks').select('story_id,block_type,text_content,storage_path,mime_type,position').in('story_id', storyIds).order('position'),
-    client.from('story_comments').select('id,story_id,author_user_id,body,created_at').in('story_id', storyIds).is('deleted_at', null).order('created_at'),
+    client.from('story_blocks').select('story_id,block_type,text_content,storage_path,mime_type,position').in('story_id', storyIds).order('position').limit(1000),
+    client.from('story_comments').select('id,story_id,author_user_id,body,created_at').in('story_id', storyIds).is('deleted_at', null).order('created_at').limit(500),
     client.from('rooms').select('id,name').in('id', roomIds),
     client.from('room_profiles').select('room_id,user_id,display_name,avatar_asset_path').in('room_id', roomIds),
     client.from('story_likes').select('story_id').in('story_id', storyIds),
@@ -145,26 +146,12 @@ export async function listStories(input: { roomId?: string; publicOnly?: boolean
   if (profileError && !input.publicOnly) throw profileError;
 
   const imagePaths = (blockRows ?? []).flatMap((row) => row.storage_path ? [row.storage_path as string] : []);
-  const signedByPath = new Map<string, string>();
-  if (imagePaths.length) {
-    const { data: signedRows, error: signedError } = await client.storage.from('chat-media').createSignedUrls(imagePaths, 3600);
-    if (signedError) throw signedError;
-    signedRows?.forEach((row, index) => {
-      if (row.signedUrl) signedByPath.set(imagePaths[index], row.signedUrl);
-    });
-  }
+  const signedByPath = await getCachedSignedUrls('chat-media', imagePaths);
 
   const avatarPaths = (profileRows ?? [])
     .map((row) => row.avatar_asset_path as string | null)
     .filter((value): value is string => Boolean(value));
-  const signedAvatarByPath = new Map<string, string>();
-  if (avatarPaths.length) {
-    const { data: signedAvatarRows, error: signedAvatarError } = await client.storage.from('profile-avatars').createSignedUrls(avatarPaths, 3600);
-    if (signedAvatarError) throw signedAvatarError;
-    signedAvatarRows?.forEach((row, index) => {
-      if (row.signedUrl) signedAvatarByPath.set(avatarPaths[index], row.signedUrl);
-    });
-  }
+  const signedAvatarByPath = await getCachedSignedUrls('profile-avatars', avatarPaths);
 
   const profileFor = (roomId: string, userId: string | null) =>
     profileRows?.find((row) => row.room_id === roomId && row.user_id === userId);

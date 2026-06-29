@@ -1,5 +1,6 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { dispatchPendingPushes } from './notifications';
+import { getCachedSignedUrls } from './signedUrls';
 
 export type ServerRoomMessage = {
   id: string;
@@ -166,7 +167,6 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
     { data: storyRows, error: storyError },
     { data: storyBlockRows, error: storyBlockError },
     { data: styleRows, error: styleError },
-    { data: memberProfileRows, error: memberProfileError },
   ] = await Promise.all([
     client.from('room_profiles').select('user_id,display_name,avatar_asset_path').eq('room_id', roomId).in('user_id', userIds.length ? userIds : ['00000000-0000-0000-0000-000000000000']),
     replyIds.length
@@ -182,10 +182,6 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
       ? client.from('story_blocks').select('story_id,block_type,text_content,storage_path,position').in('story_id', storyIds).order('position')
       : Promise.resolve({ data: [], error: null }),
     client.rpc('get_room_chat_styles',{p_room_id:roomId}),
-    client
-      .from('room_profiles')
-      .select('user_id,display_name,avatar_asset_path')
-      .eq('room_id', roomId),
   ]);
   if (profileError) throw profileError;
   if (replyError) throw replyError;
@@ -193,36 +189,18 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
   if (storyError) throw storyError;
   if (storyBlockError) throw storyBlockError;
   if (styleError) throw styleError;
-  if (memberProfileError) throw memberProfileError;
   const styleByUserId=new Map<string,{bubbleColor:string;textColor:string}>(((styleRows??[]) as Array<{user_id:string;bubble_color:string;text_color:string}>).map((row)=>[row.user_id,{bubbleColor:row.bubble_color,textColor:row.text_color}]));
 
-  const mergedProfileRows = [
-    ...(memberProfileRows ?? []),
-    ...(profileRows ?? []),
-  ];
+  const mergedProfileRows = profileRows ?? [];
   const avatarPaths = mergedProfileRows
     .map((row) => row.avatar_asset_path as string | null)
     .filter((value): value is string => Boolean(value));
-  const avatarUrlByPath = new Map<string, string>();
-  if (avatarPaths.length) {
-    const { data: signedAvatarRows, error: signedAvatarError } = await client.storage.from('profile-avatars').createSignedUrls(avatarPaths, 3600);
-    if (signedAvatarError) throw signedAvatarError;
-    signedAvatarRows?.forEach((row, index) => {
-      if (row.signedUrl) avatarUrlByPath.set(avatarPaths[index], row.signedUrl);
-    });
-  }
+  const avatarUrlByPath = await getCachedSignedUrls('profile-avatars', avatarPaths);
 
   const assetPaths = (assetRows ?? [])
     .map((row) => row.storage_path as string | null)
     .filter((value): value is string => Boolean(value));
-  const imageUrlByPath = new Map<string, string>();
-  if (assetPaths.length) {
-    const { data: signedAssetRows, error: signedAssetError } = await client.storage.from('chat-media').createSignedUrls(assetPaths, 3600);
-    if (signedAssetError) throw signedAssetError;
-    signedAssetRows?.forEach((row, index) => {
-      if (row.signedUrl) imageUrlByPath.set(assetPaths[index], row.signedUrl);
-    });
-  }
+  const imageUrlByPath = await getCachedSignedUrls('chat-media', assetPaths);
 
   const profileByUserId = new Map(
     mergedProfileRows.map((row) => [
@@ -254,14 +232,7 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
   const storyImagePaths = (storyBlockRows ?? [])
     .map((row) => row.storage_path as string | null)
     .filter((value): value is string => Boolean(value));
-  const storyImageUrlByPath = new Map<string, string>();
-  if (storyImagePaths.length) {
-    const { data: signedStoryRows, error: signedStoryError } = await client.storage.from('chat-media').createSignedUrls(storyImagePaths, 3600);
-    if (signedStoryError) throw signedStoryError;
-    signedStoryRows?.forEach((row, index) => {
-      if (row.signedUrl) storyImageUrlByPath.set(storyImagePaths[index], row.signedUrl);
-    });
-  }
+  const storyImageUrlByPath = await getCachedSignedUrls('chat-media', storyImagePaths);
   const storyTitleById = new Map((storyRows ?? []).map((row) => [row.id as string, row.title as string]));
   const storyPreviewById = new Map<string, string>();
   const storyImageUriById = new Map<string, string>();
