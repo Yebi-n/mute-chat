@@ -559,12 +559,12 @@ type AppTheme = {
 };
 const APP_THEMES: AppTheme[] = [
   { id: "mint", name: "기본 테마", gradient: ["#82B9C1", "#5DBB8C"], accent: "#4FAE7D" },
-  { id: "ocean", name: "오션", productId: STORE_PRODUCTS.themeOcean, priceKrw: 3900, gradient: ["#82B4D3", "#6898C9"], accent: "#5F91C5" },
-  { id: "lavender", name: "라벤더", productId: STORE_PRODUCTS.themeLavender, priceKrw: 3900, gradient: ["#B3A1D1", "#9C87C4"], accent: "#927BC0" },
-  { id: "sunset", name: "선셋", productId: STORE_PRODUCTS.themeSunset, priceKrw: 3900, gradient: ["#E4A095", "#DB8592"], accent: "#D77E8C" },
-  { id: "mono", name: "모노", productId: STORE_PRODUCTS.themeMono, priceKrw: 3900, gradient: ["#747A7E", "#585D61"], accent: "#62686C" },
-  { id: "white", name: "화이트", productId: STORE_PRODUCTS.themeWhite, priceKrw: 4900, gradient: ["#FFFFFF", "#FFFFFF"], accent: "#1C1C1C" },
-  { id: "dark", name: "다크", productId: STORE_PRODUCTS.themeDark, priceKrw: 4900, gradient: ["#222222", "#222222"], accent: "#D2D2D2" },
+  { id: "ocean", name: "오션", productId: STORE_PRODUCTS.themeOcean, priceKrw: 4900, gradient: ["#82B4D3", "#6898C9"], accent: "#5F91C5" },
+  { id: "lavender", name: "라벤더", productId: STORE_PRODUCTS.themeLavender, priceKrw: 4900, gradient: ["#B3A1D1", "#9C87C4"], accent: "#927BC0" },
+  { id: "sunset", name: "선셋", productId: STORE_PRODUCTS.themeSunset, priceKrw: 4900, gradient: ["#E4A095", "#DB8592"], accent: "#D77E8C" },
+  { id: "mono", name: "모노", productId: STORE_PRODUCTS.themeMono, priceKrw: 4900, gradient: ["#747A7E", "#585D61"], accent: "#62686C" },
+  { id: "white", name: "화이트", productId: STORE_PRODUCTS.themeWhite, priceKrw: 3900, gradient: ["#FFFFFF", "#FFFFFF"], accent: "#1C1C1C" },
+  { id: "dark", name: "다크", productId: STORE_PRODUCTS.themeDark, priceKrw: 3900, gradient: ["#222222", "#222222"], accent: "#D2D2D2" },
 ];
 let activeAppTheme = APP_THEMES[0];
 const appThemeListeners = new Set<(theme: AppTheme) => void>();
@@ -9839,33 +9839,57 @@ function StoryDetail({
       {joined && (
         <View
           style={[
-            s.commentComposer,
+            s.commentComposerShell,
+            theme.id === "dark" && {
+              backgroundColor: "#222222",
+              borderTopColor: "#343434",
+            },
             keyboardInset > 0 && { marginBottom: keyboardInset },
           ]}
         >
-          <TextInput
-            value={comment}
-            onChangeText={setComment}
-            placeholder="댓글을 입력해주세요."
-            placeholderTextColor={colors.textMuted}
-            style={s.commentInput}
-          />
-          <Pressable
-            disabled={!comment.trim()}
-            onPress={submit}
-            style={[s.commentSend, !comment.trim() && s.disabled]}
+          {keyboardInset > 0 && (
+            <InlineBannerAd
+              placement="chat"
+              disabled={adsDisabled}
+              dark={theme.id === "dark"}
+            />
+          )}
+          <View
+            style={[
+              s.commentComposer,
+              theme.id === "dark" && { backgroundColor: "#222222" },
+            ]}
           >
-            <LinearGradient
-              colors={
-                comment.trim() ? ["#82B9C1", "#5DBB8C"] : ["#C9D8D5", "#BFCAC7"]
-              }
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={s.fullGradient}
+            <TextInput
+              value={comment}
+              onChangeText={setComment}
+              placeholder="댓글을 입력해주세요."
+              placeholderTextColor={colors.textMuted}
+              style={[
+                s.commentInput,
+                theme.id === "dark" && {
+                  backgroundColor: "#2B2B2B",
+                  color: "#F4F4F4",
+                },
+              ]}
+            />
+            <Pressable
+              disabled={!comment.trim()}
+              onPress={submit}
+              style={[s.commentSend, !comment.trim() && s.disabled]}
             >
-              <Ionicons name="paper-plane" size={17} color={foreground} />
-            </LinearGradient>
-          </Pressable>
+              <LinearGradient
+                colors={
+                  comment.trim() ? ["#82B9C1", "#5DBB8C"] : ["#C9D8D5", "#BFCAC7"]
+                }
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={s.fullGradient}
+              >
+                <Ionicons name="paper-plane" size={17} color={foreground} />
+              </LinearGradient>
+            </Pressable>
+          </View>
         </View>
       )}
     </KeyboardAvoidingView>
@@ -18974,8 +18998,8 @@ const s = StyleSheet.create({
   commentSection: {
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
-    paddingTop: 20,
-    marginTop: 12,
+    paddingTop: 14,
+    marginTop: 6,
   },
   commentCount: {
     color: colors.text,
@@ -18991,16 +19015,19 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
+  commentComposerShell: {
+    backgroundColor: "#FFF",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
   commentComposer: {
-    minHeight: 64,
+    minHeight: 62,
     flexDirection: "row",
     alignItems: "center",
     gap: 9,
     paddingHorizontal: 14,
     paddingVertical: 10,
     backgroundColor: "#FFF",
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
   },
   commentInput: {
     flex: 1,

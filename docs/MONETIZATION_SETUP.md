@@ -15,19 +15,22 @@ The app uses `expo-iap` to open the native purchase sheet. Supabase `verify-stor
 광고 형식과 화면별 배치 기준은
 `docs/ADMOB_AD_FORMAT_AND_PLACEMENT.md`를 따른다.
 
-Development builds use Google's rewarded test ad unit when production IDs are absent.
+Development builds use Google's official test ad units unless production IDs
+are explicitly enabled.
 
-Only rewarded ads are enabled. Banner and interstitial ads are intentionally
-excluded to keep chat and story navigation uninterrupted.
+Rewarded ads and adaptive banner ads are enabled. Interstitial ads are
+intentionally excluded to keep chat and story navigation uninterrupted.
 
 ### AdMob console setup
 
 1. In AdMob, add the iOS app with bundle ID `app.mute.chat`.
 2. Add an Android app later with package name `app.mute.chat`.
 3. Create one **Rewarded** ad unit for each platform.
-4. In each rewarded unit's server-side verification settings, enter the SSV
+4. Create adaptive **Banner** units for main, chat, and story placements. Until
+   separate units are ready, the app falls back to the shared iOS banner unit.
+5. In each rewarded unit's server-side verification settings, enter the SSV
    callback URL below.
-5. In Privacy & messaging, publish the consent message required for the regions
+6. In Privacy & messaging, publish the consent message required for the regions
    where the app will be distributed.
 
 AdMob provides two different identifiers:
@@ -36,6 +39,8 @@ AdMob provides two different identifiers:
   plugin configuration in `app.json`.
 - Rewarded ad unit ID: `ca-app-pub-.../...` - goes in the EAS environment
   variables below and in the Supabase allowlist secret.
+- Banner ad unit ID: `ca-app-pub-.../...` - goes in the EAS environment
+  variables below for each placement.
 
 Set these EAS environment variables before production:
 

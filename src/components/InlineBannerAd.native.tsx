@@ -52,7 +52,7 @@ export default function InlineBannerAd({
   const size = placement === 'story'
     ? BannerAdSize.INLINE_ADAPTIVE_BANNER
     : BannerAdSize.ANCHORED_ADAPTIVE_BANNER;
-  const maxHeight = placement === 'story' ? 100 : 60;
+  const maxHeight = placement === 'story' ? 90 : 58;
   const adWidth = Math.max(320, Math.floor(width));
   const containerStyle = useMemo(
     () => [
@@ -79,7 +79,10 @@ export default function InlineBannerAd({
     };
   }, [disabled, unitId]);
 
-  if (disabled || !unitId || failed || !sdkReady) return null;
+  if (disabled || !unitId || failed) return null;
+  if (!sdkReady) {
+    return <View pointerEvents="none" style={containerStyle} />;
+  }
   return (
     <View pointerEvents="box-none" style={containerStyle}>
       <BannerAd
@@ -105,6 +108,7 @@ const styles = StyleSheet.create({
   anchored: {
     borderTopColor: '#E5E5E5',
     borderTopWidth: StyleSheet.hairlineWidth,
+    minHeight: 58,
     paddingVertical: 6,
   },
   story: {
@@ -112,8 +116,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#E8E8E8',
     borderTopWidth: StyleSheet.hairlineWidth,
-    marginVertical: 18,
-    paddingVertical: 10,
+    marginTop: 8,
+    marginBottom: 8,
+    minHeight: 74,
+    paddingVertical: 6,
   },
   dark: {
     borderBottomColor: '#343434',
