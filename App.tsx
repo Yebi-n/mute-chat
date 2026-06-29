@@ -15,7 +15,7 @@ import * as Notifications from "expo-notifications";
 import * as ScreenCapture from "expo-screen-capture";
 import * as SecureStore from "expo-secure-store";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
-import { createContext, forwardRef, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentProps } from "react";
 import ExternalColorPicker, {
   BrightnessSlider,
@@ -344,6 +344,7 @@ type StoryItem = {
 type ChatDelivery = "sending" | "sent" | "failed";
 type ChatBase = {
   id: string;
+  userId?: string | null;
   createdAt?: string;
   delivery?: ChatDelivery;
   uploadProgress?: number;
@@ -404,6 +405,7 @@ const CHAT_IMAGE_GRID_CELL = Math.floor((CHAT_IMAGE_GRID_WIDTH - 2) / 2);
 const PIN_ICON_SOURCE = require("./assets/pin-gray.png");
 const APP_LOCK_ENABLED_KEY = "mute:app-lock:enabled";
 const APP_LOCK_PIN_KEY = "mute:app-lock:pin";
+const APP_LOCK_SECURE_PIN_KEY = "mute_app_lock_pin";
 const PRIVACY_POLICY_URL =
   "https://service-introduction-theta.vercel.app/privacy/";
 const FIXED_POINT_COLOR = "#3F9A70";
@@ -412,13 +414,13 @@ const FIXED_POINT_SOFT = "#EFF9F5";
 async function readAppLockPin() {
   if (Platform.OS === "web") return AsyncStorage.getItem(APP_LOCK_PIN_KEY);
 
-  const secured = await SecureStore.getItemAsync(APP_LOCK_PIN_KEY);
+  const secured = await SecureStore.getItemAsync(APP_LOCK_SECURE_PIN_KEY);
   if (secured !== null) return secured;
 
   // Migrate PINs saved by versions released before SecureStore was introduced.
   const legacy = await AsyncStorage.getItem(APP_LOCK_PIN_KEY);
   if (legacy !== null) {
-    await SecureStore.setItemAsync(APP_LOCK_PIN_KEY, legacy, {
+    await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, legacy, {
       keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
     });
     await AsyncStorage.removeItem(APP_LOCK_PIN_KEY);
@@ -431,7 +433,7 @@ async function writeAppLockPin(pin: string) {
     await AsyncStorage.setItem(APP_LOCK_PIN_KEY, pin);
     return;
   }
-  await SecureStore.setItemAsync(APP_LOCK_PIN_KEY, pin, {
+  await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, pin, {
     keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
   });
   await AsyncStorage.removeItem(APP_LOCK_PIN_KEY);
@@ -440,7 +442,7 @@ async function writeAppLockPin(pin: string) {
 async function clearAppLockCredentials() {
   await AsyncStorage.multiRemove([APP_LOCK_ENABLED_KEY, APP_LOCK_PIN_KEY]);
   if (Platform.OS !== "web") {
-    await SecureStore.deleteItemAsync(APP_LOCK_PIN_KEY);
+    await SecureStore.deleteItemAsync(APP_LOCK_SECURE_PIN_KEY);
   }
 }
 const LOCAL_PENDING_MESSAGES = new Map<string, ChatMessage[]>();
@@ -1238,6 +1240,7 @@ function mapServerChatMessage(
   if (deletedText && message.kind === "image") {
     return {
       id: message.id,
+      userId: message.userId,
       kind: "text",
       mine,
       name: message.senderName ?? (mine ? "나" : "멤버"),
@@ -1259,6 +1262,7 @@ function mapServerChatMessage(
   if (message.kind === "image") {
     return {
       id: message.id,
+      userId: message.userId,
       kind: "image",
       mine,
       name: message.senderName ?? (mine ? "나" : "멤버"),
@@ -1274,6 +1278,7 @@ function mapServerChatMessage(
   if (message.kind === "story") {
     return {
       id: message.id,
+      userId: message.userId,
       kind: "story",
       mine,
       name: message.senderName ?? (mine ? "나" : "멤버"),
@@ -1289,6 +1294,7 @@ function mapServerChatMessage(
   if (message.kind === "secret") {
     return {
       id: message.id,
+      userId: message.userId,
       kind: "secret",
       mine,
       name: message.senderName ?? (mine ? "나" : "멤버"),
@@ -1326,6 +1332,7 @@ function mapServerChatMessage(
   }
   return {
     id: message.id,
+    userId: message.userId,
     kind: "text",
     mine,
     name: message.senderName ?? (mine ? "나" : "멤버"),
@@ -6181,6 +6188,17 @@ function ChatRoom({
     index:number;
     menuOpen: boolean;
   } | null>(null);
+  const openActiveMemberProfile = useCallback(
+    (item: Pick<ChatBase, "userId"> & { name: string }) => {
+      Keyboard.dismiss();
+      const activeMember = item.userId
+        ? roomMembers.find((member) => member.userId === item.userId)
+        : undefined;
+      if (!activeMember) return;
+      setSelectedMember(activeMember.name);
+    },
+    [roomMembers],
+  );
   const photoViewerSwipe = useMemo(
     () =>
       PanResponder.create({
@@ -6890,6 +6908,7 @@ function ChatRoom({
         ...value,
         {
           id,
+          userId: currentUserId,
           kind: "secret",
           mine: true,
           name: myDisplayName,
@@ -8003,8 +8022,7 @@ function ChatRoom({
                       <Pressable
                         accessibilityLabel={`${item.name} 프로필 메뉴`}
                         onPress={() => {
-                          Keyboard.dismiss();
-                          setSelectedMember(item.name);
+                          openActiveMemberProfile(item);
                         }}
                       >
                         <Avatar uri={item.avatarUri} size={46} />
@@ -8100,8 +8118,7 @@ function ChatRoom({
                       <Pressable
                         accessibilityLabel={`${item.name} 프로필 메뉴`}
                         onPress={() => {
-                          Keyboard.dismiss();
-                          setSelectedMember(item.name);
+                          openActiveMemberProfile(item);
                         }}
                       >
                         <Avatar uri={item.avatarUri} size={46} />
@@ -8171,8 +8188,7 @@ function ChatRoom({
                       <Pressable
                         accessibilityLabel={`${item.name} 프로필 메뉴`}
                         onPress={() => {
-                          Keyboard.dismiss();
-                          setSelectedMember(item.name);
+                          openActiveMemberProfile(item);
                         }}
                       >
                         <Avatar uri={item.avatarUri} size={46} />
@@ -8366,8 +8382,7 @@ function ChatRoom({
                       <Pressable
                         accessibilityLabel={`${item.name} 프로필 메뉴`}
                         onPress={() => {
-                          Keyboard.dismiss();
-                          setSelectedMember(item.name);
+                          openActiveMemberProfile(item);
                         }}
                       >
                         <Avatar uri={item.avatarUri} size={46} />
@@ -11325,7 +11340,7 @@ function ProfileQuickAction({
     <Pressable
       disabled={!onPress}
       onPress={onPress}
-      style={[s.profileQuickAction, !onPress && s.disabled]}
+      style={[s.profileQuickAction, !onPress && s.profileQuickActionDisabled]}
     >
       {fixedPoint ? (
         <RNView
@@ -19988,6 +20003,9 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
+  },
+  profileQuickActionDisabled: {
+    opacity: 0.45,
   },
   profileQuickActionIcon: {
     width: 52,

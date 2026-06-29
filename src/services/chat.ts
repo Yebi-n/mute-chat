@@ -143,7 +143,7 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
     .maybeSingle();
   let messageQuery = client
     .from('messages')
-    .select('id,sender_user_id,kind,body,sender_deleted_at,reply_to_message_id,secret_recipient_user_id,media_group_id,story_id,created_at')
+    .select('id,sender_user_id,kind,body,sender_deleted_at,reply_to_message_id,secret_recipient_user_id,media_group_id,story_id,created_at,sender_display_name_snapshot,sender_avatar_asset_path_snapshot')
     .eq('room_id', roomId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
@@ -170,7 +170,7 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
   ] = await Promise.all([
     client.from('room_profiles').select('user_id,display_name,avatar_asset_path').eq('room_id', roomId).in('user_id', userIds.length ? userIds : ['00000000-0000-0000-0000-000000000000']),
     replyIds.length
-      ? client.from('messages').select('id,body,sender_user_id,kind').in('id', replyIds)
+      ? client.from('messages').select('id,body,sender_user_id,kind,sender_display_name_snapshot').in('id', replyIds)
       : Promise.resolve({ data: [], error: null }),
     mediaGroupIds.length
       ? client.from('message_assets').select('message_id,storage_path,position').in('message_id', messageRows.filter((row) => row.kind === 'image').map((row) => row.id)).order('position')
@@ -192,9 +192,17 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
   const styleByUserId=new Map<string,{bubbleColor:string;textColor:string}>(((styleRows??[]) as Array<{user_id:string;bubble_color:string;text_color:string}>).map((row)=>[row.user_id,{bubbleColor:row.bubble_color,textColor:row.text_color}]));
 
   const mergedProfileRows = profileRows ?? [];
-  const avatarPaths = mergedProfileRows
-    .map((row) => row.avatar_asset_path as string | null)
+  const snapshotAvatarPaths = messageRows
+    .map((row) => row.sender_avatar_asset_path_snapshot as string | null)
     .filter((value): value is string => Boolean(value));
+  const avatarPaths = [
+    ...new Set([
+      ...mergedProfileRows
+        .map((row) => row.avatar_asset_path as string | null)
+        .filter((value): value is string => Boolean(value)),
+      ...snapshotAvatarPaths,
+    ]),
+  ];
   const avatarUrlByPath = await getCachedSignedUrls('profile-avatars', avatarPaths);
 
   const assetPaths = (assetRows ?? [])
@@ -218,7 +226,9 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
   const replySenderNameById = new Map(
     (replyRows ?? []).map((row) => [
       row.id as string,
-      row.sender_user_id ? profileByUserId.get(row.sender_user_id as string)?.name ?? '멤버' : '멤버',
+      String(row.sender_display_name_snapshot ?? '').trim()
+        || (row.sender_user_id ? profileByUserId.get(row.sender_user_id as string)?.name : undefined)
+        || '멤버',
     ]),
   );
   const imageUrisByMessageId = new Map<string, string[]>();
@@ -258,8 +268,15 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
     replyToBody: row.reply_to_message_id ? replyById.get(row.reply_to_message_id as string) : undefined,
     replyToSenderName: row.reply_to_message_id ? replySenderNameById.get(row.reply_to_message_id as string) : undefined,
     secretRecipientUserId: row.secret_recipient_user_id as string | null,
-    senderName: row.sender_user_id ? profileByUserId.get(row.sender_user_id as string)?.name : undefined,
-    senderAvatarUrl: row.sender_user_id ? profileByUserId.get(row.sender_user_id as string)?.avatarUrl : undefined,
+    senderName: row.sender_user_id
+      ? (String(row.sender_display_name_snapshot ?? '').trim()
+        || profileByUserId.get(row.sender_user_id as string)?.name)
+      : (String(row.sender_display_name_snapshot ?? '').trim() || undefined),
+    senderAvatarUrl: row.sender_avatar_asset_path_snapshot
+      ? avatarUrlByPath.get(row.sender_avatar_asset_path_snapshot as string)
+      : row.sender_user_id
+        ? profileByUserId.get(row.sender_user_id as string)?.avatarUrl
+        : undefined,
     recipientName: row.secret_recipient_user_id ? profileByUserId.get(row.secret_recipient_user_id as string)?.name : undefined,
     imageUris: imageUrisByMessageId.get(row.id as string),
     storyId: row.story_id as string | undefined,
