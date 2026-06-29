@@ -131,6 +131,7 @@ import {
 } from "./src/services/roomFeatures";
 import {
   announceStoryCreated,
+  getLatestRoomMessageCursor,
   getRoomMessageCreatedAt,
   getRoomReadReceipt,
   listRecentSystemMessages,
@@ -6153,6 +6154,7 @@ function ChatRoom({
   const initialScrollDone = useRef(false);
   const nearBottomRef = useRef(true);
   const lastObservedLatestMessageIdRef = useRef<string | null>(null);
+  const lastSyncedServerMessageIdRef = useRef<string | null>(null);
   const latestReadableMessageIdRef = useRef<string | null>(null);
   const unreadFocusDoneRef = useRef(false);
   const prependHeightRef = useRef<number | null>(null);
@@ -6460,6 +6462,7 @@ function ChatRoom({
   useEffect(() => {
     initialScrollDone.current = false;
     lastObservedLatestMessageIdRef.current = null;
+    lastSyncedServerMessageIdRef.current = null;
     setChatReady(false);
     setInitialMessagesLoaded(false);
     setHasOlderMessages(true);
@@ -6492,6 +6495,8 @@ function ChatRoom({
               (Date.parse(second.createdAt ?? "") || 0),
           ),
         );
+        lastSyncedServerMessageIdRef.current =
+          serverMessages[serverMessages.length - 1]?.id ?? null;
         setHasOlderMessages(serverMessages.length === 50);
         setInitialMessagesLoaded(true);
       })
@@ -6501,6 +6506,7 @@ function ChatRoom({
     if (!supabase || !isUuid(room.id)) return;
     const client = supabase;
     let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+    let fallbackTimer: ReturnType<typeof setInterval> | null = null;
     let reloadInFlight = false;
     let reloadPending = false;
     const reload = async () => {
@@ -6513,6 +6519,8 @@ function ChatRoom({
         do {
           reloadPending = false;
           const serverMessages = await listRoomMessages(room.id);
+          lastSyncedServerMessageIdRef.current =
+            serverMessages[serverMessages.length - 1]?.id ?? null;
           setMessages((current) => {
             const byId = new Map(current.map((item) => [item.id, item]));
             serverMessages.forEach((item) => {
@@ -6531,9 +6539,24 @@ function ChatRoom({
         reloadInFlight = false;
       }
     };
-    const scheduleReload = () => {
+    const scheduleReload = (delay = 0) => {
       if (reloadTimer) clearTimeout(reloadTimer);
-      reloadTimer = setTimeout(() => void reload(), 250);
+      reloadTimer = setTimeout(() => void reload(), delay);
+    };
+    const checkForMissedMessages = async () => {
+      if (AppState.currentState !== "active") return;
+      try {
+        const cursor = await getLatestRoomMessageCursor(room.id);
+        if (cursor?.id !== lastSyncedServerMessageIdRef.current) {
+          await reload();
+          // A newly joined member may not be allowed to load messages from
+          // before joined_at even though the lightweight cursor can see one.
+          // Remember the checked cursor to avoid a needless polling loop.
+          lastSyncedServerMessageIdRef.current = cursor?.id ?? null;
+        }
+      } catch {
+        // The next realtime event or foreground check retries naturally.
+      }
     };
     const channel = client
       .channel(`chat-messages-${room.id}`)
@@ -6545,14 +6568,26 @@ function ChatRoom({
           table: "messages",
           filter: `room_id=eq.${room.id}`,
         },
-        scheduleReload,
+        () => scheduleReload(),
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") scheduleReload();
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT")
+          void checkForMissedMessages();
+      });
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void checkForMissedMessages();
+    });
+    // Realtime remains primary. This single-row cursor check only repairs
+    // missed websocket events while the room is actually on screen.
+    fallbackTimer = setInterval(() => void checkForMissedMessages(), 4000);
     return () => {
       if (reloadTimer) clearTimeout(reloadTimer);
+      if (fallbackTimer) clearInterval(fallbackTimer);
+      appStateSubscription.remove();
       client.removeChannel(channel);
     };
-  }, [appTheme.id, currentUserId, room.id]);
+  }, [currentUserId, room.id]);
   useEffect(() => {
     if (!supabase || !isUuid(room.id)) return;
     const client = supabase;
@@ -7001,7 +7036,8 @@ function ChatRoom({
           requestId: pointTransferRequestRef.current.requestId,
         });
         id = result.messageId;
-        onPointBalanceChange(result.pointBalance);
+        if (typeof onPointBalanceChange === "function")
+          onPointBalanceChange(result.pointBalance);
         pointTransferRequestRef.current = null;
       setMessages((value) => [
         ...value,
@@ -7525,8 +7561,9 @@ function ChatRoom({
     unreadFocusDoneRef.current = true;
     setTimeout(() => scrollToMessagePosition(unreadMarkerId), 120);
   }, [chatReady, initialFocusUnread, unreadMarkerId]);
+  const latestVisibleMessage = visibleMessages[visibleMessages.length - 1];
   useEffect(() => {
-    const latest = visibleMessages[visibleMessages.length - 1];
+    const latest = latestVisibleMessage;
     const latestId = latest?.id ?? null;
     if (!chatReady || !initialMessagesLoaded) {
       lastObservedLatestMessageIdRef.current = latestId;
@@ -7549,7 +7586,21 @@ function ChatRoom({
                 ? "스토리를 올렸습니다."
                 : "비밀 쪽지가 도착했습니다.",
       });
-  }, [chatReady, initialMessagesLoaded, visibleMessages.length]);
+  }, [
+    chatReady,
+    initialMessagesLoaded,
+    latestVisibleMessage?.id,
+    latestVisibleMessage?.kind,
+    latestVisibleMessage && "mine" in latestVisibleMessage
+      ? latestVisibleMessage.mine
+      : undefined,
+    latestVisibleMessage && "name" in latestVisibleMessage
+      ? latestVisibleMessage.name
+      : undefined,
+    latestVisibleMessage && "text" in latestVisibleMessage
+      ? latestVisibleMessage.text
+      : undefined,
+  ]);
   const chatSearchMatches = chatSearch.trim()
     ? combinedMessages
         .filter(

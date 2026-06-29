@@ -116,7 +116,11 @@ export async function deleteRoom(roomId: string) {
     p_room_id: roomId,
   });
   if (error) throw error;
-  dispatchPendingPushes().catch(() => undefined);
+  // The room transaction is authoritative. Push flushing is intentionally
+  // detached so a notification module failure cannot report deletion failure.
+  void Promise.resolve()
+    .then(() => dispatchPendingPushes())
+    .catch(() => undefined);
 }
 
 export async function getRoomNotificationsEnabled(roomId:string) {

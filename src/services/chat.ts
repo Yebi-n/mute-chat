@@ -288,6 +288,21 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
   })) as ServerRoomMessage[];
 }
 
+export async function getLatestRoomMessageCursor(roomId: string) {
+  const { data, error } = await requireClient()
+    .from('messages')
+    .select('id,created_at')
+    .eq('room_id', roomId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data
+    ? { id: data.id as string, createdAt: data.created_at as string }
+    : null;
+}
+
 export async function getRoomReadReceipt(roomId: string): Promise<RoomReadReceipt | null> {
   const { data, error } = await requireClient()
     .from('room_read_receipts')

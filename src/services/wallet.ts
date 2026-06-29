@@ -104,7 +104,11 @@ export async function transferRoomPoints(input: {
   if (!row?.message_id || !Number.isFinite(Number(row?.point_balance))) {
     throw new Error('POINT_TRANSFER_INVALID_RESPONSE');
   }
-  dispatchPendingPushes().catch(() => undefined);
+  // Push delivery is best-effort and must never turn a committed transfer
+  // into a client-visible failure (including stale native bundles).
+  void Promise.resolve()
+    .then(() => dispatchPendingPushes())
+    .catch(() => undefined);
   return {
     pointBalance: Number(row?.point_balance ?? 0),
     messageId: row?.message_id as string,
