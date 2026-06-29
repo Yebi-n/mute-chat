@@ -108,7 +108,7 @@
       "type": "NonConsumable"
     },
     {
-      "displayPrice": "₩4,900",
+      "displayPrice": "₩3,900",
       "familyShareable": false,
       "internalID": "mute_theme_ocean",
       "localizations": [
@@ -123,7 +123,7 @@
       "type": "NonConsumable"
     },
     {
-      "displayPrice": "₩4,900",
+      "displayPrice": "₩3,900",
       "familyShareable": false,
       "internalID": "mute_theme_lavender",
       "localizations": [
@@ -138,7 +138,7 @@
       "type": "NonConsumable"
     },
     {
-      "displayPrice": "₩4,900",
+      "displayPrice": "₩3,900",
       "familyShareable": false,
       "internalID": "mute_theme_sunset",
       "localizations": [
@@ -153,7 +153,7 @@
       "type": "NonConsumable"
     },
     {
-      "displayPrice": "₩4,900",
+      "displayPrice": "₩3,900",
       "familyShareable": false,
       "internalID": "mute_theme_mono",
       "localizations": [
@@ -168,13 +168,13 @@
       "type": "NonConsumable"
     },
     {
-      "displayPrice": "?3,900",
+      "displayPrice": "₩4,900",
       "familyShareable": false,
       "internalID": "mute_theme_white",
       "localizations": [
         {
-          "description": "??? ? ??",
-          "displayName": "??? ??",
+          "description": "화이트 앱 테마",
+          "displayName": "화이트 테마",
           "locale": "ko_KR"
         }
       ],
@@ -183,13 +183,13 @@
       "type": "NonConsumable"
     },
     {
-      "displayPrice": "?3,900",
+      "displayPrice": "₩4,900",
       "familyShareable": false,
       "internalID": "mute_theme_dark",
       "localizations": [
         {
-          "description": "?? ? ??",
-          "displayName": "?? ??",
+          "description": "다크 앱 테마",
+          "displayName": "다크 테마",
           "locale": "ko_KR"
         }
       ],

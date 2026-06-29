@@ -551,22 +551,49 @@ type AppTheme = {
   id: string;
   name: string;
   productId?: string;
+  priceKrw?: number;
   gradient: [string, string];
   accent: string;
 };
 const APP_THEMES: AppTheme[] = [
   { id: "mint", name: "기본 테마", gradient: ["#82B9C1", "#5DBB8C"], accent: "#4FAE7D" },
-  { id: "white", name: "화이트", productId: STORE_PRODUCTS.themeWhite, gradient: ["#FFFFFF", "#FFFFFF"], accent: "#1C1C1C" },
-  { id: "ocean", name: "오션", productId: STORE_PRODUCTS.themeOcean, gradient: ["#82B4D3", "#6898C9"], accent: "#5F91C5" },
-  { id: "lavender", name: "라벤더", productId: STORE_PRODUCTS.themeLavender, gradient: ["#B3A1D1", "#9C87C4"], accent: "#927BC0" },
-  { id: "sunset", name: "선셋", productId: STORE_PRODUCTS.themeSunset, gradient: ["#E4A095", "#DB8592"], accent: "#D77E8C" },
-  { id: "mono", name: "모노", productId: STORE_PRODUCTS.themeMono, gradient: ["#747A7E", "#585D61"], accent: "#62686C" },
-  { id: "dark", name: "다크", productId: STORE_PRODUCTS.themeDark, gradient: ["#222222", "#222222"], accent: "#D2D2D2" },
+  { id: "ocean", name: "오션", productId: STORE_PRODUCTS.themeOcean, priceKrw: 3900, gradient: ["#82B4D3", "#6898C9"], accent: "#5F91C5" },
+  { id: "lavender", name: "라벤더", productId: STORE_PRODUCTS.themeLavender, priceKrw: 3900, gradient: ["#B3A1D1", "#9C87C4"], accent: "#927BC0" },
+  { id: "sunset", name: "선셋", productId: STORE_PRODUCTS.themeSunset, priceKrw: 3900, gradient: ["#E4A095", "#DB8592"], accent: "#D77E8C" },
+  { id: "mono", name: "모노", productId: STORE_PRODUCTS.themeMono, priceKrw: 3900, gradient: ["#747A7E", "#585D61"], accent: "#62686C" },
+  { id: "white", name: "화이트", productId: STORE_PRODUCTS.themeWhite, priceKrw: 4900, gradient: ["#FFFFFF", "#FFFFFF"], accent: "#1C1C1C" },
+  { id: "dark", name: "다크", productId: STORE_PRODUCTS.themeDark, priceKrw: 4900, gradient: ["#222222", "#222222"], accent: "#D2D2D2" },
 ];
 let activeAppTheme = APP_THEMES[0];
 const appThemeListeners = new Set<(theme: AppTheme) => void>();
 const themeStorageKey = (userId?: string | null) =>
   userId ? `mute.app-theme:${userId}` : "mute.app-theme:anonymous";
+const themeOwnershipStorageKey = (userId: string) =>
+  `mute.app-theme-entitlements:${userId}`;
+
+async function readCachedThemeProductIds(userId: string) {
+  const raw = await AsyncStorage.getItem(themeOwnershipStorageKey(userId));
+  if (!raw) return [] as string[];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+async function cacheThemeProductIds(userId: string, productIds: string[]) {
+  const themeProductIds = new Set(
+    APP_THEMES.flatMap((theme) => (theme.productId ? [theme.productId] : [])),
+  );
+  const owned = [...new Set(productIds.filter((id) => themeProductIds.has(id)))];
+  await AsyncStorage.setItem(
+    themeOwnershipStorageKey(userId),
+    JSON.stringify(owned),
+  );
+}
 function applyAppTheme(theme: AppTheme) {
   activeAppTheme = theme;
   appThemeListeners.forEach((listener) => listener(theme));
@@ -2222,12 +2249,11 @@ function AuthenticatedApp({
       applyAppTheme(APP_THEMES[0]);
       return;
     }
-    // Restore the per-account selection immediately. Server entitlements then
-    // validate it without forcing the default theme during transient failures.
-    void loadStoredAppTheme(
-      userId,
-      APP_THEMES.flatMap((theme) => (theme.productId ? [theme.productId] : [])),
-    );
+    // Apply the last server-confirmed ownership cache before the network round
+    // trip so app resume does not flash or reset a purchased theme.
+    void readCachedThemeProductIds(userId).then((cached) =>
+      loadStoredAppTheme(userId, cached),
+    ).catch(() => undefined);
     const reloadEntitlements = () => listStoreEntitlements()
       .then((items) => {
         if (!active) return;
@@ -2249,10 +2275,9 @@ function AuthenticatedApp({
             () => void reloadEntitlements(),
             Math.max(1000, expiresAt - now + 1000),
           );
-        void loadStoredAppTheme(
-          userId,
-          items.map((item) => item.productId),
-        );
+        const ownedProductIds = items.map((item) => item.productId);
+        void cacheThemeProductIds(userId, ownedProductIds).catch(() => undefined);
+        void loadStoredAppTheme(userId, ownedProductIds);
       })
       .catch(() => undefined);
     void reloadEntitlements();
@@ -6336,6 +6361,31 @@ function ChatRoom({
     };
   }, [currentUserId, room.id]);
   useEffect(() => {
+    if (!currentUserId || !isUuid(room.id) || !chatEntitlements.length) return;
+    const nextExpiry = Math.min(
+      ...chatEntitlements
+        .map((item) => Date.parse(item.expiresAt))
+        .filter((value) => Number.isFinite(value) && value > Date.now()),
+    );
+    if (!Number.isFinite(nextExpiry)) return;
+    const timer = setTimeout(() => {
+      Promise.all([listActiveChatEntitlements(), listRoomChatStyles(room.id)])
+        .then(([entitlements, styles]) => {
+          setChatEntitlements(entitlements);
+          const own = styles.find((style) => style.userId === currentUserId);
+          if (!own) return;
+          setBubbleColor(own.bubbleColor);
+          setTextColor(own.textColor);
+          setChatBackground(own.backgroundColor);
+          setBubbleProductId(own.bubbleProductId);
+          setTextProductId(own.textProductId);
+          setBackgroundProductId(own.backgroundProductId);
+        })
+        .catch(() => undefined);
+    }, Math.max(1000, nextExpiry - Date.now() + 500));
+    return () => clearTimeout(timer);
+  }, [chatEntitlements, currentUserId, room.id]);
+  useEffect(() => {
     if (initialMessagesLoaded && !chatReady && messages.length === 0)
       setChatReady(true);
   }, [chatReady, initialMessagesLoaded, messages.length]);
@@ -7717,6 +7767,12 @@ function ChatRoom({
     color && color.toLowerCase() !== colors.text.toLowerCase()
       ? color
       : colors.mint700;
+  const storyThemeAccent =
+    appTheme.id === "white"
+      ? "#1C1C1C"
+      : appTheme.id === "dark"
+        ? "#F2F2F2"
+        : appTheme.accent;
   const muteSelectedMember=(seconds:number,label:string)=>{
     if(!selectedRoomMember?.userId)return;
     setRoomMemberMute(room.id,selectedRoomMember.userId,seconds).then((until)=>{setRoomMembers((items)=>items.map((item)=>item.userId===selectedRoomMember.userId?{...item,mutedUntil:until}:item));setSelectedMember(null);setToast(`${selectedRoomMember.name}님을 ${label} 동안 채팅 금지했습니다.`);setTimeout(()=>setToast(""),1800);}).catch((error)=>Alert.alert("채팅 금지 실패",serverErrorMessage(error)));
@@ -8001,21 +8057,12 @@ function ChatRoom({
                             <RNIonicons
                               name="albums-outline"
                               size={16}
-                              color={
-                                chatAccentColor(
-                                  item.textColor ?? (item.mine ? textColor : undefined),
-                                )
-                              }
+                              color={storyThemeAccent}
                             />
                             <RNText
                               style={[
                                 s.storyChatPreviewLabel,
-                                {
-                                  color:
-                                    chatAccentColor(
-                                      item.textColor ?? (item.mine ? textColor : undefined),
-                                    ),
-                                },
+                                { color: storyThemeAccent },
                               ]}
                             >
                               {item.name}님이 스토리를 올렸습니다.
@@ -8029,7 +8076,14 @@ function ChatRoom({
                           </RNText>
                           <RNText
                             numberOfLines={2}
-                            style={s.storyChatPreviewBody}
+                            style={[
+                              s.storyChatPreviewBody,
+                              {
+                                color:
+                                  item.textColor ??
+                                  (item.mine ? textColor : colors.text),
+                              },
+                            ]}
                           >
                             {item.preview}
                           </RNText>
@@ -12013,11 +12067,30 @@ function ItemShopScreen({
       getMyWallet(),
     ]);
     setStoreItems(store);
+    if (currentUserId)
+      await cacheThemeProductIds(
+        currentUserId,
+        store.map((item) => item.productId),
+      ).catch(() => undefined);
     onPointBalanceChange(wallet.pointBalance);
   };
   useEffect(() => {
+    if (currentUserId)
+      void readCachedThemeProductIds(currentUserId)
+        .then((productIds) =>
+          setStoreItems((current) =>
+            current.length
+              ? current
+              : productIds.map((productId) => ({
+                  productId,
+                  type: "app_theme",
+                  expiresAt: null,
+                })),
+          ),
+        )
+        .catch(() => undefined);
     void reload().catch(() => undefined);
-  }, []);
+  }, [currentUserId]);
   const buyStoreItem = async (productId: string, selectedTheme?: AppTheme) => {
     if (busy) return;
     setBusy(productId);
@@ -12106,7 +12179,11 @@ function ItemShopScreen({
                 <View style={s.itemShopThemeCopy}>
                   <Text style={s.itemShopCardTitle}>{item.name}</Text>
                   <Text style={s.itemShopPrice}>
-                    {free ? "기본 제공" : owned ? "보유 중 · 영구 소장" : ["white", "dark"].includes(item.id) ? "3,900원 · 영구 소장" : "4,900원 · 영구 소장"}
+                    {free
+                      ? "기본 제공"
+                      : owned
+                        ? "보유 중 · 영구 소장"
+                        : `${(item.priceKrw ?? 3900).toLocaleString()}원 · 영구 소장`}
                   </Text>
                 </View>
                 <Pressable
@@ -12132,7 +12209,15 @@ function ItemShopScreen({
           style={s.itemShopThemeBuy}
         >
           <LinearGradient colors={["#82B9C1", "#5DBB8C"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.itemShopBuyGradient}>
-            {busy === selectedTheme.productId ? <ActivityIndicator size="small" color={primaryTextColor} /> : <Text style={[s.itemShopBuyText, { color: primaryTextColor }]}>{selectedThemeOwned ? "적용하기" : ["white", "dark"].includes(selectedTheme.id) ? "3,900원 구매" : "구매하기"}</Text>}
+            {busy === selectedTheme.productId ? (
+              <ActivityIndicator size="small" color={primaryTextColor} />
+            ) : (
+              <Text style={[s.itemShopBuyText, { color: primaryTextColor }]}>
+                {selectedThemeOwned
+                  ? "적용하기"
+                  : `${(selectedTheme.priceKrw ?? 3900).toLocaleString()}원 구매`}
+              </Text>
+            )}
           </LinearGradient>
         </Pressable>
 

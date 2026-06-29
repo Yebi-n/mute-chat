@@ -46,6 +46,11 @@ Set these EAS environment variables before production:
 - `EXPO_PUBLIC_ADMOB_BANNER_CHAT_IOS_ID` (optional placement override)
 - `EXPO_PUBLIC_ADMOB_BANNER_STORY_IOS_ID` (optional placement override)
 
+Use separate production ad units for main, chat, and story placements. Until the
+two additional units are created, chat and story fall back to the main inline
+banner unit. See `docs/ADMOB_AD_FORMAT_AND_PLACEMENT.md` for the placement and
+policy rules.
+
 Use official Google test IDs until all production identifiers are configured.
 The repository defaults to test ads even in TestFlight. Set
 `EXPO_PUBLIC_ADMOB_USE_TEST_ADS=false` only for App Store release builds or

@@ -43,11 +43,20 @@ App Store Connect에서 아래 상품 ID를 그대로 만들어야 한다.
 
 | Product ID | 유형 | 가격 | 지급 |
 |---|---:|---:|---:|
-| `mute_theme_mint` | Non-consumable | 4,900원 | 민트 테마 영구 소장 |
-| `mute_theme_ocean` | Non-consumable | 4,900원 | 오션 테마 영구 소장 |
-| `mute_theme_lavender` | Non-consumable | 4,900원 | 라벤더 테마 영구 소장 |
-| `mute_theme_sunset` | Non-consumable | 4,900원 | 선셋 테마 영구 소장 |
-| `mute_theme_mono` | Non-consumable | 4,900원 | 모노 테마 영구 소장 |
+| `mute_theme_ocean` | Non-consumable | 3,900원 | 오션 테마 영구 소장 |
+| `mute_theme_lavender` | Non-consumable | 3,900원 | 라벤더 테마 영구 소장 |
+| `mute_theme_sunset` | Non-consumable | 3,900원 | 선셋 테마 영구 소장 |
+| `mute_theme_mono` | Non-consumable | 3,900원 | 모노 테마 영구 소장 |
+| `mute_theme_white` | Non-consumable | 4,900원 | 화이트 테마 영구 소장 |
+| `mute_theme_dark` | Non-consumable | 4,900원 | 다크 테마 영구 소장 |
+
+`mute_theme_mint`는 판매하지 않는 레거시 ID다. 앱의 기본 테마는 무료이며
+구매 상품으로 조회하거나 노출하지 않는다.
+
+`ios/Mute.storekit`의 가격은 로컬 StoreKit 테스트용이다. TestFlight와 실제
+출시 가격은 App Store Connect의 각 상품 가격을 별도로 같은 값으로 변경해야
+한다. 앱 UI, 로컬 StoreKit 설정, App Store Connect 가격이 서로 다르면 출시를
+중단하고 세 값을 먼저 맞춘다.
 
 ### 광고 제거
 
