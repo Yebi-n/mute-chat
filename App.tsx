@@ -2871,6 +2871,9 @@ function AuthenticatedApp({
               });
               navigation.popToTop();
             }}
+            onRead={(roomId) => {
+              setUnreadCounts((counts) => ({ ...counts, [roomId]: 0 }));
+            }}
             onBack={() => {
               setReturnToNotifications(false);
               setChatInitialPanel(null);
@@ -5229,6 +5232,7 @@ function RoomDetail({
   const [storyOverlayId, setStoryOverlayId] = useState<string | null>(null);
   const [storyWriteOpen, setStoryWriteOpen] = useState(false);
   const [storyPanelKey, setStoryPanelKey] = useState(0);
+  const appTheme = useAppTheme();
   const [currentUserId, setCurrentUserId] = useState<string | undefined>(
     providedCurrentUserId,
   );
@@ -5588,7 +5592,7 @@ function RoomDetail({
         />
       )}
       {tab === "profile" && (
-        <View style={s.detailSticky}>
+        <View style={[s.detailSticky, appTheme.id === "dark" && s.detailStickyDark]}>
           {joined || adminReadOnly || isSuperAdmin || room.isSample ? (
             <Pressable onPress={onEnterChat} style={s.detailJoinButton}>
               <LinearGradient
@@ -5822,6 +5826,7 @@ function ChatRoom({
   onBoost,
   onPromote,
   onDeleted,
+  onRead,
   onApplicationsBack,
   onBack,
 }: {
@@ -5843,6 +5848,7 @@ function ChatRoom({
     { ok: true; remainingMs: number } | { ok: false; remainingMs: number }
   >;
   onDeleted?: (roomId: string) => void;
+  onRead?: (roomId: string) => void;
   onApplicationsBack?: () => void;
   onBack: () => void;
 }) {
@@ -5899,6 +5905,7 @@ function ChatRoom({
   );
   const [pointDraft, setPointDraft] = useState("");
   const [profileMember, setProfileMember] = useState<RoomMember | null>(null);
+  const [profileEditOnOpen, setProfileEditOnOpen] = useState(false);
   const [topSpaceOpen, setTopSpaceOpen] = useState(false);
   const [boostResult, setBoostResult] = useState<"success" | "shortage" | null>(
     null,
@@ -7187,6 +7194,7 @@ function ChatRoom({
     return () => {
       const latest = latestReadableMessageIdRef.current;
       if (!latest) return;
+      onRead?.(room.id);
       (usesServerReadReceipt
         ? markRoomRead(room.id, latest)
         : AsyncStorage.setItem(readStorageKey, latest)
@@ -7279,7 +7287,14 @@ function ChatRoom({
         room={room}
         viewerRole={myRole}
         editable={Boolean(profileMember.mine)}
-        onBack={() => setProfileMember(null)}
+        startEditMode={profileEditOnOpen}
+        onBack={() => {
+          initialScrollDone.current = false;
+          restoreScrollAfterPanelRef.current = true;
+          setChatReady(false);
+          setProfileMember(null);
+          setProfileEditOnOpen(false);
+        }}
         onSaved={(updated) => {
           setProfileMember(updated);
           setRoomMembers((items) =>
@@ -7337,8 +7352,6 @@ function ChatRoom({
     const createdAt = story.createdAt ?? new Date().toISOString();
     try {
       let id = `story-${story.id}-${Date.now()}`;
-      if (isSupabaseConfigured && isUuid(room.id) && isUuid(story.id))
-        id = await announceStoryCreated(story.id);
       setMessages((items) =>
         items.some((item) => item.kind === "story" && item.storyId === story.id)
           ? items
@@ -7366,7 +7379,6 @@ function ChatRoom({
     }
   };
   const closePanel = () => {
-    rememberScrollPosition();
     restoreScrollAfterPanelRef.current = true;
     initialScrollDone.current = false;
     setStoryPanelInitialId(null);
@@ -7614,20 +7626,6 @@ function ChatRoom({
                   animated: false,
                 });
                 scrollMetrics.current.offsetY = immediateY;
-                setTimeout(() => {
-                  const y = messagePositions.current[anchor.id];
-                  if (
-                    y !== undefined &&
-                    y > anchor.initialY + Math.max(8, delta * 0.45)
-                  ) {
-                    const nextY = Math.max(0, y - anchor.viewportOffset);
-                    chatScrollRef.current?.scrollTo({
-                      y: nextY,
-                      animated: false,
-                    });
-                    scrollMetrics.current.offsetY = nextY;
-                  }
-                }, 48);
                 scrollMetrics.current.contentHeight = height;
                 return;
               }
@@ -7677,9 +7675,11 @@ function ChatRoom({
             const unreadMarker =
               unreadMarkerId === item.id ? (
                 <View key={`unread-${item.id}`} style={s.unreadMarker}>
-                  <View style={s.unreadLine} />
-                  <Text style={s.unreadText}>여기까지 읽었어요</Text>
-                  <View style={s.unreadLine} />
+                  <View style={[s.unreadLine, appTheme.id === "dark" && s.unreadLineDark]} />
+                  <Text style={[s.unreadText, appTheme.id === "dark" && s.unreadTextDark]}>
+                    여기까지 읽었어요
+                  </Text>
+                  <View style={[s.unreadLine, appTheme.id === "dark" && s.unreadLineDark]} />
                 </View>
               ) : null;
             if (item.kind === "system")
@@ -7966,6 +7966,7 @@ function ChatRoom({
                           item.imageUris?.length ? (
                             <ImageGrid
                               uris={item.imageUris}
+                              disabled={item.delivery === "sending"}
                               onReply={() => messageActions(item)}
                               onPress={(_uri, index) =>
                                 setPhotoViewer({
@@ -8305,7 +8306,10 @@ function ChatRoom({
             name: selectedMember ?? "멤버",
             intro: "이 방에서 사용하는 프로필입니다.",
           };
+          rememberScrollPosition();
+          restoreScrollAfterPanelRef.current = true;
           setSelectedMember(null);
+          setProfileEditOnOpen(Boolean(found.mine));
           setProfileMember(found);
         }}
         onReport={async () => {
@@ -8561,7 +8565,10 @@ function ChatRoom({
             setTimeout(() => setToast(""), 1600);
             return;
           }
+          rememberScrollPosition();
+          restoreScrollAfterPanelRef.current = true;
           setDrawerOpen(false);
+          setProfileEditOnOpen(true);
           setProfileMember(myProfile);
         }}
         onApplications={() => {
@@ -9531,6 +9538,7 @@ function StoryEditor({
   onCancel: () => void;
   onSave: (story: StoryItem) => void;
 }) {
+  const appTheme = useAppTheme();
   const [title, setTitle] = useState(initial?.title ?? "");
   const [visibility, setVisibility] = useState<StoryVisibility>(
     room.isAdult ? "room" : initial?.visibility ?? "room",
@@ -9629,6 +9637,7 @@ function StoryEditor({
       );
       let id = initial?.id ?? `story-${Date.now()}`;
       const effectiveVisibility: StoryVisibility = room.isAdult ? "room" : visibility;
+      let createdNewStory = false;
       if (isSupabaseConfigured && isUuid(room.id)) {
         if (initial && isUuid(initial.id))
           await updateStoryContent(
@@ -9637,13 +9646,22 @@ function StoryEditor({
             payload,
             effectiveVisibility,
           );
-        else
+        else {
           id = await createStoryWithBlocks({
             roomId: room.id,
             visibility: effectiveVisibility,
             title: normalizedTitle,
             blocks: payload,
           });
+          createdNewStory = true;
+        }
+        if (createdNewStory && isUuid(id)) {
+          try {
+            await announceStoryCreated(id);
+          } catch (error) {
+            console.warn("announceStoryCreated failed", error);
+          }
+        }
         const [savedStories, userResult] = await Promise.all([
           listStories({ roomId: room.id }),
           supabase?.auth.getUser(),
@@ -9792,7 +9810,7 @@ function StoryEditor({
           <Pressable onPress={onCancel} style={s.storyEditorCancel}>
             <Text style={s.storyEditorCancelText}>취소</Text>
           </Pressable>
-          <Pressable
+          <RNPressable
             disabled={saving || !title.trim() || !hasBody}
             onPress={save}
             style={[
@@ -9800,21 +9818,26 @@ function StoryEditor({
               (saving || !title.trim() || !hasBody) && s.disabled,
             ]}
           >
-            <LinearGradient
+            <ExpoLinearGradient
               colors={
                 saving || !title.trim() || !hasBody
                   ? ["#C9D8D5", "#BFCAC7"]
-                  : ["#82B9C1", "#5DBB8C"]
+                  : appTheme.gradient
               }
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={s.fullGradient}
             >
-              <Text style={s.primaryText}>
+              <RNText
+                style={[
+                  s.primaryText,
+                  appTheme.id === "white" && { color: "#1C1C1C" },
+                ]}
+              >
                 {saving ? "저장 중..." : "게시"}
-              </Text>
-            </LinearGradient>
-          </Pressable>
+              </RNText>
+            </ExpoLinearGradient>
+          </RNPressable>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -10046,7 +10069,14 @@ function PublicStoryFeed({
                   {body}
                 </LinkedText>
                 <View style={s.publicStoryStats}>
-                  <Text style={s.publicStoryMeta}>
+                  <Text
+                    style={[
+                      s.publicStoryMeta,
+                      (appTheme.id === "white" || appTheme.id === "mint") &&
+                        s.publicStoryMetaGreen,
+                      isDarkTheme && s.publicStoryMetaDark,
+                    ]}
+                  >
                     {formatStoryTime(item.createdAt)}
                   </Text>
                   <Text style={s.publicStoryStat}>조회 {item.views}</Text>
@@ -10384,6 +10414,7 @@ function MemberProfile({
   room,
   viewerRole = null,
   editable = false,
+  startEditMode = false,
   onBack,
   onSaved,
   onHeart,
@@ -10395,6 +10426,7 @@ function MemberProfile({
   room: Room;
   viewerRole?: "owner" | "cohost" | "member" | null;
   editable?: boolean;
+  startEditMode?: boolean;
   onBack: () => void;
   onSaved?: (member: RoomMember) => void;
   onHeart?: () => Promise<boolean>;
@@ -10411,7 +10443,7 @@ function MemberProfile({
   );
   const [avatarRemoved, setAvatarRemoved] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [editMode, setEditMode] = useState(false);
+  const [editMode, setEditMode] = useState(startEditMode);
   const [quickAction, setQuickAction] = useState<"point" | "secret" | null>(
     null,
   );
@@ -11768,7 +11800,12 @@ function ItemShopScreen({
               storeItems.some((ownedItem) => ownedItem.productId === item.productId);
             const selected = themeChoice === item.id;
             return (
-              <View key={item.id} style={s.itemShopThemeCard}>
+              <Pressable
+                key={item.id}
+                disabled={Boolean(busy)}
+                onPress={() => setThemeChoice(item.id)}
+                style={s.itemShopThemeCard}
+              >
                 <ExpoLinearGradient
                   colors={item.gradient}
                   start={{ x: 0, y: 0 }}
@@ -11800,7 +11837,7 @@ function ItemShopScreen({
                 >
                   {selected && <View style={[s.itemShopRadioDot, { backgroundColor: item.accent }]} />}
                 </Pressable>
-              </View>
+              </Pressable>
             );
           })}
         </View>
@@ -11976,7 +12013,14 @@ function Profile({
             <Text style={s.pointValue}>{points.toLocaleString()} P</Text>
           </View>
           <Pressable onPress={() => setShopOpen(true)} style={s.pointButton}>
-            <RNText style={s.pointButtonText}>충전하기</RNText>
+            <RNText
+              style={[
+                s.pointButtonText,
+                theme.id !== "white" && { color: theme.accent },
+              ]}
+            >
+              충전하기
+            </RNText>
           </Pressable>
         </View>
         <View style={s.profileMenuGroup}>
@@ -12001,22 +12045,6 @@ function Profile({
               color={colors.textSubtle}
             />
             <Text style={s.menuTitle}>명예의 전당</Text>
-            <Ionicons name="chevron-forward" size={17} color={colors.gray300} />
-          </Pressable>
-          <Pressable
-            onPress={() =>
-              Linking.openURL(getOperationsPolicyUrl()).catch((error) =>
-                Alert.alert("열기 실패", serverErrorMessage(error)),
-              )
-            }
-            style={s.profileMenu}
-          >
-            <Ionicons
-              name="shield-checkmark-outline"
-              size={19}
-              color={colors.textSubtle}
-            />
-            <Text style={s.menuTitle}>운영정책</Text>
             <Ionicons name="chevron-forward" size={17} color={colors.gray300} />
           </Pressable>
           <Pressable onPress={onSettings} style={s.profileMenu}>
@@ -13928,18 +13956,21 @@ function ImageGrid({
   uris,
   onReply,
   onPress,
+  disabled = false,
 }: {
   uris: string[];
   onReply?: () => void;
   onPress?: (uri: string, index: number) => void;
+  disabled?: boolean;
 }) {
   return (
     <View style={[s.imageGrid, uris.length === 1 && s.imageGridSingle]}>
       {uris.map((uri, index) => (
         <Pressable
           key={`${uri}-${index}`}
+          disabled={disabled}
           onPress={() => onPress?.(uri, index)}
-          onLongPress={onReply}
+          onLongPress={disabled ? undefined : onReply}
           style={[
             s.imageGridItem,
             uris.length === 1 && s.imageGridItemSingle,
@@ -14045,11 +14076,28 @@ function ChatImageEditor({
   const previewHeight = Math.max(260, Math.min(430, viewport.height - 430));
   const previewScale = current?.cropScale ?? 1;
   const previewRotation = current?.cropRotation ?? 0;
+  const sourceWidth = Math.max(1, current?.width ?? 4);
+  const sourceHeight = Math.max(1, current?.height ?? 3);
+  const rotationSwapsAxes = Math.abs(previewRotation % 180) === 90;
+  const rotatedSourceWidth = rotationSwapsAxes ? sourceHeight : sourceWidth;
+  const rotatedSourceHeight = rotationSwapsAxes ? sourceWidth : sourceHeight;
+  const containedScale = Math.min(
+    previewWidth / rotatedSourceWidth,
+    previewHeight / rotatedSourceHeight,
+  );
+  const displayedImageWidth = rotatedSourceWidth * containedScale;
+  const displayedImageHeight = rotatedSourceHeight * containedScale;
+  const renderedImageWidth = rotationSwapsAxes
+    ? displayedImageHeight
+    : displayedImageWidth;
+  const renderedImageHeight = rotationSwapsAxes
+    ? displayedImageWidth
+    : displayedImageHeight;
   const cropWindowRatio = cropRatio;
   const cropMaxWidth =
-    previewWidth / previewHeight > cropWindowRatio
-      ? previewHeight * cropWindowRatio
-      : previewWidth;
+    displayedImageWidth / displayedImageHeight > cropWindowRatio
+      ? displayedImageHeight * cropWindowRatio
+      : displayedImageWidth;
   const cropMaxHeight = cropMaxWidth / cropWindowRatio;
   const cropFreeWidthFactor = Math.max(
     0.22,
@@ -14179,6 +14227,10 @@ function ChatImageEditor({
               style={[
                 s.imageEditorPreview,
                 {
+                  width: renderedImageWidth,
+                  height: renderedImageHeight,
+                  left: (previewWidth - renderedImageWidth) / 2,
+                  top: (previewHeight - renderedImageHeight) / 2,
                   transform: [
                     { rotate: `${previewRotation}deg` },
                   ],
@@ -14548,8 +14600,8 @@ function ComposerPanel({
               label="갤러리"
               onPress={onGallery}
             />
-          </View>
-          <View style={s.toolDivider} />
+        </View>
+          <View style={[s.toolDivider, appTheme.id === "dark" && s.toolDividerDark]} />
           <View style={s.toolGrid}>
             {showPromotion && (
               <ToolAction icon="megaphone-outline" label="프로모션" countdownMs={promotionRemainingMs} onPress={onPromotion}/>
@@ -14560,7 +14612,7 @@ function ComposerPanel({
               onPress={onTopSpace}
             />
           </View>
-          <View style={s.toolDivider} />
+          <View style={[s.toolDivider, appTheme.id === "dark" && s.toolDividerDark]} />
           <View style={s.toolGrid}>
             <ToolAction
               icon="create-outline"
@@ -14568,7 +14620,7 @@ function ComposerPanel({
               onPress={onNewStory}
             />
           </View>
-          <View style={s.toolDivider} />
+          <View style={[s.toolDivider, appTheme.id === "dark" && s.toolDividerDark]} />
           <View style={s.toolGrid}>
             <ToolAction
               icon="podium-outline"
@@ -15693,7 +15745,7 @@ function IconCircle({
   );
 }
 function Badge({ text, pink }: { text: string; pink?: boolean }) {
-  return <Text style={[s.badge, pink && s.badgePink]}>{text}</Text>;
+  return <RNText style={[s.badge, pink && s.badgePink]}>{text}</RNText>;
 }
 function Count({ value }: { value: number }) {
   return <Text style={s.count}>{value}</Text>;
@@ -16400,6 +16452,8 @@ const s = StyleSheet.create({
     fontWeight: "800",
   },
   publicStoryMeta: { color: colors.mint700, fontSize: 9 },
+  publicStoryMetaGreen: { color: colors.mint700 },
+  publicStoryMetaDark: { color: "#A0A0A0" },
   publicStoryBody: {
     color: colors.textSubtle,
     fontSize: 12,
@@ -17091,6 +17145,10 @@ const s = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
   },
+  detailStickyDark: {
+    backgroundColor: "rgba(34,34,34,.98)",
+    borderTopColor: "#2D2D2D",
+  },
   detailJoinButton: {
     height: 52,
     borderRadius: 16,
@@ -17390,6 +17448,7 @@ const s = StyleSheet.create({
     backgroundColor: colors.border,
     marginVertical: 0,
   },
+  toolDividerDark: { backgroundColor: "#303030" },
   toolAction: { width: 60, alignItems: "center", gap: 5 },
   toolIcon: {
     width: 48,
@@ -17943,7 +18002,7 @@ const s = StyleSheet.create({
     backgroundColor: colors.border,
   },
   systemLineDark: {
-    backgroundColor: "#262626",
+    backgroundColor: "#2A2A2A",
   },
   systemContent: {
     maxWidth: "82%",
@@ -17960,7 +18019,7 @@ const s = StyleSheet.create({
     lineHeight: 16,
   },
   systemTextDark: {
-    color: "#787878",
+    color: "#686868",
   },
   sheetLayer: {
     ...StyleSheet.absoluteFill,
@@ -18298,6 +18357,8 @@ const s = StyleSheet.create({
   },
   unreadLine: { flex: 1, height: 1, backgroundColor: "#D7DDD9" },
   unreadText: { color: colors.textMuted, fontSize: 10, fontWeight: "400" },
+  unreadLineDark: { backgroundColor: "#2A2A2A" },
+  unreadTextDark: { color: "#686868" },
   storyAuthor: { flexDirection: "row", alignItems: "center", gap: 14 },
   storyAuthorName: { color: colors.text, fontSize: 12, fontWeight: "800" },
   storyComment: {
@@ -18575,9 +18636,10 @@ const s = StyleSheet.create({
   },
   storyEditorSubmit: {
     height: 38,
+    minWidth: 82,
     borderRadius: 12,
     backgroundColor: colors.mint600,
-    paddingHorizontal: 16,
+    paddingHorizontal: 0,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
@@ -19591,7 +19653,7 @@ const s = StyleSheet.create({
     overflow: "hidden",
     backgroundColor: "#222",
   },
-  imageEditorPreview: { width: "100%", height: "100%" },
+  imageEditorPreview: { position: "absolute" },
   imageCropFocus: {
     position: "absolute",
     borderWidth: 1,
