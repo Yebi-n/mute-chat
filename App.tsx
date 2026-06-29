@@ -559,17 +559,28 @@ const APP_THEMES: AppTheme[] = [
 ];
 let activeAppTheme = APP_THEMES[0];
 const appThemeListeners = new Set<(theme: AppTheme) => void>();
-void AsyncStorage.getItem("mute.app-theme").then((id) => {
-  const found = APP_THEMES.find((theme) => theme.id === id);
-  if (found) {
-    activeAppTheme = found;
-    appThemeListeners.forEach((listener) => listener(found));
-  }
-});
-function selectAppTheme(theme: AppTheme) {
+const themeStorageKey = (userId?: string | null) =>
+  userId ? `mute.app-theme:${userId}` : "mute.app-theme:anonymous";
+function applyAppTheme(theme: AppTheme) {
   activeAppTheme = theme;
-  void AsyncStorage.setItem("mute.app-theme", theme.id);
   appThemeListeners.forEach((listener) => listener(theme));
+}
+function selectAppTheme(theme: AppTheme, userId?: string | null) {
+  applyAppTheme(theme);
+  void AsyncStorage.setItem(themeStorageKey(userId), theme.id);
+}
+async function loadStoredAppTheme(
+  userId?: string | null,
+  ownedProductIds: string[] = [],
+) {
+  const stored =
+    (await AsyncStorage.getItem(themeStorageKey(userId))) ??
+    (userId ? null : await AsyncStorage.getItem("mute.app-theme"));
+  const found = APP_THEMES.find((theme) => theme.id === stored);
+  const allowed =
+    found &&
+    (!found.productId || ownedProductIds.includes(found.productId));
+  applyAppTheme(allowed ? found : APP_THEMES[0]);
 }
 function themeForeground(theme: AppTheme) {
   return theme.id === "white" ? "#222222" : "#FFF";
@@ -2142,6 +2153,28 @@ function AuthenticatedApp({
     if (session?.user.id)
       configurePurchases(session.user.id).catch(() => undefined);
   }, [session?.user.id]);
+  useEffect(() => {
+    let active = true;
+    const userId = session?.user.id;
+    if (!userId) {
+      applyAppTheme(APP_THEMES[0]);
+      return;
+    }
+    listStoreEntitlements()
+      .then((items) => {
+        if (!active) return;
+        void loadStoredAppTheme(
+          userId,
+          items.map((item) => item.productId),
+        );
+      })
+      .catch(() => {
+        if (active) applyAppTheme(APP_THEMES[0]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [session?.user.id]);
   const reloadAppData = async (showSpinner = false) => {
     if (!isSupabaseConfigured) {
       setRoomData([]);
@@ -2701,6 +2734,7 @@ function AuthenticatedApp({
                 unreadCounts,
                 dataRefreshing,
                 dataLoaded: roomDataLoaded,
+                currentUserId: session?.user.id,
               }}
               openRoom={navigateRoom}
               onRefresh={() => reloadAppData(true)}
@@ -4385,6 +4419,7 @@ function MainScreen({
   unreadCounts,
   dataRefreshing = false,
   dataLoaded = true,
+  currentUserId,
   onRefresh,
   onAttendance,
   onRewardedAd,
@@ -4415,6 +4450,7 @@ function MainScreen({
   unreadCounts: Record<string, number>;
   dataRefreshing?: boolean;
   dataLoaded?: boolean;
+  currentUserId?: string;
   onRefresh?: () => void;
   isSuperAdmin: boolean;
   onAdminReportRoom: (room: Room) => void;
@@ -4836,6 +4872,7 @@ function MainScreen({
       {bottomTab === "profile" && (
         <Profile
           points={points}
+          currentUserId={currentUserId}
           now={now}
           attendanceAvailableAt={attendanceAvailableAt}
           rewardedAdAvailable={rewardedAdAvailable}
@@ -5892,6 +5929,7 @@ function ChatRoom({
   const prependHeightRef = useRef<number | null>(null);
   const prependAnchorRef = useRef<{
     id: string;
+    initialY: number;
     viewportOffset: number;
   } | null>(null);
   const messagePositions = useRef<Record<string, number>>({});
@@ -6085,6 +6123,13 @@ function ChatRoom({
           setBubbleProductId(own.bubbleProductId);
           setTextProductId(own.textProductId);
           setBackgroundProductId(own.backgroundProductId);
+        } else if (appTheme.id === "dark") {
+          setBubbleColor("#303030");
+          setTextColor("#F2F2F2");
+          setChatBackground("#222222");
+          setBubbleProductId(undefined);
+          setTextProductId(undefined);
+          setBackgroundProductId(undefined);
         }
         setChatStyleLoaded(true);
       })
@@ -6228,7 +6273,7 @@ function ChatRoom({
       if (reloadTimer) clearTimeout(reloadTimer);
       client.removeChannel(channel);
     };
-  }, [currentUserId, room.id]);
+  }, [appTheme.id, currentUserId, room.id]);
   useEffect(() => {
     if (!supabase || !isUuid(room.id)) return;
     const client = supabase;
@@ -6390,6 +6435,7 @@ function ChatRoom({
       scrollMetrics.current.offsetY;
     prependAnchorRef.current = {
       id: topVisibleMessage.id,
+      initialY: topVisibleY,
       viewportOffset: Math.max(0, topVisibleY - scrollMetrics.current.offsetY),
     };
     try {
@@ -7321,9 +7367,11 @@ function ChatRoom({
   };
   const closePanel = () => {
     rememberScrollPosition();
+    restoreScrollAfterPanelRef.current = true;
+    initialScrollDone.current = false;
     setStoryPanelInitialId(null);
     setStoryPanelInitialWrite(false);
-    setChatReady(true);
+    setChatReady(false);
     setPanel(null);
   };
   const panelTitle =
@@ -7555,10 +7603,23 @@ function ChatRoom({
               const anchor = prependAnchorRef.current;
               prependHeightRef.current = null;
               prependAnchorRef.current = null;
+              const delta = Math.max(0, height - previousHeight);
               if (anchor) {
-                requestAnimationFrame(() => {
+                const immediateY = Math.max(
+                  0,
+                  scrollMetrics.current.offsetY + delta,
+                );
+                chatScrollRef.current?.scrollTo({
+                  y: immediateY,
+                  animated: false,
+                });
+                scrollMetrics.current.offsetY = immediateY;
+                setTimeout(() => {
                   const y = messagePositions.current[anchor.id];
-                  if (y !== undefined) {
+                  if (
+                    y !== undefined &&
+                    y > anchor.initialY + Math.max(8, delta * 0.45)
+                  ) {
                     const nextY = Math.max(0, y - anchor.viewportOffset);
                     chatScrollRef.current?.scrollTo({
                       y: nextY,
@@ -7566,11 +7627,10 @@ function ChatRoom({
                     });
                     scrollMetrics.current.offsetY = nextY;
                   }
-                });
+                }, 48);
                 scrollMetrics.current.contentHeight = height;
                 return;
               }
-              const delta = Math.max(0, height - previousHeight);
               chatScrollRef.current?.scrollTo({
                 y: scrollMetrics.current.offsetY + delta,
                 animated: false,
@@ -7601,12 +7661,6 @@ function ChatRoom({
             } else if (nearBottomRef.current) scrollToLatest();
           }}
         >
-          {loadingOlder && (
-            <ActivityIndicator
-              color={colors.mint700}
-              style={s.olderMessagesLoader}
-            />
-          )}
           {visibleMessages.map((item, index) => {
             const previousMessage = visibleMessages[index - 1];
             const currentDateValue = item.createdAt ?? room.createdAt;
@@ -8036,15 +8090,35 @@ function ChatRoom({
             <ActivityIndicator color={colors.mint700} />
           </View>
         )}
+        {loadingOlder && (
+          <View pointerEvents="none" style={s.olderMessagesLoaderOverlay}>
+            <ActivityIndicator color={colors.mint700} />
+          </View>
+        )}
         {newMessagePreview && (
           <Pressable
             onPress={() => scrollToLatest()}
-            style={s.newMessagePreview}
+            style={[
+              s.newMessagePreview,
+              appTheme.id === "dark" && s.newMessagePreviewDark,
+            ]}
           >
-            <Text numberOfLines={1} style={s.newMessagePreviewName}>
+            <Text
+              numberOfLines={1}
+              style={[
+                s.newMessagePreviewName,
+                appTheme.id === "dark" && s.newMessagePreviewTextDark,
+              ]}
+            >
               {newMessagePreview.name}
             </Text>
-            <Text numberOfLines={1} style={s.newMessagePreviewText}>
+            <Text
+              numberOfLines={1}
+              style={[
+                s.newMessagePreviewText,
+                appTheme.id === "dark" && s.newMessagePreviewTextDark,
+              ]}
+            >
               {newMessagePreview.text}
             </Text>
           </Pressable>
@@ -9773,6 +9847,8 @@ function PublicStoryFeed({
   loading?: boolean;
   onDetailChange?: (open: boolean) => void;
 }) {
+  const appTheme = useAppTheme();
+  const isDarkTheme = appTheme.id === "dark";
   const [sort, setSort] = useState<"random" | "views" | "hearts" | "latest">(
     "latest",
   );
@@ -9882,7 +9958,11 @@ function PublicStoryFeed({
     <FlatList
       data={sortedStories}
       keyExtractor={(item) => item.id}
-      contentContainerStyle={s.publicStoryList}
+      style={isDarkTheme ? s.publicStoryListDark : undefined}
+      contentContainerStyle={[
+        s.publicStoryList,
+        isDarkTheme && s.publicStoryListDark,
+      ]}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
@@ -9909,7 +9989,7 @@ function PublicStoryFeed({
       }
       ListHeaderComponent={
         query.trim() ? null : (
-          <View style={s.publicStoryHeader}>
+          <View style={[s.publicStoryHeader, isDarkTheme && s.publicStoryCardDark]}>
             <Text style={s.publicStoryHeaderText}>공개 스토리</Text>
             <View style={s.storySortRow}>
               {(
@@ -9949,6 +10029,7 @@ function PublicStoryFeed({
             onPress={() => setSelected(item)}
             style={({ pressed }) => [
               s.publicStoryCard,
+              isDarkTheme && s.publicStoryCardDark,
               pressed && s.publicStoryPressed,
             ]}
           >
@@ -10601,7 +10682,6 @@ function MemberProfile({
   return (
     <SafeAreaView style={s.safe}>
       <EdgeBackLayer onBack={onBack} />
-      <ProfileCaptureGuard />
       <StatusBar style="light" />
       <TopBar
         title={editable && editMode ? "프로필 수정" : "프로필"}
@@ -10763,6 +10843,7 @@ function MemberProfile({
       </KeyboardAvoidingView>
       {photoOpen && (
         <View style={s.photoViewer}>
+          <ProfileCaptureGuard />
           <Pressable
             accessibilityLabel="프로필 사진 닫기"
             onPress={() => setPhotoOpen(false)}
@@ -11596,11 +11677,13 @@ function PaymentHistoryScreen({ onBack }: { onBack: () => void }) {
 
 function ItemShopScreen({
   points,
+  currentUserId,
   onBack,
   onRecharge,
   onPointBalanceChange,
 }: {
   points: number;
+  currentUserId?: string;
   onBack: () => void;
   onRecharge: () => void;
   onPointBalanceChange: (value: number) => void;
@@ -11629,7 +11712,7 @@ function ItemShopScreen({
     setBusy(productId);
     try {
       await purchaseStoreProduct(productId);
-      if (selectedTheme) selectAppTheme(selectedTheme);
+      if (selectedTheme) selectAppTheme(selectedTheme, currentUserId);
       await reload();
       Alert.alert("구매 완료", selectedTheme ? "테마가 적용되었습니다." : "광고 제거가 적용되었습니다.");
     } catch (error) {
@@ -11723,13 +11806,13 @@ function ItemShopScreen({
         </View>
         <Pressable
           disabled={Boolean(busy)}
-          onPress={() =>
-            selectedThemeOwned
-              ? selectAppTheme(selectedTheme)
-              : selectedTheme.productId
-                ? void buyStoreItem(selectedTheme.productId, selectedTheme)
-                : selectAppTheme(selectedTheme)
-          }
+                onPress={() =>
+                  selectedThemeOwned
+                    ? selectAppTheme(selectedTheme, currentUserId)
+                    : selectedTheme.productId
+                      ? void buyStoreItem(selectedTheme.productId, selectedTheme)
+                      : selectAppTheme(selectedTheme, currentUserId)
+                }
           style={s.itemShopThemeBuy}
         >
           <LinearGradient colors={["#82B9C1", "#5DBB8C"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.itemShopBuyGradient}>
@@ -11791,6 +11874,7 @@ function ItemShopScreen({
 
 function Profile({
   points,
+  currentUserId,
   now,
   attendanceAvailableAt,
   rewardedAdAvailable,
@@ -11804,6 +11888,7 @@ function Profile({
   onSubpageChange,
 }: {
   points: number;
+  currentUserId?: string;
   now: number;
   attendanceAvailableAt: number;
   rewardedAdAvailable: boolean;
@@ -11818,6 +11903,10 @@ function Profile({
 }) {
   const theme = useAppTheme();
   const rewardTextColor = themeForeground(theme);
+  const rewardActiveColors: [string, string] =
+    theme.id === "dark" ? ["#3A3A3A", "#343434"] : ["#82B9C1", "#5DBB8C"];
+  const rewardDisabledColors: [string, string] =
+    theme.id === "dark" ? ["#2F2F2F", "#2A2A2A"] : ["#C9D8D5", "#BFCAC7"];
   const [shopOpen, setShopOpen] = useState(false);
   const [itemShopOpen, setItemShopOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
@@ -11868,6 +11957,7 @@ function Profile({
     return (
       <ItemShopScreen
         points={points}
+        currentUserId={currentUserId}
         onBack={() => setItemShopOpen(false)}
         onRecharge={() => {
           setItemShopOpen(false);
@@ -11951,8 +12041,8 @@ function Profile({
             <LinearGradient
               colors={
                 !attendanceReady || rewardLoading
-                  ? ["#C9D8D5", "#BFCAC7"]
-                  : ["#82B9C1", "#5DBB8C"]
+                  ? rewardDisabledColors
+                  : rewardActiveColors
               }
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
@@ -11980,8 +12070,8 @@ function Profile({
             <LinearGradient
               colors={
                 rewardedAdAvailable && !rewardLoading
-                  ? ["#82B9C1", "#5DBB8C"]
-                  : ["#C9D8D5", "#BFCAC7"]
+                  ? rewardActiveColors
+                  : rewardDisabledColors
               }
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
@@ -14395,6 +14485,8 @@ function ComposerPanel({
   promotionRemainingMs:number;
 }) {
   if (!tool || tool === "secret") return null;
+  const appTheme = useAppTheme();
+  const darkChatItemsEnabled = appTheme.id === "dark";
   const customBackgroundItems = customPaletteProducts(entitlements, "background");
   const customBubbleItems = customPaletteProducts(entitlements, "bubble");
   const customTextItems = customPaletteProducts(entitlements, "text");
@@ -14407,10 +14499,9 @@ function ComposerPanel({
     "#EDF3F7",
     "#F8F1F4",
     "#EEEAE3",
-    "#222222",
-    "#2B2B2B",
-    "#30343A",
-    "#302A30",
+    ...(darkChatItemsEnabled
+      ? ["#222222", "#2B2B2B", "#30343A", "#302A30"]
+      : []),
   ];
   const backgroundPalette = withCustomPaletteColor(
     backgroundColors.map((color) => ({
@@ -14421,10 +14512,23 @@ function ComposerPanel({
     customBackgroundItems,
   );
   const bubblePalette = withCustomPaletteColor(
-    BUBBLE_COLOR_PRODUCTS,
+    darkChatItemsEnabled
+      ? [
+          ...BUBBLE_COLOR_PRODUCTS,
+          { color: "#303030", name: "다크 말풍선", price: 0 },
+        ]
+      : BUBBLE_COLOR_PRODUCTS,
     customBubbleItems,
   );
-  const textPalette = withCustomPaletteColor(TEXT_COLOR_PRODUCTS, customTextItems);
+  const textPalette = withCustomPaletteColor(
+    darkChatItemsEnabled
+      ? [
+          ...TEXT_COLOR_PRODUCTS,
+          { color: "#F2F2F2", name: "다크 텍스트", price: 0 },
+        ]
+      : TEXT_COLOR_PRODUCTS,
+    customTextItems,
+  );
   return (
     <View style={[s.composerPanel, { height: tool === "media" ? 360 : 260 }]}>
       {tool === "media" ? (
@@ -16254,6 +16358,7 @@ const s = StyleSheet.create({
   },
   visibilityText: { color: colors.textSubtle, fontSize: 10, fontWeight: "700" },
   publicStoryList: { paddingBottom: 100, backgroundColor: "#FFF" },
+  publicStoryListDark: { backgroundColor: "#222222" },
   publicStoryHeader: {
     minHeight: 74,
     justifyContent: "center",
@@ -17922,6 +18027,10 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
+  publicStoryCardDark: {
+    backgroundColor: "#222222",
+    borderBottomColor: "#333333",
+  },
   sheetProfileSelf: {
     flexDirection: "column",
     justifyContent: "center",
@@ -19328,7 +19437,7 @@ const s = StyleSheet.create({
     borderRadius: 24,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.mint050,
+    backgroundColor: "#FFF",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.mint300,
   },
@@ -19378,6 +19487,14 @@ const s = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     zIndex: 12,
   },
+  olderMessagesLoaderOverlay: {
+    position: "absolute",
+    top: 8,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 20,
+  },
   newMessagePreview: {
     position: "absolute",
     left: 82,
@@ -19397,6 +19514,10 @@ const s = StyleSheet.create({
     zIndex: 30,
     ...shadows.floating,
   },
+  newMessagePreviewDark: {
+    backgroundColor: "rgba(0,0,0,.72)",
+    borderColor: "rgba(255,255,255,.08)",
+  },
   newMessagePreviewName: {
     maxWidth: 86,
     color: colors.text,
@@ -19409,6 +19530,9 @@ const s = StyleSheet.create({
     fontSize: 13,
     fontWeight: "500",
     textAlign: "left",
+  },
+  newMessagePreviewTextDark: {
+    color: "#F2F2F2",
   },
   scrollToBottomButton: {
     position: "absolute",
