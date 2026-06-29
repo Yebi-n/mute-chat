@@ -165,6 +165,7 @@ import {
 import {
   claimPointReward,
   getMyWallet,
+  initializeAds,
   listPointLedger,
   showRewardedAd,
   transferRoomPoints,
@@ -2195,6 +2196,9 @@ function AuthenticatedApp({
     });
     return () => subscription.remove();
   }, []);
+  useEffect(() => {
+    initializeAds().catch(() => undefined);
+  }, []);
   useEffect(()=>{
     if(!supabase||!isSupabaseConfigured)return;
     const client=supabase;const reload=()=>listRoomPromotions().then((rows)=>setPromotionTimestamps(Object.fromEntries(rows.map((row)=>[row.room_id,new Date(row.last_promoted_at).getTime()])))).catch(()=>undefined);
@@ -2658,7 +2662,7 @@ function AuthenticatedApp({
     if (rewardLoading) return;
     setRewardLoading(type);
     try {
-      const ad = await showRewardedAd();
+      const ad = await showRewardedAd(type);
       if (!ad.completed) return;
       if (isSupabaseConfigured) {
         const result = await claimPointReward(type, ad.rewardKey);
@@ -2674,7 +2678,7 @@ function AuthenticatedApp({
           `${result.awardedPoints}포인트를 받았습니다.`,
         );
       } else {
-        const reward = type === "attendance" ? 10 : 5;
+        const reward = type === "attendance" ? 20 : 10;
         setPoints((value) => value + reward);
         if (type === "attendance") {
           setAttendanceAvailableAt(Date.now() + 60 * 60 * 1000);
@@ -8446,7 +8450,12 @@ function ChatRoom({
         avatarUri={selectedRoomMember?.avatarUri}
         selfOnly={Boolean(selectedRoomMember?.mine)}
         readOnly={readOnly}
-        canModerate={isStaff&&!selectedRoomMember?.mine}
+        canModerate={Boolean(
+          selectedRoomMember &&
+            !selectedRoomMember.mine &&
+            !selectedRoomMember.owner &&
+            (isOwner || !selectedRoomMember.coHost),
+        )}
         isMuted={selectedMemberMuted}
         onMute={openSelectedMemberMute}
         onUnmute={unmuteSelectedMember}
@@ -10766,7 +10775,9 @@ function MemberProfile({
           "신고하기",
         ]
       : viewerRole === "cohost"
-        ? [isMuted ? "채팅 금지 해제" : "채팅 금지", "강퇴하기", "신고하기"]
+        ? member.owner || member.coHost
+          ? ["신고하기"]
+          : [isMuted ? "채팅 금지 해제" : "채팅 금지", "강퇴하기", "신고하기"]
         : ["신고하기"];
   const finishAction = (title: string, message: string) =>
     Alert.alert(title, message, [{ text: "확인", onPress: onBack }]);
