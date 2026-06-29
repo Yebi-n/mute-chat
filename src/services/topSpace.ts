@@ -14,10 +14,11 @@ export async function listTopSpaces() {
   return data ?? [];
 }
 
-export async function boostTopSpace(roomId: string, points: number) {
+export async function boostTopSpace(roomId: string, points: number, requestId: string) {
   const { data, error } = await requireClient().rpc('boost_room_top_space', {
     p_room_id: roomId,
     p_points: points,
+    p_request_id: requestId,
   });
   if (error) throw error;
   dispatchPendingPushes().catch(() => undefined);

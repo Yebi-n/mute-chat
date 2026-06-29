@@ -7,9 +7,10 @@
 3. The function sends notifications through the Expo Push API.
 4. Each outbox row is marked as sent or failed.
 
-The Edge Function only accepts the Supabase service-role bearer token. Never place
-that token in the app, repository, public environment variables, or EAS client
-configuration.
+The Edge Function accepts an authenticated app session for immediate delivery and
+the Supabase service-role bearer token for scheduled recovery runs. Never place
+the service-role token in the app, repository, public environment variables, or
+EAS client configuration.
 
 The app-side notification UI is the native OS notification: the app icon appears
 on the left, chat notifications use the sender's room profile name as the title,
@@ -41,8 +42,9 @@ credential out of migration history.
 - The worker processes at most 100 outbox rows per run.
 - Failed jobs are not retried indefinitely.
 - Devices without an active token fail immediately with `NO_ACTIVE_DEVICE`.
-- Remove stale device tokens after Expo reports them as unregistered.
-- Add receipt processing before production launch so invalid tokens are disabled.
+- Expo ticket responses disable tokens reported as `DeviceNotRegistered`.
+- Add Expo receipt processing before production launch to catch failures that are
+  reported after a ticket was initially accepted.
 - Keep chat message bodies short in push payloads and load full content in-app.
 
 ## Release checks

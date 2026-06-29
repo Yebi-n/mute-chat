@@ -19,6 +19,10 @@ export function setForegroundRoomId(roomId: string | null) {
   foregroundRoomId = roomId;
 }
 
+export function clearForegroundRoomId(roomId: string) {
+  if (foregroundRoomId === roomId) foregroundRoomId = null;
+}
+
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const data = notification.request.content.data ?? {};
@@ -27,7 +31,7 @@ Notifications.setNotificationHandler({
       Boolean(foregroundRoomId && roomId && foregroundRoomId === roomId);
     return {
       shouldPlaySound: !shouldSuppressRoomAlert,
-      shouldSetBadge: true,
+      shouldSetBadge: !shouldSuppressRoomAlert,
       shouldShowBanner: !shouldSuppressRoomAlert,
       shouldShowList: !shouldSuppressRoomAlert,
     };
@@ -65,12 +69,9 @@ export async function registerPushDevice() {
 export async function unregisterPushDevice() {
   if (!Device.isDevice || Platform.OS === 'web') return;
   if (!isSupabaseConfigured || !supabase) return;
-  const token = (await Notifications.getExpoPushTokenAsync()).data;
-  if (!token) return;
-  const { error } = await supabase
-    .from('push_devices')
-    .update({ enabled: false, last_seen_at: new Date().toISOString() })
-    .eq('push_token', token);
+  // Disable every token owned by the current account. Fetching the local Expo
+  // token can fail during logout, which previously left stale devices enabled.
+  const { error } = await supabase.rpc('disable_my_push_devices');
   if (error) throw error;
 }
 
@@ -111,9 +112,12 @@ async function invokePushOutbox() {
   if (error) throw error;
 }
 
+const sleep = (milliseconds: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
 let pushFlushPromise: Promise<void> | null = null;
 let lastPushFlushAt = 0;
-const PUSH_FLUSH_MIN_INTERVAL_MS = 1500;
+const PUSH_FLUSH_MIN_INTERVAL_MS = 120;
 
 export async function dispatchPendingPushes() {
   if (pushFlushPromise) return pushFlushPromise;
@@ -126,7 +130,17 @@ export async function dispatchPendingPushes() {
   })
     .then(async () => {
       lastPushFlushAt = Date.now();
-      await invokePushOutbox();
+      let lastError: unknown;
+      for (const delay of [0, 350, 1000]) {
+        if (delay) await sleep(delay);
+        try {
+          await invokePushOutbox();
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError;
     })
     .finally(() => {
       pushFlushPromise = null;
@@ -139,7 +153,14 @@ export async function listNotificationInbox(limit = 50): Promise<ServerNotice[]>
   const { data, error } = await supabase
     .from('user_notifications')
     .select('id,event_type,title,body,data,read_at,created_at')
-    .in('event_type', ['join_request', 'room_kicked', 'story', 'story_comment'])
+    .in('event_type', [
+      'join_request',
+      'join_approved',
+      'join_rejected',
+      'room_kicked',
+      'story',
+      'story_comment',
+    ])
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;

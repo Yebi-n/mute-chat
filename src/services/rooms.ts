@@ -64,6 +64,7 @@ export async function updateRoom(input: CreateRoomInput & { roomId:string }) {
     p_region: input.region ?? null,
   });
   if (error) throw error;
+  await dispatchPendingPushes().catch(() => undefined);
 }
 
 export async function listRooms() {
@@ -238,7 +239,7 @@ export async function requestRoomJoin(roomId: string, name: string, introduction
     p_introduction: introduction,
   });
   if (error) throw error;
-  dispatchPendingPushes().catch(() => undefined);
+  await dispatchPendingPushes().catch(() => undefined);
 }
 
 export async function requestRoomJoinWithAvatar(roomId: string, name: string, introduction: string, avatarUploadId?: string) {
@@ -249,7 +250,7 @@ export async function requestRoomJoinWithAvatar(roomId: string, name: string, in
     p_avatar_upload_id: avatarUploadId ?? null,
   });
   if (error) throw error;
-  dispatchPendingPushes().catch(() => undefined);
+  await dispatchPendingPushes().catch(() => undefined);
 }
 
 export async function joinRoomAsSystemAdmin(roomId: string) {
@@ -266,6 +267,7 @@ export async function decideRoomJoin(requestId: string, approve: boolean) {
     p_approve: approve,
   });
   if (error) throw error;
+  await dispatchPendingPushes().catch(() => undefined);
 }
 
 export async function listPendingRoomJoinRequests(roomId: string) {

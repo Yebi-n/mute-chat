@@ -37,7 +37,7 @@ Deno.serve(async (request) => {
 
   const { data: claimed, error: claimError } = await supabase.rpc(
     'claim_push_outbox',
-    { p_limit: 100 },
+    { p_limit: 500 },
   );
   if (claimError) return new Response(claimError.message, { status: 500 });
   const jobs = (claimed ?? []) as PushJob[];
@@ -95,6 +95,7 @@ Deno.serve(async (request) => {
   const noDeviceIds: number[] = [];
   const envelopes: Array<{
     jobId: number;
+    token: string;
     message: Record<string, unknown>;
   }> = [];
   for (const job of jobs) {
@@ -114,6 +115,7 @@ Deno.serve(async (request) => {
     tokens.forEach((to) =>
       envelopes.push({
         jobId: job.id,
+        token: to,
         message: {
           to,
           sound: 'default',
@@ -134,7 +136,9 @@ Deno.serve(async (request) => {
     );
   }
 
+  const successfulJobIds = new Set<number>();
   const failedJobIds = new Set<number>();
+  const invalidTokens = new Set<string>();
   for (const batch of chunks(envelopes, 100)) {
     try {
       const response = await fetch('https://exp.host/--/api/v2/push/send', {
@@ -142,19 +146,52 @@ Deno.serve(async (request) => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(batch.map((item) => item.message)),
       });
-      if (!response.ok) batch.forEach((item) => failedJobIds.add(item.jobId));
+      if (!response.ok) {
+        batch.forEach((item) => failedJobIds.add(item.jobId));
+        continue;
+      }
+      const payload = await response.json().catch(() => null) as {
+        data?: Array<{
+          status?: string;
+          details?: { error?: string };
+        }>;
+      } | null;
+      const tickets = Array.isArray(payload?.data) ? payload.data : [];
+      if (tickets.length !== batch.length) {
+        batch.forEach((item) => failedJobIds.add(item.jobId));
+        continue;
+      }
+      tickets.forEach((ticket, index) => {
+        const envelope = batch[index];
+        if (ticket?.status === 'ok') {
+          successfulJobIds.add(envelope.jobId);
+          return;
+        }
+        if (ticket?.details?.error === 'DeviceNotRegistered')
+          invalidTokens.add(envelope.token);
+        failedJobIds.add(envelope.jobId);
+      });
     } catch {
       batch.forEach((item) => failedJobIds.add(item.jobId));
     }
   }
 
+  if (invalidTokens.size)
+    await supabase
+      .from('push_devices')
+      .update({ enabled: false, last_seen_at: new Date().toISOString() })
+      .in('push_token', [...invalidTokens]);
+
   const deliveredIds = jobs
     .map((job) => job.id)
-    .filter((id) => !noDeviceIds.includes(id) && !failedJobIds.has(id));
+    .filter((id) => successfulJobIds.has(id));
+  const undeliveredJobIds = [...failedJobIds].filter(
+    (id) => !successfulJobIds.has(id),
+  );
   const terminalFailureIds = jobs
-    .filter((job) => failedJobIds.has(job.id) && job.attempt_count >= 5)
+    .filter((job) => undeliveredJobIds.includes(job.id) && job.attempt_count >= 5)
     .map((job) => job.id);
-  const retryIds = [...failedJobIds].filter(
+  const retryIds = undeliveredJobIds.filter(
     (id) => !terminalFailureIds.includes(id),
   );
   const now = new Date().toISOString();

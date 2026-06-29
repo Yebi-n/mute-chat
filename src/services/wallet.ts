@@ -1,4 +1,5 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { dispatchPendingPushes } from './notifications';
 
 export type Wallet = {
   pointBalance: number;
@@ -68,14 +69,20 @@ export async function transferRoomPoints(input: {
   roomId: string;
   recipientUserId: string;
   amount: number;
+  requestId: string;
 }) {
   const { data, error } = await requireClient().rpc('transfer_room_points', {
     p_room_id: input.roomId,
     p_recipient_user_id: input.recipientUserId,
     p_amount: input.amount,
+    p_request_id: input.requestId,
   });
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.message_id || !Number.isFinite(Number(row?.point_balance))) {
+    throw new Error('POINT_TRANSFER_INVALID_RESPONSE');
+  }
+  dispatchPendingPushes().catch(() => undefined);
   return {
     pointBalance: Number(row?.point_balance ?? 0),
     messageId: row?.message_id as string,

@@ -98,6 +98,7 @@ import {
   getVerificationStatus,
 } from "./src/services/verification";
 import {
+  dispatchPendingPushes,
   getGlobalNotificationsEnabled,
   listMyRoomSummaries,
   listNotificationInbox,
@@ -105,6 +106,7 @@ import {
   markNotificationRead,
   markRoomJoinRequestNotificationsRead,
   registerPushDevice,
+  clearForegroundRoomId,
   ServerNotice,
   setForegroundRoomId,
   setGlobalNotificationsEnabled,
@@ -300,7 +302,7 @@ type Notice = {
   time: string;
   read: boolean;
   roomId?: string;
-  destination?: "chat" | "applications" | "promotion";
+  destination?: "chat" | "detail" | "applications" | "promotion";
 };
 type StoryVisibility = "room" | "public";
 type StoryBlock =
@@ -1273,7 +1275,8 @@ function mapServerChatMessage(
     const event: Extract<ChatMessage, { kind: "system" }>["event"] =
       message.body.includes("하트")
         ? "heart"
-        : message.body.includes("포인트")
+        : message.body.includes("포인트") ||
+            /[0-9][0-9,]*p를 보냈습니다\./.test(message.body)
           ? "point"
           : message.body.includes("강퇴")
             ? "kick"
@@ -2035,6 +2038,8 @@ function AuthenticatedApp({
   const [promotionTimestamps, setPromotionTimestamps] = useState<
     Record<string, number>
   >({});
+  const promotingRoomsRef = useRef<Set<string>>(new Set());
+  const topSpaceRequestIdsRef = useRef<Record<string, string>>({});
   const [topSpaceExpiresAt, setTopSpaceExpiresAt] = useState<
     Record<string, number>
   >({});
@@ -2083,10 +2088,47 @@ function AuthenticatedApp({
       })
       .catch(() => undefined);
   }, []);
+  useEffect(() => {
+    if (!supabase || !isSupabaseConfigured || !session?.user.id) return;
+    const client = supabase;
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+    const reloadWallet = () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => {
+        getMyWallet()
+          .then((wallet) => {
+            setPoints(wallet.pointBalance);
+            setAttendanceAvailableAt(
+              new Date(wallet.attendanceAvailableAt).getTime(),
+            );
+            setRewardedAdAvailable(wallet.rewardedAdAvailable);
+          })
+          .catch(() => undefined);
+      }, 120);
+    };
+    const channel = client
+      .channel(`wallet-ledger-${session.user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "point_ledger",
+          filter: `user_id=eq.${session.user.id}`,
+        },
+        reloadWallet,
+      )
+      .subscribe();
+    return () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      client.removeChannel(channel);
+    };
+  }, [session?.user.id]);
   const walletRefreshAtRef = useRef<number | null>(null);
   useEffect(() => {
     if (!isSupabaseConfigured || attendanceAvailableAt <= 0) return;
     if (now < attendanceAvailableAt) return;
+    setRewardedAdAvailable(true);
     if (walletRefreshAtRef.current === attendanceAvailableAt) return;
     walletRefreshAtRef.current = attendanceAvailableAt;
     getMyWallet()
@@ -2142,7 +2184,16 @@ function AuthenticatedApp({
     };
   }, []);
   useEffect(() => {
-    registerPushDevice().catch(() => undefined);
+    const syncPushState = () => {
+      registerPushDevice()
+        .then(() => dispatchPendingPushes())
+        .catch(() => undefined);
+    };
+    syncPushState();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") syncPushState();
+    });
+    return () => subscription.remove();
   }, []);
   useEffect(()=>{
     if(!supabase||!isSupabaseConfigured)return;
@@ -2161,6 +2212,12 @@ function AuthenticatedApp({
       applyAppTheme(APP_THEMES[0]);
       return;
     }
+    // Restore the per-account selection immediately. Server entitlements then
+    // validate it without forcing the default theme during transient failures.
+    void loadStoredAppTheme(
+      userId,
+      APP_THEMES.flatMap((theme) => (theme.productId ? [theme.productId] : [])),
+    );
     listStoreEntitlements()
       .then((items) => {
         if (!active) return;
@@ -2169,9 +2226,7 @@ function AuthenticatedApp({
           items.map((item) => item.productId),
         );
       })
-      .catch(() => {
-        if (active) applyAppTheme(APP_THEMES[0]);
-      });
+      .catch(() => undefined);
     return () => {
       active = false;
     };
@@ -2437,18 +2492,14 @@ function AuthenticatedApp({
       notice.destination === "applications" ? "applications" : null,
     );
     setChatInitialUnreadFocus(notice.destination === "chat");
+    const openChat =
+      notice.destination === "chat" ||
+      notice.destination === "applications" ||
+      joinedIds.includes(room.id);
     if (appNavigationRef.isReady()) {
-      appNavigationRef.navigate(
-        notice.destination === "chat" || joinedIds.includes(room.id)
-          ? "Chat"
-          : "Detail",
-      );
+      appNavigationRef.navigate(openChat ? "Chat" : "Detail");
     } else {
-      setScreen(
-        notice.destination === "chat" || joinedIds.includes(room.id)
-          ? "chat"
-          : "detail",
-      );
+      setScreen(openChat ? "chat" : "detail");
     }
   };
   useEffect(() => {
@@ -2466,7 +2517,12 @@ function AuthenticatedApp({
         time: "지금",
         read: true,
         roomId,
-        destination: type === "join_request" ? "applications" : "chat",
+        destination:
+          type === "join_request"
+            ? "applications"
+            : type === "join_rejected"
+              ? "detail"
+              : "chat",
       };
     };
     const handleResponse = (response: Notifications.NotificationResponse | null) => {
@@ -2498,6 +2554,9 @@ function AuthenticatedApp({
   const topSpaceCount = (room: Room) =>
     room.topSpaceCount + (boosts[room.id] ?? 0);
   const promoteRoom = async (room: Room) => {
+    if (promotingRoomsRef.current.has(room.id)) {
+      return { ok: false as const, remainingMs: -1 };
+    }
     if (room.isAdult) {
       return { ok: false as const, remainingMs: -1 };
     }
@@ -2509,6 +2568,7 @@ function AuthenticatedApp({
     }
     let promotedAt = current;
     if (isSupabaseConfigured && isUuid(room.id)) {
+      promotingRoomsRef.current.add(room.id);
       try {
         promotedAt = new Date(
           (await promoteRoomOnServer(room.id)).lastPromotedAt,
@@ -2522,6 +2582,8 @@ function AuthenticatedApp({
             ? Number(match[1]) * 1000
             : nextAvailableAt - current,
         };
+      } finally {
+        promotingRoomsRef.current.delete(room.id);
       }
     }
     setPromotionTimestamps((value) => {
@@ -2545,7 +2607,15 @@ function AuthenticatedApp({
     const purchasedAt = Date.now();
     if (isSupabaseConfigured && isUuid(room.id)) {
       try {
-        const result = await boostTopSpace(room.id, option.points);
+        const requestKey = `${room.id}:${option.points}`;
+        const requestId =
+          topSpaceRequestIdsRef.current[requestKey] ??
+          `topspace-${room.id}-${option.points}-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2)}`;
+        topSpaceRequestIdsRef.current[requestKey] = requestId;
+        const result = await boostTopSpace(room.id, option.points, requestId);
+        delete topSpaceRequestIdsRef.current[requestKey];
         setPoints(result.pointBalance);
         setTopSpaceExpiresAt((value) => ({
           ...value,
@@ -2865,6 +2935,7 @@ function AuthenticatedApp({
                 : undefined
             }
             points={points}
+            onPointBalanceChange={setPoints}
             promotionAvailableAt={
               (promotionTimestamps[selectedRoom.id] ?? 0) + 15 * 60 * 1000
             }
@@ -3080,6 +3151,20 @@ function serverErrorMessage(error: unknown) {
   if (message.includes("INVALID_PIN"))
     return "PIN은 숫자 6자리로 입력해주세요.";
   if (message.includes("INSUFFICIENT_POINTS")) return "포인트가 부족합니다.";
+  if (message.includes("POINT_TRANSFER_AMOUNT_INVALID"))
+    return "보낼 포인트를 1p 이상의 숫자로 입력해주세요.";
+  if (message.includes("POINT_TRANSFER_RECIPIENT_INVALID"))
+    return "현재 방에 참여 중인 멤버에게만 포인트를 보낼 수 있습니다.";
+  if (message.includes("POINT_TRANSFER_MEMBER_REQUIRED"))
+    return "방에 참여 중인 멤버만 포인트를 보낼 수 있습니다.";
+  if (message.includes("POINT_TRANSFER_IDEMPOTENCY_CONFLICT"))
+    return "전송 정보가 변경되었습니다. 금액을 다시 확인해주세요.";
+  if (message.includes("POINT_TRANSFER_REQUEST_INVALID"))
+    return "포인트 전송 요청을 다시 시도해주세요.";
+  if (message.includes("POINT_TRANSFER_INCOMPLETE"))
+    return "이전 전송을 확인 중입니다. 포인트 내역을 확인해주세요.";
+  if (message.includes("POINT_TRANSFER_INVALID_RESPONSE"))
+    return "포인트 전송 결과를 확인하지 못했습니다. 포인트 내역을 확인해주세요.";
   if (message.includes("STORE_PURCHASE_PLATFORM_NOT_AVAILABLE"))
     return "현재 기기에서는 인앱결제를 사용할 수 없습니다.";
   if (message.includes("PURCHASE_TIMEOUT"))
@@ -5053,18 +5138,20 @@ function RankingScreen({
   openRoom: (room: Room) => void;
   countFor: (room: Room) => number;
 }) {
+  const appTheme = useAppTheme();
+  const dark = appTheme.id === "dark";
   const ranked = [...roomData].sort((a, b) => countFor(b) - countFor(a));
   return (
-    <SafeAreaView style={[s.safe, s.whitePage]}>
+    <SafeAreaView style={[s.safe, s.whitePage, dark && s.rankingPageDark]}>
       <StatusBar style="light" />
       <TopBar title="탑스페이스 랭킹" onBack={onBack} />
       <FlatList
-        style={s.whitePage}
+        style={[s.whitePage, dark && s.rankingPageDark]}
         data={ranked}
         keyExtractor={(item) => item.id}
         contentContainerStyle={s.rankingList}
         ListHeaderComponent={
-          <View style={[s.rankingIntro, s.whitePage]}>
+          <View style={[s.rankingIntro, s.whitePage, dark && s.rankingPageDark]}>
             <Text style={s.rankingIntroTitle}>전체 방 랭킹</Text>
             <Text style={s.rankingIntroText}>
               멤버들이 탑스페이스를 올린 누적 횟수 기준이에요.
@@ -5837,6 +5924,7 @@ function ChatRoom({
   initialPanel = null,
   initialFocusUnread = false,
   points,
+  onPointBalanceChange,
   promotionAvailableAt,
   topSpaceExpiresAt,
   topSpaceRemaining,
@@ -5857,6 +5945,7 @@ function ChatRoom({
   initialPanel?: ChatPanel;
   initialFocusUnread?: boolean;
   points: number;
+  onPointBalanceChange: (balance: number) => void;
   promotionAvailableAt: number;
   topSpaceExpiresAt?: number;
   topSpaceRemaining: string;
@@ -5876,7 +5965,7 @@ function ChatRoom({
   useEffect(() => {
     if (isUuid(room.id)) setForegroundRoomId(room.id);
     return () => {
-      setForegroundRoomId(null);
+      if (isUuid(room.id)) clearForegroundRoomId(room.id);
     };
   }, [room.id]);
   const myProfile =
@@ -5921,12 +6010,20 @@ function ChatRoom({
     null,
   );
   const [pointDraft, setPointDraft] = useState("");
+  const [pointSending, setPointSending] = useState(false);
+  const pointSendingRef = useRef(false);
+  const pointTransferRequestRef = useRef<{
+    fingerprint: string;
+    requestId: string;
+  } | null>(null);
   const [profileMember, setProfileMember] = useState<RoomMember | null>(null);
   const [profileEditOnOpen, setProfileEditOnOpen] = useState(false);
   const [topSpaceOpen, setTopSpaceOpen] = useState(false);
   const [boostResult, setBoostResult] = useState<"success" | "shortage" | null>(
     null,
   );
+  const [topSpaceSubmitting, setTopSpaceSubmitting] = useState(false);
+  const roomExitSubmittingRef = useRef(false);
   const [replyTo, setReplyTo] = useState<{
     id: string;
     name: string;
@@ -6694,9 +6791,26 @@ function ChatRoom({
     target: RoomMember | undefined,
     rawAmount: string,
   ): Promise<boolean> => {
-    const amount = Number(rawAmount.replace(/[^0-9]/g, ""));
+    if (pointSendingRef.current) return false;
+    const normalizedAmount = rawAmount.trim();
+    if (!/^[0-9]+$/.test(normalizedAmount)) {
+      Alert.alert("포인트 보내기", "포인트는 숫자로만 입력해주세요.");
+      return false;
+    }
+    const amount = Number(normalizedAmount);
     const targetName = target?.name;
     if (!targetName) return false;
+    if (target?.mine || target?.userId === currentUserId) {
+      Alert.alert("포인트 보내기", "본인에게는 포인트를 보낼 수 없습니다.");
+      return false;
+    }
+    if (!target?.userId) {
+      Alert.alert(
+        "포인트 보내기 실패",
+        "서버에 등록된 멤버에게만 포인트를 보낼 수 있습니다.",
+      );
+      return false;
+    }
     if (!Number.isFinite(amount) || amount < 1) {
       Alert.alert("포인트 보내기", "1p 이상 입력해주세요.");
       return false;
@@ -6708,25 +6822,42 @@ function ChatRoom({
       );
       return false;
     }
+    if (!isSupabaseConfigured || !isUuid(room.id)) {
+      Alert.alert(
+        "포인트 보내기 실패",
+        "서버에 연결된 채팅방에서만 포인트를 보낼 수 있습니다.",
+      );
+      return false;
+    }
     const createdAt = new Date().toISOString();
     const body = `${myDisplayName}님이 ${targetName}님에게 ${amount.toLocaleString()}p를 보냈습니다.`;
+    pointSendingRef.current = true;
+    setPointSending(true);
     try {
-      let id = `point-${Date.now()}`;
-      if (isSupabaseConfigured && isUuid(room.id)) {
-        if (!target?.userId || !isUuid(target.userId)) {
+      let id: string;
+      if (!isUuid(target.userId)) {
           Alert.alert(
             "포인트 보내기 실패",
             "서버에 등록된 멤버에게만 보낼 수 있습니다.",
           );
           return false;
+      }
+        const fingerprint = `${room.id}:${target.userId}:${amount}`;
+        if (pointTransferRequestRef.current?.fingerprint !== fingerprint) {
+          pointTransferRequestRef.current = {
+            fingerprint,
+            requestId: `pt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`,
+          };
         }
         const result = await transferRoomPoints({
           roomId: room.id,
           recipientUserId: target.userId,
           amount,
+          requestId: pointTransferRequestRef.current.requestId,
         });
         id = result.messageId;
-      }
+        onPointBalanceChange(result.pointBalance);
+        pointTransferRequestRef.current = null;
       setMessages((value) => [
         ...value,
         { id, kind: "system", event: "point", text: body, createdAt },
@@ -6739,6 +6870,9 @@ function ChatRoom({
     } catch (error) {
       Alert.alert("포인트 보내기 실패", serverErrorMessage(error));
       return false;
+    } finally {
+      pointSendingRef.current = false;
+      setPointSending(false);
     }
   };
   const sendPoint = async () =>
@@ -8379,6 +8513,7 @@ function ChatRoom({
           <Pressable
             accessibilityLabel="포인트 보내기 닫기"
             onPress={() => {
+              if (pointSending) return;
               setPointTarget(null);
               setPointTargetMember(null);
               setPointDraft("");
@@ -8402,10 +8537,11 @@ function ChatRoom({
               <TextInput
                 autoFocus
                 value={pointDraft}
-                onChangeText={(value) =>
-                  setPointDraft(value.replace(/[^0-9]/g, ""))
-                }
+                onChangeText={(value) => {
+                  if (/^[0-9]*$/.test(value)) setPointDraft(value);
+                }}
                 keyboardType="number-pad"
+                maxLength={10}
                 placeholder="보낼 포인트"
                 placeholderTextColor={colors.textMuted}
                 style={[
@@ -8415,6 +8551,7 @@ function ChatRoom({
               />
               <View style={s.pointSendActions}>
                 <Pressable
+                  disabled={pointSending}
                   onPress={() => {
                     setPointTarget(null);
                     setPointTargetMember(null);
@@ -8426,6 +8563,7 @@ function ChatRoom({
                 </Pressable>
                 <Pressable
                   disabled={
+                    pointSending ||
                     !pointDraft ||
                     Number(pointDraft) < 1 ||
                     Number(pointDraft) > points
@@ -8433,7 +8571,8 @@ function ChatRoom({
                   onPress={sendPoint}
                   style={[
                     s.pointSendButton,
-                    (!pointDraft ||
+                    (pointSending ||
+                      !pointDraft ||
                       Number(pointDraft) < 1 ||
                       Number(pointDraft) > points) &&
                       s.disabled,
@@ -8445,7 +8584,9 @@ function ChatRoom({
                     end={{ x: 1, y: 0 }}
                     style={s.pointSendGradient}
                   >
-                    <Text style={s.primaryText}>보내기</Text>
+                    <Text style={s.primaryText}>
+                      {pointSending ? "전송 중..." : "보내기"}
+                    </Text>
                   </LinearGradient>
                 </Pressable>
               </View>
@@ -8569,15 +8710,21 @@ function ChatRoom({
         expiresAt={topSpaceExpiresAt}
         remaining={topSpaceRemaining}
         result={boostResult}
+        loading={topSpaceSubmitting}
         onClose={() => {
+          if (topSpaceSubmitting) return;
           setTopSpaceOpen(false);
           setBoostResult(null);
         }}
         onBoost={async (option) => {
+          if (topSpaceSubmitting) return;
+          setTopSpaceSubmitting(true);
           try {
             setBoostResult((await onBoost(option)) ? "success" : "shortage");
           } catch (error) {
             Alert.alert("탑스페이스 실패", serverErrorMessage(error));
+          } finally {
+            setTopSpaceSubmitting(false);
           }
         }}
       />
@@ -8638,6 +8785,8 @@ function ChatRoom({
                 text: "삭제하기",
                 style: "destructive",
                 onPress: async () => {
+                  if (roomExitSubmittingRef.current) return;
+                  roomExitSubmittingRef.current = true;
                   try {
                     await deleteRoom(room.id);
                     setDrawerOpen(false);
@@ -8648,6 +8797,8 @@ function ChatRoom({
                     }, 350);
                   } catch (error) {
                     Alert.alert("방 삭제 실패", serverErrorMessage(error));
+                  } finally {
+                    roomExitSubmittingRef.current = false;
                   }
                 },
               },
@@ -8664,6 +8815,8 @@ function ChatRoom({
                 text: "나가기",
                 style: "destructive",
                 onPress: async () => {
+                  if (roomExitSubmittingRef.current) return;
+                  roomExitSubmittingRef.current = true;
                   try {
                     await leaveRoom(room.id);
                     setDrawerOpen(false);
@@ -8677,6 +8830,8 @@ function ChatRoom({
                         ? "방장은 방장 권한을 양도한 뒤 나갈 수 있습니다."
                         : message,
                     );
+                  } finally {
+                    roomExitSubmittingRef.current = false;
                   }
                 },
               },
@@ -10947,16 +11102,13 @@ function MemberProfile({
               <TextInput
                 autoFocus
                 value={quickDraft}
-                onChangeText={(value) =>
-                  setQuickDraft(
-                    quickAction === "point"
-                      ? value.replace(/[^0-9]/g, "")
-                      : value,
-                  )
-                }
+                onChangeText={(value) => {
+                  if (quickAction !== "point" || /^[0-9]*$/.test(value))
+                    setQuickDraft(value);
+                }}
                 keyboardType={quickAction === "point" ? "number-pad" : "default"}
                 multiline={quickAction === "secret"}
-                maxLength={quickAction === "secret" ? 500 : 9}
+                maxLength={quickAction === "secret" ? 500 : 10}
                 placeholder={quickAction === "point" ? "보낼 포인트" : "비밀 쪽지를 입력해주세요."}
                 placeholderTextColor={colors.textMuted}
                 style={[
@@ -11995,7 +12147,7 @@ function Profile({
   };
   const rawAttendanceRemaining = Math.max(0, attendanceAvailableAt - now);
   const attendanceReady = rawAttendanceRemaining <= 500;
-  const rewardedAdReady = rewardedAdAvailable;
+  const rewardedAdReady = rewardedAdAvailable || attendanceReady;
   const remaining = attendanceReady ? 0 : rawAttendanceRemaining;
   const minutes = Math.floor(remaining / 60000);
   const seconds = Math.floor((remaining % 60000) / 1000);
@@ -12309,6 +12461,7 @@ function EditRoom({
     useState<ImagePicker.ImagePickerAsset | null>(null);
   const [coverRemoved, setCoverRemoved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const appTheme = useAppTheme();
   const setCapacity = (value: number) =>
     setMaxMembers(
       Math.min(80, Math.max(room.memberCount, value || room.memberCount)),
@@ -12534,7 +12687,7 @@ function EditRoom({
             </View>
           </View>
         </ScrollView>
-        <View style={s.sticky}>
+        <View style={[s.sticky, appTheme.id === "dark" && s.stickyDark]}>
           <Pressable
             disabled={disabled}
             onPress={save}
@@ -12542,7 +12695,11 @@ function EditRoom({
           >
             <LinearGradient
               colors={
-                disabled ? ["#C9D8D5", "#BFCAC7"] : ["#82B9C1", "#5DBB8C"]
+                disabled
+                  ? appTheme.id === "dark"
+                    ? ["#3A3A3A", "#343434"]
+                    : ["#C9D8D5", "#BFCAC7"]
+                  : ["#82B9C1", "#5DBB8C"]
               }
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
@@ -12570,6 +12727,11 @@ function CreateRoom({
   onBack: () => void;
   onCreated: (room: Room) => void;
 }) {
+  const appTheme = useAppTheme();
+  const disabledGradient: [string, string] =
+    appTheme.id === "dark" ? ["#343434", "#303030"] : ["#C9D8D5", "#BFCAC7"];
+  const activeGradient: [string, string] =
+    appTheme.id === "dark" ? ["#3A3A3A", "#343434"] : ["#82B9C1", "#5DBB8C"];
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [profileName, setProfileName] = useState("");
@@ -12661,6 +12823,7 @@ function CreateRoom({
   };
   const submit = async () => {
     setSubmitting(true);
+    let createdRoomId: string | null = null;
     try {
       let avatarUploadId: string | undefined;
       if (isSupabaseConfigured && profileAvatar) {
@@ -12690,6 +12853,7 @@ function CreateRoom({
       const id = isSupabaseConfigured
         ? await createRoom(input)
         : `demo-${Date.now()}`;
+      createdRoomId = id;
       if (isSupabaseConfigured) {
         await setRoomOwnerProfile({
           roomId: id,
@@ -12772,6 +12936,8 @@ function CreateRoom({
       };
       onCreated(created);
     } catch (error) {
+      if (isSupabaseConfigured && createdRoomId)
+        await deleteRoom(createdRoomId).catch(() => undefined);
       Alert.alert("방 생성 실패", serverErrorMessage(error));
       setSubmitting(false);
     }
@@ -13037,7 +13203,7 @@ function CreateRoom({
             </View>
           </View>
         </ScrollView>
-        <View style={s.sticky}>
+        <View style={[s.sticky, appTheme.id === "dark" && s.stickyDark]}>
           <Pressable
             disabled={disabled}
             onPress={submit}
@@ -13045,7 +13211,7 @@ function CreateRoom({
           >
             <LinearGradient
               colors={
-                disabled ? ["#C9D8D5", "#BFCAC7"] : ["#82B9C1", "#5DBB8C"]
+                disabled ? disabledGradient : activeGradient
               }
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
@@ -14347,10 +14513,10 @@ function ChatImageEditor({
                   <GestureDetector gesture={cropMoveGesture}>
                     <Reanimated.View style={s.imageCropMoveSurface} />
                   </GestureDetector>
-                  <View style={s.imageCropGridLineVertical} />
-                  <View style={[s.imageCropGridLineVertical, { left: "66.66%" }]} />
-                  <View style={s.imageCropGridLineHorizontal} />
-                  <View style={[s.imageCropGridLineHorizontal, { top: "66.66%" }]} />
+                  <View pointerEvents="none" style={s.imageCropGridLineVertical} />
+                  <View pointerEvents="none" style={[s.imageCropGridLineVertical, { left: "66.66%" }]} />
+                  <View pointerEvents="none" style={s.imageCropGridLineHorizontal} />
+                  <View pointerEvents="none" style={[s.imageCropGridLineHorizontal, { top: "66.66%" }]} />
                   <GestureDetector gesture={cropHandles.topLeft}>
                     <Reanimated.View
                       style={[s.imageCropResizeHandle, { backgroundColor: theme.accent }, s.imageCropHandleTopLeft]}
@@ -15214,6 +15380,7 @@ function TopSpaceSheet({
   room,
   points,
   result,
+  loading,
   onClose,
   onBoost,
 }: {
@@ -15223,6 +15390,7 @@ function TopSpaceSheet({
   expiresAt?: number;
   remaining: string;
   result: "success" | "shortage" | null;
+  loading?: boolean;
   onClose: () => void;
   onBoost: (option: TopSpacePackage) => Promise<void>;
 }) {
@@ -15232,7 +15400,7 @@ function TopSpaceSheet({
     <View style={s.sheetLayer}>
       <Pressable
         accessibilityLabel="탑스페이스 닫기"
-        onPress={onClose}
+        onPress={loading ? undefined : onClose}
         style={s.sheetDim}
       />
       <View style={s.topSpaceSheet}>
@@ -15247,6 +15415,7 @@ function TopSpaceSheet({
             <Pressable
               accessibilityLabel={`${option.boosts.toLocaleString()}회, ${option.points} 포인트`}
               key={option.points}
+              disabled={loading}
               onPress={() => setSelected(option)}
               style={[
                 s.packageOption,
@@ -15274,7 +15443,7 @@ function TopSpaceSheet({
           </Text>
         )}
         <Pressable
-          disabled={points < selected.points}
+          disabled={loading || points < selected.points}
           onPress={() =>
             Alert.alert(
               "탑스페이스",
@@ -15288,12 +15457,12 @@ function TopSpaceSheet({
           style={[
             s.topSpaceButton,
             s.topSpaceButtonRelaxed,
-            points < selected.points && s.disabled,
+            (loading || points < selected.points) && s.disabled,
           ]}
         >
           <LinearGradient
             colors={
-              points >= selected.points
+              !loading && points >= selected.points
                 ? ["#82B9C1", "#5DBB8C"]
                 : ["#C9D8D5", "#BFCAC7"]
             }
@@ -15575,6 +15744,10 @@ function mapServerNotice(row: ServerNotice): Notice {
     icon:
       type === "join_request"
         ? "person-add-outline"
+        : type === "join_approved"
+          ? "checkmark-circle-outline"
+          : type === "join_rejected"
+            ? "close-circle-outline"
         : type === "story" || type === "story_comment"
           ? "reader-outline"
           : type === "secret_message"
@@ -15585,7 +15758,12 @@ function mapServerNotice(row: ServerNotice): Notice {
     time: formatStoryTime(row.createdAt),
     read: Boolean(row.readAt),
     roomId,
-    destination: type === "join_request" ? "applications" : "chat",
+    destination:
+      type === "join_request"
+        ? "applications"
+        : type === "join_rejected"
+          ? "detail"
+          : "chat",
   };
 }
 
@@ -17386,9 +17564,13 @@ const s = StyleSheet.create({
     bottom: 0,
     padding: 14,
     paddingHorizontal: 20,
-    backgroundColor: "rgba(250,250,250,.97)",
+    backgroundColor: "#F7F7F7",
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
+  },
+  stickyDark: {
+    backgroundColor: "rgba(34,34,34,.98)",
+    borderTopColor: "#343434",
   },
   primary: {
     height: 50,
@@ -19765,7 +19947,8 @@ const s = StyleSheet.create({
   },
   imageCropMoveSurface: {
     ...StyleSheet.absoluteFill,
-    zIndex: 1,
+    zIndex: 3,
+    backgroundColor: "rgba(255,255,255,0.001)",
   },
   imageCropResizeHandle: {
     position: "absolute",
@@ -19775,7 +19958,7 @@ const s = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#FFF",
     backgroundColor: "#8A8A8A",
-    zIndex: 2,
+    zIndex: 4,
   },
   imageCropHandleTopLeft: { left: -15, top: -15 },
   imageCropHandleTopRight: { right: -15, top: -15 },
@@ -19974,6 +20157,7 @@ const s = StyleSheet.create({
     top: 5,
   },
   whitePage: { backgroundColor: "#FFF" },
+  rankingPageDark: { backgroundColor: "#222222" },
   appLockOverlay: {
     ...StyleSheet.absoluteFill,
     zIndex: 9999,
