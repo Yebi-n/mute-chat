@@ -6200,6 +6200,7 @@ function ChatRoom({
   );
   const [topSpaceSubmitting, setTopSpaceSubmitting] = useState(false);
   const roomExitSubmittingRef = useRef(false);
+  const [roomDeleteSubmitting, setRoomDeleteSubmitting] = useState(false);
   const [replyTo, setReplyTo] = useState<{
     id: string;
     name: string;
@@ -7874,6 +7875,37 @@ function ChatRoom({
       : appTheme.id === "dark"
         ? "#F2F2F2"
         : appTheme.accent;
+  const submitRoomDelete = async () => {
+    if (roomDeleteSubmitting) {
+      setToast("방 삭제를 처리하는 중입니다.");
+      setTimeout(() => setToast(""), 1400);
+      return;
+    }
+    if (!isUuid(room.id)) {
+      Alert.alert("방 삭제 실패", "서버에 생성된 방만 삭제할 수 있습니다.");
+      return;
+    }
+    setRoomDeleteSubmitting(true);
+    setToast("방을 삭제하는 중입니다.");
+    try {
+      await withTimeout(
+        deleteRoom(room.id),
+        20000,
+        "방 삭제 요청 시간이 초과되었습니다.",
+      );
+      setDrawerOpen(false);
+      setToast("방이 삭제되었습니다.");
+      setTimeout(() => {
+        onDeleted?.(room.id);
+        if (!onDeleted) onBack();
+      }, 350);
+    } catch (error) {
+      setToast("");
+      Alert.alert("방 삭제 실패", serverErrorMessage(error));
+    } finally {
+      setRoomDeleteSubmitting(false);
+    }
+  };
   const muteSelectedMember=(seconds:number,label:string)=>{
     if(!selectedRoomMember?.userId)return;
     setRoomMemberMute(room.id,selectedRoomMember.userId,seconds).then((until)=>{setRoomMembers((items)=>items.map((item)=>item.userId===selectedRoomMember.userId?{...item,mutedUntil:until}:item));setSelectedMember(null);setToast(`${selectedRoomMember.name}님을 ${label} 동안 채팅 금지했습니다.`);setTimeout(()=>setToast(""),1800);}).catch((error)=>Alert.alert("채팅 금지 실패",serverErrorMessage(error)));
@@ -9038,23 +9070,7 @@ function ChatRoom({
               {
                 text: "삭제하기",
                 style: "destructive",
-                onPress: async () => {
-                  if (roomExitSubmittingRef.current) return;
-                  roomExitSubmittingRef.current = true;
-                  try {
-                    await deleteRoom(room.id);
-                    setDrawerOpen(false);
-                    setToast("방이 삭제되었습니다.");
-                    setTimeout(() => {
-                      onDeleted?.(room.id);
-                      if (!onDeleted) onBack();
-                    }, 350);
-                  } catch (error) {
-                    Alert.alert("방 삭제 실패", serverErrorMessage(error));
-                  } finally {
-                    roomExitSubmittingRef.current = false;
-                  }
-                },
+                onPress: submitRoomDelete,
               },
             ],
           )
