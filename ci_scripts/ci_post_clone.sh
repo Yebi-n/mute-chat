@@ -59,6 +59,7 @@ npm ci
 
 cd "$REPOSITORY_PATH/ios"
 echo "Installing CocoaPods dependencies."
-echo "Synchronizing ExpoImageManipulator with the JavaScript dependency version."
-pod update ExpoImageManipulator --no-repo-update --verbose
-pod install --verbose
+# Xcode Cloud can restore stale local podspecs after npm dependencies change.
+# Rebuild the sandbox and synchronize all path-based Expo pods in one pass.
+rm -rf Pods
+pod update --no-repo-update --verbose
