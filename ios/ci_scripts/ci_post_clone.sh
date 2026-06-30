@@ -59,4 +59,6 @@ npm ci
 
 cd "$REPOSITORY_PATH/ios"
 echo "Installing CocoaPods dependencies."
+echo "Synchronizing ExpoImageManipulator with the JavaScript dependency version."
+pod update ExpoImageManipulator --no-repo-update --verbose
 pod install --verbose
