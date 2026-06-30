@@ -14,6 +14,13 @@ export async function purchaseStoreProduct(_productId: string): Promise<{
   throw new Error('NATIVE_PURCHASE_REQUIRED');
 }
 
+export async function restoreStorePurchases(): Promise<{
+  restored: number;
+  pointBalance: number;
+}> {
+  throw new Error('NATIVE_PURCHASE_REQUIRED');
+}
+
 export async function listStoreEntitlements() {
   return [];
 }

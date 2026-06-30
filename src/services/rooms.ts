@@ -1,5 +1,5 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import { dispatchPendingPushes } from './notifications';
+import { schedulePendingPushDispatch } from './notifications';
 import { getCachedSignedUrls } from './signedUrls';
 
 export type CreateRoomInput = {
@@ -51,7 +51,9 @@ export async function createRoom(input: CreateRoomInput) {
     p_region: input.region ?? null,
   });
   if (error) throw error;
-  return data as string;
+  if (typeof data !== 'string' || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(data))
+    throw new Error('ROOM_CREATE_INVALID_RESPONSE');
+  return data;
 }
 
 export async function updateRoom(input: CreateRoomInput & { roomId:string }) {
@@ -64,7 +66,7 @@ export async function updateRoom(input: CreateRoomInput & { roomId:string }) {
     p_region: input.region ?? null,
   });
   if (error) throw error;
-  await dispatchPendingPushes().catch(() => undefined);
+  schedulePendingPushDispatch();
 }
 
 export async function listRooms() {
@@ -94,7 +96,7 @@ export async function listRooms() {
   const coverUrlByPath = await getCachedSignedUrls(
     'room-covers',
     rows.map((row) => row.cover_asset_path),
-  );
+  ).catch(() => new Map<string, string>());
   return rows.map((row)=>{
     const baseRow = { ...row, member_count: memberCountByRoom.get(row.id) ?? 0 };
     if(!row.cover_asset_path)return baseRow;
@@ -121,7 +123,8 @@ export async function getRoomById(roomId: string) {
     memberCount = Number(countRows[0].member_count ?? 1);
   const baseRow = { ...row, member_count: memberCount };
   if (!row.cover_asset_path) return baseRow;
-  const signed = await getCachedSignedUrls('room-covers', [row.cover_asset_path]);
+  const signed = await getCachedSignedUrls('room-covers', [row.cover_asset_path])
+    .catch(() => new Map<string, string>());
   return { ...baseRow, cover_url: signed.get(row.cover_asset_path) };
 }
 
@@ -155,7 +158,8 @@ export async function listRoomMembers(roomId: string) {
   const avatarPaths = (profileRows ?? [])
     .map((row) => row.avatar_asset_path as string | null)
     .filter((value): value is string => Boolean(value));
-  const avatarUrlByPath = await getCachedSignedUrls('profile-avatars', avatarPaths);
+  const avatarUrlByPath = await getCachedSignedUrls('profile-avatars', avatarPaths)
+    .catch(() => new Map<string, string>());
 
   const profileByUserId = new Map(
     (profileRows ?? []).map((row) => [
@@ -239,7 +243,7 @@ export async function requestRoomJoin(roomId: string, name: string, introduction
     p_introduction: introduction,
   });
   if (error) throw error;
-  await dispatchPendingPushes().catch(() => undefined);
+  schedulePendingPushDispatch();
 }
 
 export async function requestRoomJoinWithAvatar(roomId: string, name: string, introduction: string, avatarUploadId?: string) {
@@ -250,7 +254,7 @@ export async function requestRoomJoinWithAvatar(roomId: string, name: string, in
     p_avatar_upload_id: avatarUploadId ?? null,
   });
   if (error) throw error;
-  await dispatchPendingPushes().catch(() => undefined);
+  schedulePendingPushDispatch();
 }
 
 export async function joinRoomAsSystemAdmin(roomId: string) {
@@ -267,7 +271,7 @@ export async function decideRoomJoin(requestId: string, approve: boolean) {
     p_approve: approve,
   });
   if (error) throw error;
-  await dispatchPendingPushes().catch(() => undefined);
+  schedulePendingPushDispatch();
 }
 
 export async function listPendingRoomJoinRequests(roomId: string) {
@@ -298,7 +302,8 @@ export async function listRoomMembersVisible(roomId: string): Promise<ServerRoom
   const avatarPaths = rows
     .map((row) => row.avatar_asset_path)
     .filter((value): value is string => Boolean(value));
-  const avatarUrlByPath = await getCachedSignedUrls('profile-avatars', avatarPaths);
+  const avatarUrlByPath = await getCachedSignedUrls('profile-avatars', avatarPaths)
+    .catch(() => new Map<string, string>());
   return rows.map((row) => ({
     userId: row.user_id,
     name: row.display_name?.trim() || '멤버',
@@ -327,7 +332,8 @@ export async function listPendingRoomJoinRequestsWithAvatars(roomId: string) {
   const avatarPaths = rows
     .map((row) => row.requested_avatar_path)
     .filter((value): value is string => Boolean(value));
-  const avatarUrlByPath = await getCachedSignedUrls('profile-avatars', avatarPaths);
+  const avatarUrlByPath = await getCachedSignedUrls('profile-avatars', avatarPaths)
+    .catch(() => new Map<string, string>());
   return rows.map((row) => ({
     ...row,
     avatar_url: row.requested_avatar_path ? avatarUrlByPath.get(row.requested_avatar_path) : undefined,

@@ -1,5 +1,5 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import { dispatchPendingPushes } from './notifications';
+import { schedulePendingPushDispatch } from './notifications';
 import { getCachedSignedUrls } from './signedUrls';
 
 export type StoryBlockInput =
@@ -39,7 +39,7 @@ export async function createStory(input: {
     p_body: input.body,
   });
   if (error) throw error;
-  await dispatchPendingPushes().catch(() => undefined);
+  schedulePendingPushDispatch();
   return data as string;
 }
 
@@ -68,7 +68,7 @@ export async function createStoryWithBlocks(input: {
     p_blocks: blocks,
   });
   if (error) throw error;
-  await dispatchPendingPushes().catch(() => undefined);
+  schedulePendingPushDispatch();
   return data as string;
 }
 
@@ -78,7 +78,7 @@ export async function addStoryComment(storyId: string, body: string) {
     p_body: body,
   });
   if (error) throw error;
-  await dispatchPendingPushes().catch(() => undefined);
+  schedulePendingPushDispatch();
   return data as string;
 }
 
@@ -111,7 +111,7 @@ export async function deleteStoryComment(commentId: string) {
   if (error) throw error;
 }
 
-export async function listStories(input: { roomId?: string; publicOnly?: boolean; limit?: number }) {
+export async function listStories(input: { roomId?: string; storyId?: string; publicOnly?: boolean; limit?: number }) {
   const client = requireClient();
   let storyQuery = client
     .from('stories')
@@ -120,6 +120,7 @@ export async function listStories(input: { roomId?: string; publicOnly?: boolean
     .order('created_at', { ascending: false })
     .limit(input.limit ?? 50);
   if (input.roomId) storyQuery = storyQuery.eq('room_id', input.roomId);
+  if (input.storyId) storyQuery = storyQuery.eq('id', input.storyId);
   if (input.publicOnly) storyQuery = storyQuery.eq('visibility', 'public');
   const { data: storyRows, error: storyError } = await storyQuery;
   if (storyError) throw storyError;
@@ -146,12 +147,14 @@ export async function listStories(input: { roomId?: string; publicOnly?: boolean
   if (profileError && !input.publicOnly) throw profileError;
 
   const imagePaths = (blockRows ?? []).flatMap((row) => row.storage_path ? [row.storage_path as string] : []);
-  const signedByPath = await getCachedSignedUrls('chat-media', imagePaths);
+  const signedByPath = await getCachedSignedUrls('chat-media', imagePaths)
+    .catch(() => new Map<string, string>());
 
   const avatarPaths = (profileRows ?? [])
     .map((row) => row.avatar_asset_path as string | null)
     .filter((value): value is string => Boolean(value));
-  const signedAvatarByPath = await getCachedSignedUrls('profile-avatars', avatarPaths);
+  const signedAvatarByPath = await getCachedSignedUrls('profile-avatars', avatarPaths)
+    .catch(() => new Map<string, string>());
 
   const profileFor = (roomId: string, userId: string | null) =>
     profileRows?.find((row) => row.room_id === roomId && row.user_id === userId);

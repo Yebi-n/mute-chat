@@ -244,6 +244,14 @@ export async function signOut() {
   } catch {
     // Push-token cleanup is best effort. The local logout must still proceed.
   }
+  // Signed URLs are account-scoped even though the cache is process-wide.
+  // Clear them before another account can reuse the same app process.
+  try {
+    const { clearSignedUrlCache } = await import('./signedUrls');
+    clearSignedUrlCache();
+  } catch {
+    // Cache cleanup must not prevent local logout.
+  }
   const { error } = await supabase.auth.signOut({ scope: 'local' });
   if (!error) return;
   try {

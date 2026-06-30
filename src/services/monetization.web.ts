@@ -1,4 +1,10 @@
-export { claimPointReward, getMyWallet } from './wallet';
+export {
+  claimPointReward,
+  getMyWallet,
+  listPointLedger,
+  transferRoomPoints,
+} from './wallet';
+export type { PointLedgerItem } from './wallet';
 
 export async function initializeAds(): Promise<boolean> {
   return false;

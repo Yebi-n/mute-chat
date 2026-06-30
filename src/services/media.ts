@@ -94,7 +94,10 @@ export async function sendUploadedImages(input: {
     p_reply_to_message_id: input.replyToMessageId ?? null,
   });
   if (error) throw error;
-  const { dispatchPendingPushes } = await import('./notifications');
-  dispatchPendingPushes().catch(() => undefined);
-  return data as string;
+  const messageId = Array.isArray(data) ? data[0] : data;
+  if (typeof messageId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(messageId))
+    throw new Error('MESSAGE_SEND_INVALID_RESPONSE');
+  const { schedulePendingPushDispatch } = await import('./notifications');
+  schedulePendingPushDispatch();
+  return messageId;
 }

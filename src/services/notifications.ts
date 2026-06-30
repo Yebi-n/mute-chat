@@ -148,6 +148,15 @@ export async function dispatchPendingPushes() {
   return pushFlushPromise;
 }
 
+export function schedulePendingPushDispatch() {
+  // Notification delivery is ancillary. Deferring the call also protects
+  // completed writes from stale/cyclic native module exports throwing
+  // synchronously before a Promise exists.
+  void Promise.resolve()
+    .then(() => dispatchPendingPushes())
+    .catch(() => undefined);
+}
+
 export async function listNotificationInbox(limit = 50): Promise<ServerNotice[]> {
   if (!isSupabaseConfigured || !supabase) return [];
   const { data, error } = await supabase

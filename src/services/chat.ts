@@ -1,5 +1,5 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import { dispatchPendingPushes } from './notifications';
+import { schedulePendingPushDispatch } from './notifications';
 import { getCachedSignedUrls } from './signedUrls';
 
 export type ServerRoomMessage = {
@@ -38,6 +38,13 @@ function requireClient() {
   return supabase;
 }
 
+function requireMessageId(data: unknown) {
+  const value = Array.isArray(data) ? data[0] : data;
+  if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(value))
+    throw new Error('MESSAGE_SEND_INVALID_RESPONSE');
+  return value;
+}
+
 export async function sendTextMessage(input: {
   roomId: string;
   body: string;
@@ -52,8 +59,9 @@ export async function sendTextMessage(input: {
     p_media_group_id: null,
   });
   if (error) throw error;
-  dispatchPendingPushes().catch(() => undefined);
-  return data as string;
+  const messageId = requireMessageId(data);
+  schedulePendingPushDispatch();
+  return messageId;
 }
 
 export async function sendSecretMessage(input: {
@@ -71,8 +79,9 @@ export async function sendSecretMessage(input: {
     p_media_group_id: null,
   });
   if (error) throw error;
-  dispatchPendingPushes().catch(() => undefined);
-  return data as string;
+  const messageId = requireMessageId(data);
+  schedulePendingPushDispatch();
+  return messageId;
 }
 
 export async function sendSystemMessage(input: {
@@ -88,8 +97,9 @@ export async function sendSystemMessage(input: {
     p_media_group_id: null,
   });
   if (error) throw error;
-  dispatchPendingPushes().catch(() => undefined);
-  return data as string;
+  const messageId = requireMessageId(data);
+  schedulePendingPushDispatch();
+  return messageId;
 }
 
 export async function softDeleteMyMessage(messageId: string) {
@@ -104,8 +114,9 @@ export async function announceStoryCreated(storyId: string) {
     p_story_id: storyId,
   });
   if (error) throw error;
-  dispatchPendingPushes().catch(() => undefined);
-  return data as string;
+  const messageId = requireMessageId(data);
+  schedulePendingPushDispatch();
+  return messageId;
 }
 
 export async function searchRoomMessages(roomId: string, query: string) {
@@ -183,12 +194,14 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
       : Promise.resolve({ data: [], error: null }),
     client.rpc('get_room_chat_styles',{p_room_id:roomId}),
   ]);
-  if (profileError) throw profileError;
-  if (replyError) throw replyError;
-  if (assetError) throw assetError;
-  if (storyError) throw storyError;
-  if (storyBlockError) throw storyBlockError;
-  if (styleError) throw styleError;
+  // Messages are the primary content. Auxiliary profile/style/preview failures
+  // must not make the entire room appear empty or unavailable.
+  if (profileError) console.warn('room profile enrichment failed', profileError);
+  if (replyError) console.warn('reply enrichment failed', replyError);
+  if (assetError) console.warn('message asset enrichment failed', assetError);
+  if (storyError) console.warn('story enrichment failed', storyError);
+  if (storyBlockError) console.warn('story block enrichment failed', storyBlockError);
+  if (styleError) console.warn('chat style enrichment failed', styleError);
   const styleByUserId=new Map<string,{bubbleColor:string;textColor:string}>(((styleRows??[]) as Array<{user_id:string;bubble_color:string;text_color:string}>).map((row)=>[row.user_id,{bubbleColor:row.bubble_color,textColor:row.text_color}]));
 
   const mergedProfileRows = profileRows ?? [];
@@ -203,12 +216,14 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
       ...snapshotAvatarPaths,
     ]),
   ];
-  const avatarUrlByPath = await getCachedSignedUrls('profile-avatars', avatarPaths);
+  const avatarUrlByPath = await getCachedSignedUrls('profile-avatars', avatarPaths)
+    .catch(() => new Map<string, string>());
 
   const assetPaths = (assetRows ?? [])
     .map((row) => row.storage_path as string | null)
     .filter((value): value is string => Boolean(value));
-  const imageUrlByPath = await getCachedSignedUrls('chat-media', assetPaths);
+  const imageUrlByPath = await getCachedSignedUrls('chat-media', assetPaths)
+    .catch(() => new Map<string, string>());
 
   const profileByUserId = new Map(
     mergedProfileRows.map((row) => [
@@ -242,7 +257,8 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
   const storyImagePaths = (storyBlockRows ?? [])
     .map((row) => row.storage_path as string | null)
     .filter((value): value is string => Boolean(value));
-  const storyImageUrlByPath = await getCachedSignedUrls('chat-media', storyImagePaths);
+  const storyImageUrlByPath = await getCachedSignedUrls('chat-media', storyImagePaths)
+    .catch(() => new Map<string, string>());
   const storyTitleById = new Map((storyRows ?? []).map((row) => [row.id as string, row.title as string]));
   const storyPreviewById = new Map<string, string>();
   const storyImageUriById = new Map<string, string>();

@@ -98,7 +98,7 @@ import {
   getVerificationStatus,
 } from "./src/services/verification";
 import {
-  dispatchPendingPushes,
+  schedulePendingPushDispatch,
   getGlobalNotificationsEnabled,
   listMyRoomSummaries,
   listNotificationInbox,
@@ -134,7 +134,6 @@ import {
   getLatestRoomMessageCursor,
   getRoomMessageCreatedAt,
   getRoomReadReceipt,
-  listRecentSystemMessages,
   listRoomMessages,
   listRoomReadReceipts,
   markRoomRead,
@@ -459,7 +458,6 @@ const BASE_CATEGORIES: { key: MainTab; label: string }[] = [
   { key: "region", label: "지역별" },
 ];
 
-const MainScreenBridge = MainScreen as unknown as (props: any) => any;
 const AdFreeContext = createContext(false);
 const useAdFree = () => useContext(AdFreeContext);
 
@@ -523,10 +521,14 @@ function Pressable(props: AppPressableProps) {
                   shown = true;
                   updateGlobalBusy(1);
                 }, 180);
-                void Promise.resolve(result).finally(() => {
-                  clearTimeout(timer);
-                  if (shown) updateGlobalBusy(-1);
-                });
+                void Promise.resolve(result)
+                  .catch((error) => {
+                    console.warn("Unhandled press action", error);
+                  })
+                  .finally(() => {
+                    clearTimeout(timer);
+                    if (shown) updateGlobalBusy(-1);
+                  });
               }
             }
           : undefined
@@ -2113,7 +2115,7 @@ function AuthenticatedApp({
   const primaryForeground = themeForeground(appTheme);
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
+    const timer = setInterval(() => setNow(Date.now()), 10000);
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
@@ -2151,7 +2153,7 @@ function AuthenticatedApp({
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
           table: "point_ledger",
           filter: `user_id=eq.${session.user.id}`,
@@ -2226,7 +2228,7 @@ function AuthenticatedApp({
   useEffect(() => {
     const syncPushState = () => {
       registerPushDevice()
-        .then(() => dispatchPendingPushes())
+        .then(() => schedulePendingPushDispatch())
         .catch(() => undefined);
     };
     syncPushState();
@@ -2259,9 +2261,6 @@ function AuthenticatedApp({
     }
     // Apply the last server-confirmed ownership cache before the network round
     // trip so app resume does not flash or reset a purchased theme.
-    void readCachedThemeProductIds(userId).then((cached) =>
-      loadStoredAppTheme(userId, cached),
-    ).catch(() => undefined);
     const reloadEntitlements = () => listStoreEntitlements()
       .then((items) => {
         if (!active) return;
@@ -2288,7 +2287,15 @@ function AuthenticatedApp({
         void loadStoredAppTheme(userId, ownedProductIds);
       })
       .catch(() => undefined);
-    void reloadEntitlements();
+    void (async () => {
+      try {
+        const cached = await readCachedThemeProductIds(userId);
+        if (!active) return;
+        await loadStoredAppTheme(userId, cached);
+      } finally {
+        if (active) void reloadEntitlements();
+      }
+    })().catch(() => undefined);
     const entitlementChannel =
       supabase && isSupabaseConfigured
         ? supabase
@@ -2316,7 +2323,7 @@ function AuthenticatedApp({
         supabase.removeChannel(entitlementChannel);
     };
   }, [session?.user.id]);
-  const reloadAppData = async (showSpinner = false) => {
+  const reloadAppData = async (showSpinner = false, silent = false) => {
     if (!isSupabaseConfigured) {
       setRoomData([]);
       setJoinedIds([]);
@@ -2334,11 +2341,11 @@ function AuthenticatedApp({
           listRoomPromotions(),
           listReportedRoomIds(),
         ]);
-      if (roomsResult.status === "fulfilled") {
-        const hiddenRoomIds =
-          reportedRoomsResult.status === "fulfilled"
-            ? new Set(reportedRoomsResult.value)
-            : new Set<string>();
+      if (
+        roomsResult.status === "fulfilled" &&
+        reportedRoomsResult.status === "fulfilled"
+      ) {
+        const hiddenRoomIds = new Set(reportedRoomsResult.value);
         const mapped = roomsResult.value
           .map(mapServerRoom)
           .filter((room) => room.id !== DEMO_ROOM_ID && !hiddenRoomIds.has(room.id));
@@ -2371,9 +2378,14 @@ function AuthenticatedApp({
           ),
         );
       if (roomsResult.status === "rejected") throw roomsResult.reason;
+      if (activeIdsResult.status === "rejected") throw activeIdsResult.reason;
+      // A failed report filter must never expose rooms the user already hid.
+      if (reportedRoomsResult.status === "rejected")
+        throw reportedRoomsResult.reason;
     } catch (error) {
       setRoomDataLoaded(true);
-      Alert.alert("방 목록 불러오기 실패", serverErrorMessage(error));
+      if (!silent)
+        Alert.alert("방 목록 불러오기 실패", serverErrorMessage(error));
     } finally {
       setDataRefreshing(false);
     }
@@ -2385,26 +2397,64 @@ function AuthenticatedApp({
     if (!isSupabaseConfigured) return;
     const subscription = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
-      getVerificationStatus()
-        .then((verification) => {
-          setAdultVerified(verification.adultVerified);
-          setAdultContentWebOptedIn(verification.adultContentWebOptedIn);
-          setIosAdultContentEnabled(verification.iosAdultContentEnabled);
-        })
-        .catch(() => undefined);
+      void reloadAppData(false, true);
     });
     return () => subscription.remove();
   }, []);
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
-    const timer = setInterval(
-      () =>
-        listMyActiveRoomIds()
-          .then((ids) => setJoinedIds([...new Set(ids)]))
-          .catch(() => undefined),
-      10000,
-    );
-    return () => clearInterval(timer);
+    if (!supabase || !isSupabaseConfigured || !session?.user.id) return;
+    const client = supabase;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const reloadMemberships = () =>
+      listMyActiveRoomIds()
+        .then((ids) => {
+          if (active) setJoinedIds([...new Set(ids)]);
+        })
+        .catch(() => undefined);
+    const scheduleReload = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void reloadMemberships(), 150);
+    };
+    const channel = client
+      .channel(`my-room-memberships-${session.user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "room_memberships",
+          filter: `user_id=eq.${session.user.id}`,
+        },
+        scheduleReload,
+      )
+      .subscribe();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+      client.removeChannel(channel);
+    };
+  }, [session?.user.id]);
+  useEffect(() => {
+    if (!supabase || !isSupabaseConfigured) return;
+    const client = supabase;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleReload = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void reloadAppData(false, true), 250);
+    };
+    const channel = client
+      .channel("room-directory-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "rooms" },
+        scheduleReload,
+      )
+      .subscribe();
+    return () => {
+      if (timer) clearTimeout(timer);
+      client.removeChannel(channel);
+    };
   }, []);
   useEffect(() => {
     if (!supabase || !isSupabaseConfigured || !session?.user.id) return;
@@ -2883,7 +2933,7 @@ function AuthenticatedApp({
             );
           };
           return (
-            <MainScreenBridge
+            <MainScreen
               {...{
                 bottomTab,
                 setBottomTab,
@@ -2919,7 +2969,6 @@ function AuthenticatedApp({
               onNotification={navigateNotification}
               notificationDrawerSignal={notificationDrawerSignal}
               onRanking={() => navigation.navigate("Ranking")}
-              onOperationsPolicy={openOperationsPolicyPortal}
               onPointBalanceChange={setPoints}
               onSearch={() => navigation.navigate("Search")}
               onSettings={() => navigation.navigate("Settings")}
@@ -3231,6 +3280,18 @@ function serverErrorMessage(error: unknown) {
     return "방장은 채팅 금지할 수 없습니다.";
   if (message.includes("INVALID_MUTE_DURATION"))
     return "허용된 채팅 금지 시간만 설정할 수 있습니다.";
+  if (message.includes("ROOM_CREATE_INVALID_RESPONSE"))
+    return "방은 생성됐지만 결과를 확인하지 못했습니다. 목록을 새로고침해 주세요.";
+  if (message.includes("ROOM_PROMOTION_INVALID_RESPONSE"))
+    return "프로모션 결과를 확인하지 못했습니다. 잠시 후 목록을 새로고침해 주세요.";
+  if (message.includes("TOP_SPACE_INVALID_RESPONSE"))
+    return "탑스페이스 결제 결과를 확인하지 못했습니다. 포인트 내역을 확인해 주세요.";
+  if (message.includes("POINT_TRANSFER_INVALID_RESPONSE"))
+    return "포인트 전송 결과를 확인하지 못했습니다. 포인트 내역을 확인해 주세요.";
+  if (message.includes("MESSAGE_SEND_INVALID_RESPONSE"))
+    return "메시지 전송 결과를 확인하지 못했습니다. 잠시 후 채팅을 새로고침해 주세요.";
+  if (message.includes("ROOM_MUTE_INVALID_RESPONSE"))
+    return "채팅 금지 결과를 확인하지 못했습니다. 멤버 정보를 새로고침해 주세요.";
   if (message.includes("ACCOUNT_REJOIN_COOLDOWN"))
     return "탈퇴 후 3일 동안 같은 전화번호로 가입할 수 없습니다.";
   if (message.includes("ADMIN_ACCOUNT_DELETION_FORBIDDEN"))
@@ -4597,7 +4658,7 @@ function MainScreen({
   setCategory,
   joinedIds,
   activeTopSpaces,
-  now,
+  now: parentNow,
   roomData,
   adultVerified,
   showAdultTab,
@@ -4664,6 +4725,7 @@ function MainScreen({
   onRewardedAd: () => void;
 }) {
   const adsDisabled = useAdFree();
+  const [now, setNow] = useState(parentNow);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
   const [toast, setToast] = useState("");
@@ -4674,6 +4736,11 @@ function MainScreen({
   const [storyQuery, setStoryQuery] = useState("");
   const appTheme = useAppTheme();
   const primaryForeground = themeForeground(appTheme);
+  useEffect(() => {
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
   useEffect(() => {
     if (notificationDrawerSignal > 0) setDrawerOpen(true);
   }, [notificationDrawerSignal]);
@@ -6167,6 +6234,8 @@ function ChatRoom({
   const restoreScrollAfterPanelRef = useRef(false);
   const [chatReady, setChatReady] = useState(false);
   const [initialMessagesLoaded, setInitialMessagesLoaded] = useState(false);
+  const [chatLoadError, setChatLoadError] = useState("");
+  const [chatReloadNonce, setChatReloadNonce] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasOlderMessages, setHasOlderMessages] = useState(true);
   const [newMessagePreview, setNewMessagePreview] = useState<{
@@ -6178,9 +6247,6 @@ function ChatRoom({
   const [pendingJoinRequests, setPendingJoinRequests] = useState<
     { id: string; name: string; createdAt: string }[]
   >([]);
-  const [roomSystemMessages, setRoomSystemMessages] = useState<ChatMessage[]>(
-    [],
-  );
   const [storyPanelInitialId, setStoryPanelInitialId] = useState<string | null>(
     null,
   );
@@ -6465,6 +6531,7 @@ function ChatRoom({
     lastSyncedServerMessageIdRef.current = null;
     setChatReady(false);
     setInitialMessagesLoaded(false);
+    setChatLoadError("");
     setHasOlderMessages(true);
     setNewMessagePreview(null);
     setShowScrollToBottom(false);
@@ -6498,10 +6565,14 @@ function ChatRoom({
         lastSyncedServerMessageIdRef.current =
           serverMessages[serverMessages.length - 1]?.id ?? null;
         setHasOlderMessages(serverMessages.length === 50);
+        setChatLoadError("");
         setInitialMessagesLoaded(true);
       })
-      .catch(() => setInitialMessagesLoaded(true));
-  }, [currentUserId, room.id]);
+      .catch((error) => {
+        setChatLoadError(serverErrorMessage(error));
+        setInitialMessagesLoaded(true);
+      });
+  }, [chatReloadNonce, currentUserId, room.id]);
   useEffect(() => {
     if (!supabase || !isUuid(room.id)) return;
     const client = supabase;
@@ -6563,7 +6634,7 @@ function ChatRoom({
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
           table: "messages",
           filter: `room_id=eq.${room.id}`,
@@ -6682,49 +6753,6 @@ function ChatRoom({
       client.removeChannel(channel);
     };
   }, [isOwner, room.id]);
-  useEffect(() => {
-    if (!supabase || !isUuid(room.id)) {
-      setRoomSystemMessages([]);
-      return;
-    }
-    const client = supabase;
-    let active = true;
-    const reload = () =>
-      listRecentSystemMessages(room.id)
-        .then((rows) => {
-          if (active)
-            setRoomSystemMessages(
-              rows.map((row) => ({
-                id: `server-${row.id}`,
-                kind: "system" as const,
-                event: "room" as const,
-                text: row.body ?? "",
-                createdAt: row.created_at as string,
-              })),
-            );
-        })
-        .catch(() => undefined);
-    reload();
-    const channel = client
-      .channel(`chat-system-${room.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-          filter: `room_id=eq.${room.id}`,
-        },
-        (payload) => {
-          if (payload.new.kind === "system") reload();
-        },
-      )
-      .subscribe();
-    return () => {
-      active = false;
-      client.removeChannel(channel);
-    };
-  }, [room.id]);
   const loadOlderMessages = async () => {
     if (
       loadingOlder ||
@@ -6867,6 +6895,7 @@ function ChatRoom({
     }
   };
   const pendingTextSeq = useRef(0);
+  const textSendQueueRef = useRef<Promise<void>>(Promise.resolve());
   const send = () => {
     const text = message.trim();
     if (!text) return;
@@ -6894,7 +6923,9 @@ function ChatRoom({
     setMessage("");
     setReplyTo(null);
     scrollToLatest();
-    void submitTextMessage(localId, text, reply);
+    textSendQueueRef.current = textSendQueueRef.current
+      .then(() => submitTextMessage(localId, text, reply))
+      .catch(() => undefined);
   };
   const sendHeart = async (targetNameOverride?: string): Promise<boolean> => {
     const createdAt = new Date().toISOString();
@@ -8452,6 +8483,20 @@ function ChatRoom({
             <ActivityIndicator color={colors.mint700} />
           </View>
         )}
+        {chatReady && chatLoadError ? (
+          <View style={s.chatInitialLoader}>
+            <Text style={s.centerStateText}>채팅을 불러오지 못했어요.</Text>
+            <Text style={s.centerStateText}>{chatLoadError}</Text>
+            <Pressable
+              onPress={() => setChatReloadNonce((value) => value + 1)}
+              style={{ paddingHorizontal: 18, paddingVertical: 10 }}
+            >
+              <Text style={{ color: activeAppTheme.accent, fontWeight: "600" }}>
+                다시 시도
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
         {loadingOlder && (
           <View pointerEvents="none" style={s.olderMessagesLoaderOverlay}>
             <ActivityIndicator color={colors.mint700} />
@@ -9201,6 +9246,8 @@ function StoryPanel({
   const [writing, setWriting] = useState(initialWrite);
   const [currentProfile, setCurrentProfile] = useState<RoomMember | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [storiesLoaded, setStoriesLoaded] = useState(room.id === DEMO_ROOM_ID);
+  const [storiesLoadError, setStoriesLoadError] = useState("");
   const seededSelection = useRef(false);
   useEffect(() => {
     if (room.isAdult && filter === "public") setFilter(joined ? "all" : "room");
@@ -9220,9 +9267,14 @@ function StoryPanel({
       ]);
       const userId = userResult.data.user?.id;
       setItems(serverStories.map((story) => mapServerStory(story, userId)));
+      setStoriesLoadError("");
       const mappedMembers = mapRoomMembers(serverMembers, userId);
       setCurrentProfile(mappedMembers.find((member) => member.mine) ?? null);
+    } catch (error) {
+      setStoriesLoadError(serverErrorMessage(error));
+      throw error;
     } finally {
+      setStoriesLoaded(true);
       if (showSpinner) setRefreshing(false);
     }
   };
@@ -9253,6 +9305,35 @@ function StoryPanel({
   useEffect(() => {
     if (!supabase || !isUuid(room.id)) return;
     reloadStories(false).catch(() => undefined);
+  }, [joined, room.id]);
+  useEffect(() => {
+    if (!supabase || !isUuid(room.id)) return;
+    const client = supabase;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleReload = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(
+        () => reloadStories(false).catch(() => undefined),
+        200,
+      );
+    };
+    const channel = client
+      .channel(`room-stories-${room.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "stories",
+          filter: `room_id=eq.${room.id}`,
+        },
+        scheduleReload,
+      )
+      .subscribe();
+    return () => {
+      if (timer) clearTimeout(timer);
+      client.removeChannel(channel);
+    };
   }, [joined, room.id]);
   useEffect(() => {
     if (!joined && filter !== "public") setFilter("public");
@@ -9419,7 +9500,12 @@ function StoryPanel({
         }
         contentContainerStyle={[s.panel, { paddingBottom: joined ? 150 : 100 }]}
       >
-        {visible.map((story) => {
+        {!storiesLoaded ? (
+          <View style={s.centerState}>
+            <ActivityIndicator color={activeAppTheme.accent} />
+            <Text style={s.centerStateText}>스토리를 불러오고 있어요.</Text>
+          </View>
+        ) : visible.map((story) => {
           const text = story.blocks
             .filter((block) => block.type === "text")
             .map((block) => block.text)
@@ -9480,10 +9566,10 @@ function StoryPanel({
             </Pressable>
           );
         })}
-        {visible.length === 0 && (
+        {storiesLoaded && visible.length === 0 && (
           <Empty
-            title="스토리가 없어요"
-            body="아직 올라온 스토리가 없습니다."
+            title={storiesLoadError ? "스토리를 불러오지 못했어요" : "스토리가 없어요"}
+            body={storiesLoadError || "아직 올라온 스토리가 없습니다."}
           />
         )}
       </ScrollView>
@@ -9563,6 +9649,9 @@ function StoryDetail({
 }) {
   const adsDisabled = useAdFree();
   const [comment, setComment] = useState("");
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
+  const commentSubmittingRef = useRef(false);
+  const [heartSubmitting, setHeartSubmitting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
@@ -9570,20 +9659,63 @@ function StoryDetail({
   const theme = useAppTheme();
   const foreground = themeForeground(theme);
   const canDelete = story.mine || canModerate;
-  const refreshStory = async () => {
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+  const refreshStory = async (showSpinner = true) => {
     if (!supabase || !isUuid(story.id) || !room?.id) return;
-    setRefreshing(true);
+    if (showSpinner) setRefreshing(true);
     try {
       const [rows, userResult] = await Promise.all([
-        listStories({ roomId: room.id }),
+        listStories({ storyId: story.id, limit: 1 }),
         supabase.auth.getUser(),
       ]);
-      const row = rows.find((item) => item.id === story.id);
-      if (row) onChange(mapServerStory(row, userResult.data.user?.id));
+      const row = rows[0];
+      if (row) onChangeRef.current(mapServerStory(row, userResult.data.user?.id));
     } finally {
-      setRefreshing(false);
+      if (showSpinner) setRefreshing(false);
     }
   };
+  useEffect(() => {
+    if (!supabase || !isUuid(story.id)) return;
+    const client = supabase;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleReload = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(
+        () => refreshStory(false).catch(() => undefined),
+        180,
+      );
+    };
+    const channel = client
+      .channel(`story-detail-${story.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "stories",
+          filter: `id=eq.${story.id}`,
+        },
+        scheduleReload,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "story_comments",
+          filter: `story_id=eq.${story.id}`,
+        },
+        scheduleReload,
+      )
+      .subscribe();
+    return () => {
+      if (timer) clearTimeout(timer);
+      client.removeChannel(channel);
+    };
+  }, [story.id, room?.id]);
   useEffect(() => {
     if (!publicMode || !isSupabaseConfigured || !isUuid(story.id)) return;
     recordStoryView(story.id)
@@ -9613,6 +9745,8 @@ function StoryDetail({
     };
   }, [safeAreaInsets.bottom]);
   const toggleHeart = async () => {
+    if (heartSubmitting) return;
+    setHeartSubmitting(true);
     try {
       if (isSupabaseConfigured && isUuid(story.id)) {
         const result = await toggleStoryLike(story.id);
@@ -9625,11 +9759,15 @@ function StoryDetail({
         });
     } catch (error) {
       Alert.alert("하트 처리 실패", serverErrorMessage(error));
+    } finally {
+      setHeartSubmitting(false);
     }
   };
   const submit = async () => {
     const body = comment.trim();
-    if (!body || !joined) return;
+    if (!body || !joined || commentSubmittingRef.current) return;
+    commentSubmittingRef.current = true;
+    setCommentSubmitting(true);
     try {
       let id = `comment-${Date.now()}`;
       if (isSupabaseConfigured && isUuid(story.id)) {
@@ -9664,6 +9802,9 @@ function StoryDetail({
       setComment("");
     } catch (error) {
       Alert.alert("댓글 작성 실패", serverErrorMessage(error));
+    } finally {
+      commentSubmittingRef.current = false;
+      setCommentSubmitting(false);
     }
   };
   const removeComment = async (item: StoryComment) => {
@@ -9814,7 +9955,11 @@ function StoryDetail({
               {story.hearts}
             </Text>
           </View>
-          <Pressable onPress={toggleHeart} style={s.storyInlineHeart}>
+          <Pressable
+            disabled={heartSubmitting}
+            onPress={toggleHeart}
+            style={s.storyInlineHeart}
+          >
             <Ionicons
               name={story.liked ? "heart" : "heart-outline"}
               size={21}
@@ -9925,9 +10070,12 @@ function StoryDetail({
               ]}
             />
             <Pressable
-              disabled={!comment.trim()}
+              disabled={!comment.trim() || commentSubmitting}
               onPress={submit}
-              style={[s.commentSend, !comment.trim() && s.disabled]}
+              style={[
+                s.commentSend,
+                (!comment.trim() || commentSubmitting) && s.disabled,
+              ]}
             >
               <LinearGradient
                 colors={
@@ -10304,6 +10452,7 @@ function PublicStoryFeed({
   const [publicStories, setPublicStories] = useState<StoryItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
   useEffect(() => {
     onDetailChange?.(Boolean(selected));
     return () => onDetailChange?.(false);
@@ -10324,8 +10473,10 @@ function PublicStoryFeed({
           mapServerStory(story, userResult.data.user?.id),
         ),
       );
+      setLoadError("");
       setLoaded(true);
     } catch (error) {
+      setLoadError(serverErrorMessage(error));
       setLoaded(true);
       throw error;
     } finally {
@@ -10334,6 +10485,30 @@ function PublicStoryFeed({
   };
   useEffect(() => {
     reloadPublicStories(false).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    if (!supabase) return;
+    const client = supabase;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleReload = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(
+        () => reloadPublicStories(false).catch(() => undefined),
+        250,
+      );
+    };
+    const channel = client
+      .channel("public-story-feed")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "stories" },
+        scheduleReload,
+      )
+      .subscribe();
+    return () => {
+      if (timer) clearTimeout(timer);
+      client.removeChannel(channel);
+    };
   }, []);
   const sortedStories = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
@@ -10420,8 +10595,10 @@ function PublicStoryFeed({
       ListEmptyComponent={
         loading || !loaded ? (
           <View style={s.centerState}>
-            <ActivityIndicator color={colors.mint700} />
+            <ActivityIndicator color={activeAppTheme.accent} />
           </View>
+        ) : loadError ? (
+          <Empty title="스토리를 불러오지 못했어요" body={loadError} />
         ) : query.trim() ? (
           <Empty
             title="검색 결과가 없어요"
@@ -10647,29 +10824,45 @@ function MemberPanel({
   onAdminReportUser: (id: string, label: string) => void;
   onProfile: (member: RoomMember) => void;
 }) {
-  const [currentUserId, setCurrentUserId] = useState<string | undefined>();
   const [members, setMembers] = useState<RoomMember[]>(() =>
     room.id === DEMO_ROOM_ID ? membersForRoom(room) : [],
   );
   const [editing, setEditing] = useState<string | null>(null);
-  useEffect(() => {
-    if (!supabase) return;
-    supabase.auth
-      .getUser()
-      .then(({ data }) => setCurrentUserId(data.user?.id))
-      .catch(() => undefined);
-  }, []);
+  const [loading, setLoading] = useState(room.id !== DEMO_ROOM_ID);
+  const [loadError, setLoadError] = useState("");
   useEffect(() => {
     if (!isSupabaseConfigured || !isUuid(room.id)) {
       setMembers(room.id === DEMO_ROOM_ID ? membersForRoom(room) : []);
+      setLoading(false);
       return;
     }
-    listRoomMembersVisible(room.id)
-      .then((serverMembers) =>
-        setMembers(mapRoomMembers(serverMembers, currentUserId)),
-      )
-      .catch(() => undefined);
-  }, [currentUserId, room.id, room.memberCount]);
+    let active = true;
+    setLoading(true);
+    setLoadError("");
+    Promise.all([supabase?.auth.getUser(), listRoomMembersVisible(room.id)])
+      .then(([userResult, serverMembers]) => {
+        if (active)
+          setMembers(mapRoomMembers(serverMembers, userResult?.data.user?.id));
+      })
+      .catch((error) => {
+        if (active) setLoadError(serverErrorMessage(error));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [room.id, room.memberCount]);
+  if (loading)
+    return (
+      <View style={s.centerState}>
+        <ActivityIndicator color={activeAppTheme.accent} />
+        <Text style={s.centerStateText}>멤버를 불러오고 있어요.</Text>
+      </View>
+    );
+  if (loadError)
+    return <Empty title="멤버를 불러오지 못했어요" body={loadError} />;
   const selected = members.find((member) => member.name === editing);
   const toggle = async () => {
     if (!selected?.userId) return;
@@ -11460,45 +11653,58 @@ function RoomOverview({
   room: Room;
   onProfile: (member: RoomMember) => void;
 }) {
-  const [currentUserId, setCurrentUserId] = useState<string | undefined>();
   const [members, setMembers] = useState<RoomMember[]>(() =>
     room.id === DEMO_ROOM_ID ? membersForRoom(room) : [],
   );
   const [stories, setStories] = useState<StoryItem[]>(() =>
     room.id === DEMO_ROOM_ID ? initialStoryItems(room) : [],
   );
-  useEffect(() => {
-    if (!supabase) return;
-    supabase.auth
-      .getUser()
-      .then(({ data }) => setCurrentUserId(data.user?.id))
-      .catch(() => undefined);
-  }, []);
+  const [loading, setLoading] = useState(room.id !== DEMO_ROOM_ID);
+  const [loadError, setLoadError] = useState("");
   useEffect(() => {
     let active = true;
     if (!isSupabaseConfigured || !isUuid(room.id)) {
       setMembers(room.id === DEMO_ROOM_ID ? membersForRoom(room) : []);
       setStories(room.id === DEMO_ROOM_ID ? initialStoryItems(room) : []);
+      setLoading(false);
       return () => {
         active = false;
       };
     }
+    setLoading(true);
+    setLoadError("");
     Promise.all([
+      supabase?.auth.getUser(),
       listRoomMembersVisible(room.id),
       listStories({ roomId: room.id, limit: 5 }),
     ])
-      .then(([serverMembers, serverStories]) => {
+      .then(([userResult, serverMembers, serverStories]) => {
         if (!active) return;
+        const currentUserId = userResult?.data.user?.id;
         setMembers(mapRoomMembers(serverMembers, currentUserId));
         setStories(
           serverStories.map((story) => mapServerStory(story, currentUserId)),
         );
       })
-      .catch(() => undefined);
+      .catch((error) => {
+        if (active) setLoadError(serverErrorMessage(error));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => {
       active = false;
     };
-  }, [currentUserId, room.id, room.memberCount]);
+  }, [room.id, room.memberCount]);
+  if (loading)
+    return (
+      <View style={s.centerState}>
+        <ActivityIndicator color={activeAppTheme.accent} />
+        <Text style={s.centerStateText}>방 정보를 불러오고 있어요.</Text>
+      </View>
+    );
+  if (loadError)
+    return <Empty title="방 정보를 불러오지 못했어요" body={loadError} />;
   return (
     <ScrollView contentContainerStyle={s.overviewPage}>
       <DefaultRoomCover room={room} />
@@ -11554,6 +11760,8 @@ function JoinRequests({ room }: { room: Room }) {
   >([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
+  const [processingId, setProcessingId] = useState<string | null>(null);
+  const processingRef = useRef(false);
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -11611,6 +11819,9 @@ function JoinRequests({ room }: { room: Room }) {
     };
   }, [room.id]);
   const decide = async (id: string, status: "approved" | "rejected") => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    setProcessingId(id);
     try {
       if (isSupabaseConfigured && isUuid(id))
         await decideRoomJoin(id, status === "approved");
@@ -11623,6 +11834,9 @@ function JoinRequests({ room }: { room: Room }) {
       setTimeout(() => setToast(""), 1800);
     } catch (error) {
       Alert.alert("처리 실패", serverErrorMessage(error));
+    } finally {
+      processingRef.current = false;
+      setProcessingId(null);
     }
   };
   if (loading)
@@ -11651,12 +11865,14 @@ function JoinRequests({ room }: { room: Room }) {
               {item.status === "pending" ? (
                 <View style={s.requestActions}>
                   <Pressable
+                    disabled={Boolean(processingId)}
                     onPress={() => decide(item.id, "rejected")}
                     style={s.rejectButton}
                   >
                     <Text style={s.rejectText}>거절</Text>
                   </Pressable>
                   <Pressable
+                    disabled={Boolean(processingId)}
                     onPress={() => decide(item.id, "approved")}
                     style={s.approveButton}
                   >
@@ -12366,14 +12582,13 @@ function ItemShopScreen({
 function Profile({
   points,
   currentUserId,
-  now,
+  now: parentNow,
   attendanceAvailableAt,
   rewardedAdAvailable,
   rewardLoading,
   onAttendance,
   onRewardedAd,
   onRanking,
-  onOperationsPolicy,
   onSettings,
   onPointBalanceChange,
   onSubpageChange,
@@ -12387,7 +12602,6 @@ function Profile({
   onAttendance: () => void;
   onRewardedAd: () => void;
   onRanking: () => void;
-  onOperationsPolicy?: () => void;
   onSettings: () => void;
   onPointBalanceChange: (value: number) => void;
   onSubpageChange?: (open: boolean) => void;
@@ -12403,15 +12617,17 @@ function Profile({
   const [logOpen, setLogOpen] = useState(false);
   const [selectedCharge, setSelectedCharge] = useState(0);
   const [chargeBusy, setChargeBusy] = useState(false);
+  const [now, setNow] = useState(parentNow);
+  useEffect(() => {
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
   useEffect(() => {
     onSubpageChange?.(logOpen || itemShopOpen);
     return () => onSubpageChange?.(false);
   }, [itemShopOpen, logOpen, onSubpageChange]);
   const openOperationsPolicy = () => {
-    if (onOperationsPolicy) {
-      onOperationsPolicy();
-      return;
-    }
     Linking.openURL(getOperationsPolicyUrl()).catch((error) =>
       Alert.alert("열기 실패", serverErrorMessage(error)),
     );

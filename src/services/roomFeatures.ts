@@ -1,5 +1,5 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import { dispatchPendingPushes } from './notifications';
+import { schedulePendingPushDispatch } from './notifications';
 import { getCachedSignedUrls } from './signedUrls';
 
 function requireClient() {
@@ -22,7 +22,7 @@ export async function kickOrBanRoomMember(input: {
     p_reason: input.reason ?? '',
   });
   if (error) throw error;
-  dispatchPendingPushes().catch(() => undefined);
+  schedulePendingPushDispatch();
 }
 
 export async function unbanRoomMember(roomId: string, userId: string) {
@@ -57,7 +57,8 @@ export async function listDepartedRoomMembers(roomId: string) {
     left_at: string | null;
   }[];
   const paths = [...new Set(rows.map((row) => row.avatar_asset_path).filter((value): value is string => Boolean(value)))];
-  const signedByPath = await getCachedSignedUrls('chat-media', paths);
+  const signedByPath = await getCachedSignedUrls('profile-avatars', paths)
+    .catch(() => new Map<string, string>());
   return rows.map((row) => ({
     userId: row.user_id as string,
     name: row.display_name as string,
@@ -77,7 +78,7 @@ export async function configureRoomAccess(input: {
     p_pin: input.pin || null,
   });
   if (error) throw error;
-  dispatchPendingPushes().catch(() => undefined);
+  schedulePendingPushDispatch();
 }
 
 export async function verifyRoomPin(roomId: string, pin: string) {
@@ -116,11 +117,7 @@ export async function deleteRoom(roomId: string) {
     p_room_id: roomId,
   });
   if (error) throw error;
-  // The room transaction is authoritative. Push flushing is intentionally
-  // detached so a notification module failure cannot report deletion failure.
-  void Promise.resolve()
-    .then(() => dispatchPendingPushes())
-    .catch(() => undefined);
+  schedulePendingPushDispatch();
 }
 
 export async function getRoomNotificationsEnabled(roomId:string) {
@@ -144,7 +141,7 @@ export async function setRoomMemberRole(roomId: string, userId: string, role: 'm
     p_role: role,
   });
   if (error) throw error;
-  dispatchPendingPushes().catch(() => undefined);
+  schedulePendingPushDispatch();
 }
 
 export async function transferRoomOwnership(roomId: string, userId: string) {
@@ -153,7 +150,7 @@ export async function transferRoomOwnership(roomId: string, userId: string) {
     p_target_user_id: userId,
   });
   if (error) throw error;
-  dispatchPendingPushes().catch(() => undefined);
+  schedulePendingPushDispatch();
 }
 
 export async function setRoomMemberMute(roomId: string, userId: string, durationSeconds: number) {
@@ -163,8 +160,10 @@ export async function setRoomMemberMute(roomId: string, userId: string, duration
     p_duration_seconds: durationSeconds,
   });
   if (error) throw error;
-  dispatchPendingPushes().catch(() => undefined);
-  return data as string;
+  if (typeof data !== 'string' || !Number.isFinite(Date.parse(data)))
+    throw new Error('ROOM_MUTE_INVALID_RESPONSE');
+  schedulePendingPushDispatch();
+  return data;
 }
 
 export async function clearRoomMemberMute(roomId: string, userId: string) {
@@ -173,5 +172,5 @@ export async function clearRoomMemberMute(roomId: string, userId: string) {
     p_target_user_id: userId,
   });
   if (error) throw error;
-  dispatchPendingPushes().catch(() => undefined);
+  schedulePendingPushDispatch();
 }
