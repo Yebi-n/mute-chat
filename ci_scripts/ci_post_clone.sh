@@ -11,8 +11,13 @@ echo "Using repository path: $REPOSITORY_PATH"
 if ! command -v node >/dev/null 2>&1; then
   echo "Node.js was not found; installing Node.js ${NODE_VERSION}."
   if command -v brew >/dev/null 2>&1; then
-    brew install "node@22" || brew install node
-    export PATH="/opt/homebrew/opt/node@22/bin:/usr/local/opt/node@22/bin:$PATH"
+    if brew list "node@22" >/dev/null 2>&1 || brew install "node@22"; then
+      export PATH="/opt/homebrew/opt/node@22/bin:/usr/local/opt/node@22/bin:$PATH"
+    elif brew install node; then
+      export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+    else
+      echo "Homebrew Node.js install failed; falling back to official Node.js archive."
+    fi
   fi
 fi
 
@@ -26,9 +31,15 @@ if ! command -v node >/dev/null 2>&1; then
   NODE_DIR="$HOME/.cache/mute-node"
   NODE_TARBALL="node-v${NODE_VERSION}-darwin-${NODE_DIST_ARCH}.tar.gz"
   mkdir -p "$NODE_DIR"
+  rm -rf "$NODE_DIR/node-v${NODE_VERSION}-darwin-${NODE_DIST_ARCH}"
   curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}" -o "$NODE_DIR/${NODE_TARBALL}"
   tar -xzf "$NODE_DIR/${NODE_TARBALL}" -C "$NODE_DIR"
   export PATH="$NODE_DIR/node-v${NODE_VERSION}-darwin-${NODE_DIST_ARCH}/bin:$PATH"
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "error: Node.js could not be installed in Xcode Cloud image." >&2
+  exit 1
 fi
 
 echo "Using Node.js: $(node --version)"
