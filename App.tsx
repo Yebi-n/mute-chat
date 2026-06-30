@@ -8684,6 +8684,7 @@ function ChatRoom({
                 placement="chat"
                 disabled={adsDisabled}
                 dark={appTheme.id === "dark"}
+                reserveSpace
               />
             )}
           </>

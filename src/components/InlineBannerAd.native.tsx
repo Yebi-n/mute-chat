@@ -37,10 +37,12 @@ export default function InlineBannerAd({
   placement,
   disabled = false,
   dark = false,
+  reserveSpace = false,
 }: {
   placement: BannerPlacement;
   disabled?: boolean;
   dark?: boolean;
+  reserveSpace?: boolean;
 }) {
   const { width } = useWindowDimensions();
   const [sdkReady, setSdkReady] = useState(false);
@@ -52,7 +54,7 @@ export default function InlineBannerAd({
   const size = placement === 'story'
     ? BannerAdSize.INLINE_ADAPTIVE_BANNER
     : BannerAdSize.ANCHORED_ADAPTIVE_BANNER;
-  const maxHeight = placement === 'story' ? 90 : 58;
+  const maxHeight = placement === 'story' ? 90 : placement === 'chat' ? 50 : 58;
   const adWidth = Math.max(320, Math.floor(width));
   const containerStyle = useMemo(
     () => [
@@ -79,7 +81,9 @@ export default function InlineBannerAd({
     };
   }, [disabled, unitId]);
 
-  if (disabled || !unitId || failed) return null;
+  if (disabled || !unitId || failed) {
+    return reserveSpace ? <View pointerEvents="none" style={containerStyle} /> : null;
+  }
   if (!sdkReady) {
     return <View pointerEvents="none" style={containerStyle} />;
   }
@@ -108,8 +112,8 @@ const styles = StyleSheet.create({
   anchored: {
     borderTopColor: '#E5E5E5',
     borderTopWidth: StyleSheet.hairlineWidth,
-    minHeight: 58,
-    paddingVertical: 6,
+    minHeight: 50,
+    paddingVertical: 2,
   },
   story: {
     borderBottomColor: '#E8E8E8',
