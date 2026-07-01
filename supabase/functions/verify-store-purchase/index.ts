@@ -21,17 +21,8 @@ const themeProducts = new Set([
   'mute_theme_sunset',
   'mute_theme_mono',
   'mute_theme_dark',
-  'mute_theme_white_unlock_v2',
-  'mute_theme_mint_unlock_v2',
-  'mute_theme_ocean_unlock_v2',
-  'mute_theme_lavender_unlock_v2',
-  'mute_theme_sunset_unlock_v2',
-  'mute_theme_mono_unlock_v2',
-  'mute_theme_dark_unlock_v2',
 ]);
-const accountThemeProducts = new Set(
-  [...themeProducts].filter((productId) => productId.endsWith('_unlock_v2')),
-);
+const accountThemeProducts = new Set(themeProducts);
 const adFreeProduct = 'mute_ad_free_monthly';
 
 function base64Url(input: string | Uint8Array) {

@@ -5417,22 +5417,22 @@ function MainScreen({
         </Pressable>
       )}
       {!storyDetailOpen && !profileSubpageOpen && (
-        <View style={s.mainBottomDock}>
-          <View
-            pointerEvents="box-none"
-            style={[
-              s.mainBannerDock,
-              appTheme.id === "dark" && s.mainBannerDockDark,
-            ]}
-          >
-            {!adsDisabled && (
+        <View style={[s.mainBottomDock, adsDisabled && s.mainBottomDockNoAd]}>
+          {!adsDisabled && (
+            <View
+              pointerEvents="box-none"
+              style={[
+                s.mainBannerDock,
+                appTheme.id === "dark" && s.mainBannerDockDark,
+              ]}
+            >
               <InlineBannerAd
                 placement="main"
                 dark={appTheme.id === "dark"}
                 reserveSpace
               />
-            )}
-          </View>
+            </View>
+          )}
           <BottomNav selected={bottomTab} onSelect={setBottomTab} docked />
         </View>
       )}
@@ -18371,6 +18371,9 @@ const s = StyleSheet.create({
     bottom: 0,
     height: 162,
     zIndex: 30,
+  },
+  mainBottomDockNoAd: {
+    height: 112,
   },
   bottomNav: {
     position: "absolute",
