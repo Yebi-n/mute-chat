@@ -227,10 +227,29 @@ export async function clearRoomProfileAvatar(roomId:string){
 
 export async function listMyActiveRoomIds() {
   const client = requireClient();
+  const { data: authData, error: authError } = await client.auth.getUser();
+  if (authError) throw authError;
+  if (!authData.user) throw new Error('AUTH_REQUIRED');
   const { data, error } = await client
     .from('room_memberships')
     .select('room_id')
+    .eq('user_id', authData.user.id)
     .eq('status', 'active');
+  if (error) throw error;
+  return (data ?? []).map((item) => item.room_id as string);
+}
+
+export async function listMyOwnedRoomIds() {
+  const client = requireClient();
+  const { data: authData, error: authError } = await client.auth.getUser();
+  if (authError) throw authError;
+  if (!authData.user) throw new Error('AUTH_REQUIRED');
+  const { data, error } = await client
+    .from('room_memberships')
+    .select('room_id')
+    .eq('user_id', authData.user.id)
+    .eq('status', 'active')
+    .eq('role', 'owner');
   if (error) throw error;
   return (data ?? []).map((item) => item.room_id as string);
 }

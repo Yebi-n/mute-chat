@@ -82,6 +82,7 @@ import {
   decideRoomJoin,
   getRoomById,
   listMyActiveRoomIds,
+  listMyOwnedRoomIds,
   listPendingRoomJoinRequests,
   listPendingRoomJoinRequestsWithAvatars,
   listRoomMembersVisible,
@@ -550,7 +551,7 @@ function StatusBar(_props: {
   return (
     <ExpoStatusBar
       style={theme.id === "dark" ? "light" : "dark"}
-      hidden={false}
+      hidden={_props.hidden ?? false}
     />
   );
 }
@@ -576,6 +577,7 @@ const APP_THEMES: AppTheme[] = [
 ];
 let activeAppTheme = APP_THEMES[0];
 const appThemeListeners = new Set<(theme: AppTheme) => void>();
+const SPLASH_THEME_STORAGE_KEY = "mute.splash-theme";
 const themeStorageKey = (userId?: string | null) =>
   userId ? `mute.app-theme:${userId}` : "mute.app-theme:anonymous";
 const themeOwnershipStorageKey = (userId: string) =>
@@ -611,6 +613,7 @@ function applyAppTheme(theme: AppTheme) {
 function selectAppTheme(theme: AppTheme, userId?: string | null) {
   applyAppTheme(theme);
   void AsyncStorage.setItem(themeStorageKey(userId), theme.id);
+  void AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, theme.id);
 }
 async function loadStoredAppTheme(
   userId?: string | null,
@@ -623,7 +626,15 @@ async function loadStoredAppTheme(
   const allowed =
     found &&
     (!found.productId || ownedProductIds.includes(found.productId));
-  applyAppTheme(allowed ? found : APP_THEMES[0]);
+  const selected = allowed ? found : APP_THEMES[0];
+  applyAppTheme(selected);
+  await AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, selected.id);
+}
+
+async function loadSplashTheme() {
+  const stored = await AsyncStorage.getItem(SPLASH_THEME_STORAGE_KEY);
+  const found = APP_THEMES.find((theme) => theme.id === stored);
+  applyAppTheme(found ?? APP_THEMES[0]);
 }
 function themeForeground(theme: AppTheme) {
   return theme.id === "white" ? "#222222" : "#FFF";
@@ -1720,6 +1731,9 @@ export default function App() {
   const [passwordRecoveryActive, setPasswordRecoveryActive] = useState(false);
   const [authReady, setAuthReady] = useState(demoMode || !isSupabaseConfigured);
   useEffect(() => {
+    void loadSplashTheme().catch(() => applyAppTheme(APP_THEMES[0]));
+  }, []);
+  useEffect(() => {
     if (demoMode || !supabase) return;
     getCurrentSession()
       .then(setSession)
@@ -1759,6 +1773,7 @@ export default function App() {
             session={session}
             onSignedOut={() => {
               setPasswordRecoveryActive(false);
+              selectAppTheme(APP_THEMES[0], null);
               setSession(null);
             }}
           />
@@ -2353,10 +2368,11 @@ function AuthenticatedApp({
     }
     if (showSpinner) setDataRefreshing(true);
     try {
-      const [roomsResult, activeIdsResult, verificationResult, promotionsResult, reportedRoomsResult] =
+      const [roomsResult, activeIdsResult, ownedIdsResult, verificationResult, promotionsResult, reportedRoomsResult] =
         await Promise.allSettled([
           listRooms(),
           listMyActiveRoomIds(),
+          listMyOwnedRoomIds(),
           getVerificationStatus(),
           listRoomPromotions(),
           listReportedRoomIds(),
@@ -2377,6 +2393,8 @@ function AuthenticatedApp({
       }
       if (activeIdsResult.status === "fulfilled")
         setJoinedIds([...new Set(activeIdsResult.value)]);
+      if (ownedIdsResult.status === "fulfilled")
+        setOwnedRoomIds([...new Set(ownedIdsResult.value)]);
       if (reportedRoomsResult.status === "fulfilled")
         setReportedRoomIds(reportedRoomsResult.value);
       if (verificationResult.status === "fulfilled") {
@@ -2399,6 +2417,7 @@ function AuthenticatedApp({
         );
       if (roomsResult.status === "rejected") throw roomsResult.reason;
       if (activeIdsResult.status === "rejected") throw activeIdsResult.reason;
+      if (ownedIdsResult.status === "rejected") throw ownedIdsResult.reason;
       // A failed report filter must never expose rooms the user already hid.
       if (reportedRoomsResult.status === "rejected")
         throw reportedRoomsResult.reason;
@@ -2427,9 +2446,11 @@ function AuthenticatedApp({
     let active = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const reloadMemberships = () =>
-      listMyActiveRoomIds()
-        .then((ids) => {
-          if (active) setJoinedIds([...new Set(ids)]);
+      Promise.all([listMyActiveRoomIds(), listMyOwnedRoomIds()])
+        .then(([ids, ownerIds]) => {
+          if (!active) return;
+          setJoinedIds([...new Set(ids)]);
+          setOwnedRoomIds([...new Set(ownerIds)]);
         })
         .catch(() => undefined);
     const scheduleReload = () => {
@@ -3382,8 +3403,9 @@ function serverErrorMessage(error: unknown) {
 }
 
 function SplashScreen() {
+  const theme = useAppTheme();
   return (
-    <LinearGradient colors={["#82B9C1", "#5DBB8C"]} style={s.authSplash}>
+    <LinearGradient colors={theme.gradient} style={s.authSplash}>
       <StatusBar style="light" hidden />
       <MuteLogo variant="white" />
     </LinearGradient>
@@ -5188,7 +5210,7 @@ function MainScreen({
         </Pressable>
       )}
       {!storyDetailOpen && !profileSubpageOpen && (
-        <>
+        <View style={s.mainBottomDock}>
           <View
             pointerEvents="box-none"
             style={[
@@ -5203,8 +5225,8 @@ function MainScreen({
               reserveSpace
             />
           </View>
-          <BottomNav selected={bottomTab} onSelect={setBottomTab} />
-        </>
+          <BottomNav selected={bottomTab} onSelect={setBottomTab} docked />
+        </View>
       )}
       <NotificationDrawer
         open={drawerOpen}
@@ -6244,6 +6266,7 @@ function ChatRoom({
   const unreadFocusDoneRef = useRef(false);
   const onReadRef = useRef(onRead);
   const keyboardOpenedAtBottomRef = useRef(false);
+  const composerFocusPreparedRef = useRef(false);
   const scrollToLatestRef = useRef<(animated?: boolean) => void>(() => undefined);
   const prependHeightRef = useRef<number | null>(null);
   const prependAnchorRef = useRef<{
@@ -6270,18 +6293,20 @@ function ChatRoom({
   }, [onRead]);
   useEffect(() => {
     const willShow = Keyboard.addListener("keyboardWillShow", () => {
-      keyboardOpenedAtBottomRef.current = nearBottomRef.current;
+      if (!composerFocusPreparedRef.current)
+        keyboardOpenedAtBottomRef.current = nearBottomRef.current;
       setChatKeyboardVisible(true);
     });
     const didShow = Keyboard.addListener("keyboardDidShow", () => {
       setChatKeyboardVisible(true);
       if (keyboardOpenedAtBottomRef.current) {
-        setTimeout(() => scrollToLatestRef.current(false), 80);
-        setTimeout(() => scrollToLatestRef.current(false), 220);
+        requestAnimationFrame(() => scrollToLatestRef.current(false));
+        setTimeout(() => scrollToLatestRef.current(false), 40);
       }
     });
     const hide = Keyboard.addListener("keyboardDidHide", () => {
       keyboardOpenedAtBottomRef.current = false;
+      composerFocusPreparedRef.current = false;
       setChatKeyboardVisible(false);
     });
     return () => {
@@ -6573,6 +6598,7 @@ function ChatRoom({
   }, [currentUserId, room.id, room.memberCount]);
   useEffect(() => {
     if (!supabase || !isUuid(room.id)) return;
+    setMyRole(isKnownOwner ? "owner" : "member");
     const client = supabase;
     let active = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -6825,7 +6851,7 @@ function ChatRoom({
             setMyRole(data.role);
         });
     });
-  }, [room.id]);
+  }, [isKnownOwner, room.id]);
   useEffect(() => {
     if (!supabase || !isUuid(room.id) || !isOwner) {
       setPendingJoinRequests([]);
@@ -6965,9 +6991,23 @@ function ChatRoom({
       contentHeight - layoutHeight - offsetY,
     );
     if (nearBottomRef.current || distanceFromBottom <= 180) {
-      setTimeout(() => scrollToLatest(false), 60);
-      setTimeout(() => scrollToLatest(false), 180);
+      keyboardOpenedAtBottomRef.current = true;
+      requestAnimationFrame(() => scrollToLatest(false));
+      setTimeout(() => scrollToLatest(false), 40);
     }
+  };
+  const prepareComposerFocus = () => {
+    if (chatKeyboardVisible) return;
+    const { layoutHeight, contentHeight, offsetY } = scrollMetrics.current;
+    const distanceFromBottom = Math.max(
+      0,
+      contentHeight - layoutHeight - offsetY,
+    );
+    keyboardOpenedAtBottomRef.current =
+      nearBottomRef.current || distanceFromBottom <= 180;
+    composerFocusPreparedRef.current = true;
+    // Reserve the banner slot before iOS starts its keyboard transition.
+    setChatKeyboardVisible(true);
   };
   useEffect(() => {
     initialScrollDone.current = false;
@@ -7135,14 +7175,25 @@ function ChatRoom({
       );
       return false;
     }
-    if (!Number.isFinite(amount) || amount < 1) {
+    if (!Number.isSafeInteger(amount) || amount < 1) {
       Alert.alert("포인트 보내기", "1p 이상 입력해주세요.");
       return false;
     }
-    if (amount > points) {
+    let availablePoints = points;
+    if (amount > availablePoints && isSupabaseConfigured) {
+      try {
+        const latestWallet = await getMyWallet();
+        availablePoints = latestWallet.pointBalance;
+        if (typeof onPointBalanceChange === "function")
+          onPointBalanceChange(availablePoints);
+      } catch {
+        // The transfer RPC remains the source of truth if this refresh fails.
+      }
+    }
+    if (amount > availablePoints) {
       Alert.alert(
         "포인트 부족",
-        `현재 보유 포인트는 ${points.toLocaleString()}p입니다.`,
+        `현재 보유 포인트는 ${availablePoints.toLocaleString()}p입니다.`,
       );
       return false;
     }
@@ -7185,10 +7236,14 @@ function ChatRoom({
         if (typeof onPointBalanceChange === "function")
           onPointBalanceChange(result.pointBalance);
         pointTransferRequestRef.current = null;
-      setMessages((value) => [
-        ...value,
-        { id, kind: "system", event: "point", text: body, createdAt },
-      ]);
+      setMessages((value) =>
+        value.some((item) => item.id === id)
+          ? value
+          : [
+              ...value,
+              { id, kind: "system", event: "point", text: body, createdAt },
+            ],
+      );
       setPointTarget(null);
       setPointTargetMember(null);
       setPointDraft("");
@@ -8005,6 +8060,29 @@ function ChatRoom({
       : appTheme.id === "dark"
         ? "#F2F2F2"
         : appTheme.accent;
+  const finishRoomDelete = () => {
+    setDrawerOpen(false);
+    setToast("방이 삭제되었습니다.");
+    setTimeout(() => {
+      onDeleted?.(room.id);
+      if (!onDeleted) onBack();
+    }, 350);
+  };
+  const confirmRoomDeleted = async () => {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const remainingRoom = await getRoomById(room.id);
+        return remainingRoom === null;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2)
+          await new Promise((resolve) => setTimeout(resolve, 180));
+      }
+    }
+    if (lastError) throw lastError;
+    return false;
+  };
   const submitRoomDelete = async () => {
     if (roomDeleteSubmitting) {
       setToast("방 삭제를 처리하는 중입니다.");
@@ -8023,17 +8101,18 @@ function ChatRoom({
         20000,
         "방 삭제 요청 시간이 초과되었습니다.",
       );
-      const remainingRoom = await getRoomById(room.id);
-      if (remainingRoom) throw new Error("ROOM_DELETE_NOT_CONFIRMED");
-      setDrawerOpen(false);
-      setToast("방이 삭제되었습니다.");
-      setTimeout(() => {
-        onDeleted?.(room.id);
-        if (!onDeleted) onBack();
-      }, 350);
+      if (!(await confirmRoomDeleted()))
+        throw new Error("ROOM_DELETE_NOT_CONFIRMED");
+      finishRoomDelete();
     } catch (error) {
-      setToast("");
-      Alert.alert("방 삭제 실패", serverErrorMessage(error));
+      // A committed request can still lose its response. Reconcile with the
+      // server before showing a false failure to the user.
+      const deleted = await confirmRoomDeleted().catch(() => false);
+      if (deleted) finishRoomDelete();
+      else {
+        setToast("");
+        Alert.alert("방 삭제 실패", serverErrorMessage(error));
+      }
     } finally {
       setRoomDeleteSubmitting(false);
     }
@@ -8139,6 +8218,13 @@ function ChatRoom({
           contentContainerStyle={s.messages}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
+          onLayout={(event) => {
+            scrollMetrics.current.layoutHeight = event.nativeEvent.layout.height;
+            if (!keyboardOpenedAtBottomRef.current) return;
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => scrollToLatestRef.current(false)),
+            );
+          }}
           onTouchStart={() => {
             Keyboard.dismiss();
             if (tool) setTool(null);
@@ -8766,7 +8852,13 @@ function ChatRoom({
               </View>
             )}
             {!readOnly && (
-              <View style={s.composer}>
+              <View
+                onLayout={() => {
+                  if (!keyboardOpenedAtBottomRef.current) return;
+                  requestAnimationFrame(() => scrollToLatestRef.current(false));
+                }}
+              >
+                <View style={s.composer}>
                 <RNPressable
                   hitSlop={18}
                   accessibilityLabel="채팅 더보기"
@@ -8814,7 +8906,11 @@ function ChatRoom({
                 <TextInput
                   ref={composerInputRef}
                   value={message}
-                  onFocus={focusComposer}
+                  onPressIn={prepareComposerFocus}
+                  onFocus={() => {
+                    prepareComposerFocus();
+                    focusComposer();
+                  }}
                   onChangeText={setMessage}
                   onSubmitEditing={send}
                   placeholder="메시지를 입력해주세요."
@@ -8843,15 +8939,16 @@ function ChatRoom({
                     <Ionicons name="paper-plane" size={18} color={themeForeground(appTheme)} />
                   </LinearGradient>
                 </Pressable>
+                </View>
+                {chatKeyboardVisible && (
+                  <InlineBannerAd
+                    placement="chat"
+                    disabled={adsDisabled}
+                    dark={appTheme.id === "dark"}
+                    reserveSpace
+                  />
+                )}
               </View>
-            )}
-            {!readOnly && chatKeyboardVisible && (
-              <InlineBannerAd
-                placement="chat"
-                disabled={adsDisabled}
-                dark={appTheme.id === "dark"}
-                reserveSpace
-              />
             )}
           </>
         )}
@@ -14585,9 +14682,11 @@ function LockSettingsRecovery({
 function BottomNav({
   selected,
   onSelect,
+  docked = false,
 }: {
   selected: BottomTab;
   onSelect: (v: BottomTab) => void;
+  docked?: boolean;
 }) {
   const theme = useAppTheme();
   const items: [BottomTab, IconName, IconName, string][] = [
@@ -14597,7 +14696,7 @@ function BottomNav({
     ["profile", "person-outline", "person", "내 정보"],
   ];
   return (
-    <View style={s.bottomNav}>
+    <View style={[s.bottomNav, docked && s.bottomNavDocked]}>
       {items.map(([key, icon, active, label]) => (
         <Pressable key={key} onPress={() => onSelect(key)} style={s.navItem}>
           <Ionicons
@@ -17878,16 +17977,21 @@ const s = StyleSheet.create({
     ...shadows.floating,
   },
   mainBannerDock: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 112,
+    width: "100%",
+    height: 50,
     minHeight: 50,
     backgroundColor: "#FFF",
-    zIndex: 18,
   },
   mainBannerDockDark: {
     backgroundColor: "#222222",
+  },
+  mainBottomDock: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 162,
+    zIndex: 30,
   },
   bottomNav: {
     position: "absolute",
@@ -17901,6 +18005,13 @@ const s = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
     ...shadows.nav,
+  },
+  bottomNavDocked: {
+    position: "relative",
+    bottom: undefined,
+    left: undefined,
+    right: undefined,
+    width: "100%",
   },
   navItem: {
     flex: 1,

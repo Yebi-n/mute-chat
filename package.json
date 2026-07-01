@@ -46,6 +46,8 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
+    "verify:room-delete": "node scripts/verify-room-delete.mjs",
+    "verify:point-transfer": "node scripts/verify-point-transfer.mjs",
     "preview:android": "eas build --profile preview --platform android",
     "preview:ios": "eas build --profile preview --platform ios"
   },
