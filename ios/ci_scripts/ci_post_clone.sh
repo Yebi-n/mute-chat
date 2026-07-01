@@ -63,3 +63,34 @@ echo "Installing CocoaPods dependencies."
 # Rebuild the sandbox and synchronize all path-based Expo pods in one pass.
 rm -rf Pods
 pod update --no-repo-update --verbose
+
+# React Native downloads both Debug and Release Hermes archives while resolving
+# the podspec. Its upstream helper does not fail the pod install when one curl
+# request is interrupted, which leaves Xcode archive builds without the Release
+# xcframework. Validate and repair that artifact after CocoaPods finishes.
+HERMES_VERSION="$(sed -n 's/^  - hermes-engine (\([^)]*\)).*/\1/p' Podfile.lock | head -n 1)"
+if [ -z "$HERMES_VERSION" ]; then
+  echo "error: Unable to resolve Hermes version from Podfile.lock." >&2
+  exit 1
+fi
+
+HERMES_VERSION_LOWER="$(printf '%s' "$HERMES_VERSION" | tr '[:upper:]' '[:lower:]')"
+HERMES_ARTIFACT_DIR="$REPOSITORY_PATH/ios/Pods/hermes-engine-artifacts"
+HERMES_RELEASE_ARCHIVE="$HERMES_ARTIFACT_DIR/hermes-ios-${HERMES_VERSION_LOWER}-release.tar.gz"
+HERMES_RELEASE_URL="https://repo1.maven.org/maven2/com/facebook/hermes/hermes-ios/${HERMES_VERSION}/hermes-ios-${HERMES_VERSION}-hermes-ios-release.tar.gz"
+
+if [ ! -s "$HERMES_RELEASE_ARCHIVE" ] || ! tar -tzf "$HERMES_RELEASE_ARCHIVE" >/dev/null 2>&1; then
+  echo "Repairing missing Hermes Release archive: $HERMES_VERSION"
+  mkdir -p "$HERMES_ARTIFACT_DIR"
+  HERMES_TEMP_ARCHIVE="${HERMES_RELEASE_ARCHIVE}.download"
+  rm -f "$HERMES_TEMP_ARCHIVE"
+  curl --fail --location \
+    --retry 5 --retry-all-errors --retry-delay 2 \
+    --connect-timeout 20 \
+    "$HERMES_RELEASE_URL" \
+    --output "$HERMES_TEMP_ARCHIVE"
+  tar -tzf "$HERMES_TEMP_ARCHIVE" >/dev/null
+  mv "$HERMES_TEMP_ARCHIVE" "$HERMES_RELEASE_ARCHIVE"
+fi
+
+echo "Hermes Release archive ready: $HERMES_RELEASE_ARCHIVE"
