@@ -176,6 +176,7 @@ import {
   listStoreEntitlements,
   purchaseProduct,
   purchaseStoreProduct,
+  resetPurchaseConfiguration,
   restoreStorePurchases,
   STORE_PRODUCTS,
 } from "./src/services/purchases";
@@ -701,6 +702,7 @@ const APP_THEMES: AppTheme[] = [
 let activeAppTheme = APP_THEMES[0];
 const appThemeListeners = new Set<(theme: AppTheme) => void>();
 const SPLASH_THEME_STORAGE_KEY = "mute.splash-theme";
+const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 const themeStorageKey = (userId?: string | null) =>
   userId ? `mute.app-theme:${userId}` : "mute.app-theme:anonymous";
 const themeOwnershipStorageKey = (userId: string) =>
@@ -766,6 +768,14 @@ async function loadSplashTheme() {
 }
 function themeForeground(theme: AppTheme) {
   return theme.id === "white" ? "#222222" : "#FFF";
+}
+function stableHash(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 function useAppTheme() {
   const [theme, setTheme] = useState(activeAppTheme);
@@ -1903,6 +1913,7 @@ export default function App() {
             session={session}
             onSignedOut={() => {
               setPasswordRecoveryActive(false);
+              resetPurchaseConfiguration();
               selectAppTheme(APP_THEMES[0], null);
               setSession(null);
             }}
@@ -2423,6 +2434,7 @@ function AuthenticatedApp({
     let entitlementExpiryTimer: ReturnType<typeof setTimeout> | null = null;
     const userId = session?.user.id;
     if (!userId) {
+      resetPurchaseConfiguration();
       setAdFreeActive(false);
       applyAppTheme(APP_THEMES[0]);
       void AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, APP_THEMES[0].id);
@@ -11057,6 +11069,9 @@ function PublicStoryFeed({
   const [refreshing, setRefreshing] = useState(false);
   const [loaded, setLoaded] = useState(SCREENSHOT_DEMO_ENABLED);
   const [loadError, setLoadError] = useState("");
+  const [randomBucket, setRandomBucket] = useState(() =>
+    Math.floor(Date.now() / THREE_HOURS_MS),
+  );
   useEffect(() => {
     onDetailChange?.(Boolean(selected));
     return () => onDetailChange?.(false);
@@ -11097,6 +11112,12 @@ function PublicStoryFeed({
     reloadPublicStories(false).catch(() => undefined);
   }, []);
   useEffect(() => {
+    const timer = setInterval(() => {
+      setRandomBucket(Math.floor(Date.now() / THREE_HOURS_MS));
+    }, 60 * 1000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
     if (SCREENSHOT_DEMO_ENABLED) return;
     if (!supabase) return;
     const client = supabase;
@@ -11135,8 +11156,12 @@ function PublicStoryFeed({
         (a, b) =>
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
       );
-    return result.sort((a, b) => a.id.localeCompare(b.id));
-  }, [publicStories, query, sort]);
+    return result.sort(
+      (a, b) =>
+        stableHash(`${randomBucket}:${a.id}`) -
+        stableHash(`${randomBucket}:${b.id}`),
+    );
+  }, [publicStories, query, sort, randomBucket]);
   if (selected) {
     const linkedRoom = roomData.find((item) => item.id === selected.roomId);
     if (editing && linkedRoom)
@@ -13163,6 +13188,7 @@ function ItemShopScreen({
             </LinearGradient>
           </Pressable>
         </View>
+        {!adFree && (
         <Pressable
           disabled={Boolean(busy)}
           onPress={() => void restoreStoreItems()}
@@ -13174,6 +13200,7 @@ function ItemShopScreen({
             <Text style={s.itemShopRestoreText}>구매 복원</Text>
           )}
         </Pressable>
+        )}
       </ScrollView>
       <View
         style={[

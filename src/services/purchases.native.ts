@@ -68,6 +68,10 @@ export async function configurePurchases(appUserId: string) {
   await ensureConnection();
 }
 
+export function resetPurchaseConfiguration() {
+  configuredUserId = null;
+}
+
 export async function purchaseProduct(productId: string) {
   const { data, error } = await requireSupabase().rpc('purchase_point_product', {
     p_product_id: productId,
@@ -125,6 +129,7 @@ async function waitForPurchase(productId: string, startPurchase: () => Promise<u
     const updated = purchaseUpdatedListener((event) => {
       const purchase = normalizePurchaseResult(event);
       if (!purchase || purchase.productId !== productId) return;
+      if (!purchaseBelongsToConfiguredUser(purchase)) return;
       settle(() => resolve(purchase));
     });
     const failed = purchaseErrorListener((error) => {
@@ -183,6 +188,25 @@ function getVerifiedTransactionId(purchase: Purchase) {
     }
   }
   return purchase.transactionId ?? purchase.id ?? null;
+}
+
+function getVerifiedAppAccountToken(purchase: Purchase) {
+  const signedTransactionInfo = getSignedTransactionInfo(purchase);
+  if (!signedTransactionInfo) return null;
+  const payload = decodeBase64UrlJson(signedTransactionInfo.split('.')[1] ?? '');
+  const appAccountToken = payload?.appAccountToken;
+  return typeof appAccountToken === 'string' ? appAccountToken.toLowerCase() : null;
+}
+
+function purchaseBelongsToConfiguredUser(purchase: Purchase) {
+  if (!configuredUserId) return true;
+  const appAccountToken = getVerifiedAppAccountToken(purchase);
+  // If StoreKit publishes a completed transaction for another app account
+  // while the user has switched accounts, do not verify it against the
+  // current Supabase user. This prevents stale purchases from becoming
+  // TRANSACTION_OWNED_BY_ANOTHER_ACCOUNT on the server.
+  if (!appAccountToken) return true;
+  return appAccountToken === configuredUserId.toLowerCase();
 }
 
 async function verifyStorePurchase(productId: string, purchase: Purchase) {
@@ -263,6 +287,7 @@ export async function restoreStorePurchases() {
 
   for (const purchase of purchases ?? []) {
     if (!storeProductIds.has(purchase.productId)) continue;
+    if (!purchaseBelongsToConfiguredUser(purchase)) continue;
     const result = await verifyStorePurchase(purchase.productId, purchase);
     pointBalance = result.pointBalance;
     if (result.credited) restored += 1;
