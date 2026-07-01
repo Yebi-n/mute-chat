@@ -15,6 +15,15 @@ export type PointLedgerItem = {
   createdAt: string;
 };
 
+function schedulePushBestEffort() {
+  try {
+    if (typeof schedulePendingPushDispatch === 'function')
+      schedulePendingPushDispatch();
+  } catch {
+    // Push dispatch is ancillary; point transfer already committed.
+  }
+}
+
 function requireClient() {
   if (!isSupabaseConfigured || !supabase) throw new Error('Supabase 환경 변수가 설정되지 않았습니다.');
   return supabase;
@@ -104,7 +113,7 @@ export async function transferRoomPoints(input: {
   if (!row?.message_id || !Number.isFinite(Number(row?.point_balance))) {
     throw new Error('POINT_TRANSFER_INVALID_RESPONSE');
   }
-  schedulePendingPushDispatch();
+  schedulePushBestEffort();
   return {
     pointBalance: Number(row?.point_balance ?? 0),
     messageId: row?.message_id as string,

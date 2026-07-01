@@ -178,6 +178,7 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
     { data: storyRows, error: storyError },
     { data: storyBlockRows, error: storyBlockError },
     { data: styleRows, error: styleError },
+    { data: activeMembershipRows, error: activeMembershipError },
   ] = await Promise.all([
     client.from('room_profiles').select('user_id,display_name,avatar_asset_path').eq('room_id', roomId).in('user_id', userIds.length ? userIds : ['00000000-0000-0000-0000-000000000000']),
     replyIds.length
@@ -193,6 +194,7 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
       ? client.from('story_blocks').select('story_id,block_type,text_content,storage_path,position').in('story_id', storyIds).order('position')
       : Promise.resolve({ data: [], error: null }),
     client.rpc('get_room_chat_styles',{p_room_id:roomId}),
+    client.from('room_memberships').select('user_id').eq('room_id', roomId).eq('status', 'active').in('user_id', userIds.length ? userIds : ['00000000-0000-0000-0000-000000000000']),
   ]);
   // Messages are the primary content. Auxiliary profile/style/preview failures
   // must not make the entire room appear empty or unavailable.
@@ -202,9 +204,15 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
   if (storyError) console.warn('story enrichment failed', storyError);
   if (storyBlockError) console.warn('story block enrichment failed', storyBlockError);
   if (styleError) console.warn('chat style enrichment failed', styleError);
+  if (activeMembershipError) console.warn('active membership enrichment failed', activeMembershipError);
   const styleByUserId=new Map<string,{bubbleColor:string;textColor:string}>(((styleRows??[]) as Array<{user_id:string;bubble_color:string;text_color:string}>).map((row)=>[row.user_id,{bubbleColor:row.bubble_color,textColor:row.text_color}]));
 
-  const mergedProfileRows = profileRows ?? [];
+  const activeUserIds = new Set(
+    (activeMembershipRows ?? []).map((row) => row.user_id as string),
+  );
+  const mergedProfileRows = activeMembershipError
+    ? (profileRows ?? [])
+    : (profileRows ?? []).filter((row) => activeUserIds.has(row.user_id as string));
   const snapshotAvatarPaths = messageRows
     .map((row) => row.sender_avatar_asset_path_snapshot as string | null)
     .filter((value): value is string => Boolean(value));
@@ -285,13 +293,16 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
     replyToSenderName: row.reply_to_message_id ? replySenderNameById.get(row.reply_to_message_id as string) : undefined,
     secretRecipientUserId: row.secret_recipient_user_id as string | null,
     senderName: row.sender_user_id
-      ? (String(row.sender_display_name_snapshot ?? '').trim()
-        || profileByUserId.get(row.sender_user_id as string)?.name)
+      ? (profileByUserId.get(row.sender_user_id as string)?.name
+        || String(row.sender_display_name_snapshot ?? '').trim())
       : (String(row.sender_display_name_snapshot ?? '').trim() || undefined),
-    senderAvatarUrl: row.sender_avatar_asset_path_snapshot
-      ? avatarUrlByPath.get(row.sender_avatar_asset_path_snapshot as string)
-      : row.sender_user_id
-        ? profileByUserId.get(row.sender_user_id as string)?.avatarUrl
+    senderAvatarUrl: row.sender_user_id
+      ? (profileByUserId.get(row.sender_user_id as string)?.avatarUrl
+        || (row.sender_avatar_asset_path_snapshot
+          ? avatarUrlByPath.get(row.sender_avatar_asset_path_snapshot as string)
+          : undefined))
+      : row.sender_avatar_asset_path_snapshot
+        ? avatarUrlByPath.get(row.sender_avatar_asset_path_snapshot as string)
         : undefined,
     recipientName: row.secret_recipient_user_id ? profileByUserId.get(row.secret_recipient_user_id as string)?.name : undefined,
     imageUris: imageUrisByMessageId.get(row.id as string),

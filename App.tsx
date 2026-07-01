@@ -168,8 +168,8 @@ import {
   initializeAds,
   listPointLedger,
   showRewardedAd,
-  transferRoomPoints,
 } from "./src/services/monetization";
+import { transferRoomPoints as transferRoomPointsOnServer } from "./src/services/wallet";
 import {
   configurePurchases,
   listStoreEntitlements,
@@ -442,7 +442,12 @@ async function writeAppLockPin(pin: string) {
 async function clearAppLockCredentials() {
   await AsyncStorage.multiRemove([APP_LOCK_ENABLED_KEY, APP_LOCK_PIN_KEY]);
   if (Platform.OS !== "web") {
-    await SecureStore.deleteItemAsync(APP_LOCK_SECURE_PIN_KEY);
+    try {
+      await SecureStore.deleteItemAsync(APP_LOCK_SECURE_PIN_KEY);
+    } catch {
+      // SecureStore can reject legacy/invalid native keys during logout on
+      // some upgraded installs. Local logout must not be blocked by cleanup.
+    }
   }
 }
 const LOCAL_PENDING_MESSAGES = new Map<string, ChatMessage[]>();
@@ -1478,6 +1483,21 @@ async function pickSingleImage({
         });
   if (result.canceled) return null;
   return result.assets[0];
+}
+
+async function resizeLocalImage(
+  uri: string,
+  width: number,
+  compress: number,
+) {
+  if (!uri) throw new Error("IMAGE_URI_REQUIRED");
+  const context = ImageManipulator.ImageManipulator.manipulate(uri);
+  context.resize({ width });
+  const rendered = await context.renderAsync();
+  return rendered.saveAsync({
+    compress,
+    format: ImageManipulator.SaveFormat.JPEG,
+  });
 }
 
 async function pickCroppedImageBatch({
@@ -5169,11 +5189,20 @@ function MainScreen({
       )}
       {!storyDetailOpen && !profileSubpageOpen && (
         <>
-          <InlineBannerAd
-            placement="main"
-            disabled={adsDisabled}
-            dark={appTheme.id === "dark"}
-          />
+          <View
+            pointerEvents="box-none"
+            style={[
+              s.mainBannerDock,
+              appTheme.id === "dark" && s.mainBannerDockDark,
+            ]}
+          >
+            <InlineBannerAd
+              placement="main"
+              disabled={adsDisabled}
+              dark={appTheme.id === "dark"}
+              reserveSpace
+            />
+          </View>
           <BottomNav selected={bottomTab} onSelect={setBottomTab} />
         </>
       )}
@@ -6123,18 +6152,6 @@ function ChatRoom({
   const appTheme = useAppTheme();
   const adsDisabled = useAdFree();
   const [chatKeyboardVisible, setChatKeyboardVisible] = useState(false);
-  useEffect(() => {
-    const show = Keyboard.addListener("keyboardDidShow", () =>
-      setChatKeyboardVisible(true),
-    );
-    const hide = Keyboard.addListener("keyboardDidHide", () =>
-      setChatKeyboardVisible(false),
-    );
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
     room.id === DEMO_ROOM_ID ? membersForRoom(room) : [],
   );
@@ -6225,6 +6242,9 @@ function ChatRoom({
   const lastSyncedServerMessageIdRef = useRef<string | null>(null);
   const latestReadableMessageIdRef = useRef<string | null>(null);
   const unreadFocusDoneRef = useRef(false);
+  const onReadRef = useRef(onRead);
+  const keyboardOpenedAtBottomRef = useRef(false);
+  const scrollToLatestRef = useRef<(animated?: boolean) => void>(() => undefined);
   const prependHeightRef = useRef<number | null>(null);
   const prependAnchorRef = useRef<{
     id: string;
@@ -6245,6 +6265,31 @@ function ChatRoom({
   } | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [jumpHighlightId, setJumpHighlightId] = useState<string | null>(null);
+  useEffect(() => {
+    onReadRef.current = onRead;
+  }, [onRead]);
+  useEffect(() => {
+    const willShow = Keyboard.addListener("keyboardWillShow", () => {
+      keyboardOpenedAtBottomRef.current = nearBottomRef.current;
+      setChatKeyboardVisible(true);
+    });
+    const didShow = Keyboard.addListener("keyboardDidShow", () => {
+      setChatKeyboardVisible(true);
+      if (keyboardOpenedAtBottomRef.current) {
+        setTimeout(() => scrollToLatestRef.current(false), 80);
+        setTimeout(() => scrollToLatestRef.current(false), 220);
+      }
+    });
+    const hide = Keyboard.addListener("keyboardDidHide", () => {
+      keyboardOpenedAtBottomRef.current = false;
+      setChatKeyboardVisible(false);
+    });
+    return () => {
+      willShow.remove();
+      didShow.remove();
+      hide.remove();
+    };
+  }, []);
   const [pendingJoinRequests, setPendingJoinRequests] = useState<
     { id: string; name: string; createdAt: string }[]
   >([]);
@@ -6526,6 +6571,72 @@ function ChatRoom({
       )
       .catch(() => undefined);
   }, [currentUserId, room.id, room.memberCount]);
+  useEffect(() => {
+    if (!supabase || !isUuid(room.id)) return;
+    const client = supabase;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const reloadProfiles = async () => {
+      try {
+        const serverMembers = await listRoomMembersVisible(room.id);
+        if (!active) return;
+        const mappedMembers = mapRoomMembers(serverMembers, currentUserId);
+        const currentByUserId = new Map(
+          mappedMembers
+            .filter((member) => Boolean(member.userId))
+            .map((member) => [member.userId!, member]),
+        );
+        setRoomMembers(mappedMembers);
+        setMessages((items) =>
+          items.map((item) => {
+            if (item.kind === "system" || !item.userId) return item;
+            const currentProfile = currentByUserId.get(item.userId);
+            return currentProfile
+              ? {
+                  ...item,
+                  name: currentProfile.name,
+                  avatarUri: currentProfile.avatarUri,
+                }
+              : item;
+          }),
+        );
+      } catch {
+        // Keep the last complete profile state until the next realtime event.
+      }
+    };
+    const scheduleReload = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void reloadProfiles(), 120);
+    };
+    const channel = client
+      .channel(`chat-member-profiles-${room.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "room_profiles",
+          filter: `room_id=eq.${room.id}`,
+        },
+        scheduleReload,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "room_memberships",
+          filter: `room_id=eq.${room.id}`,
+        },
+        scheduleReload,
+      )
+      .subscribe();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+      client.removeChannel(channel);
+    };
+  }, [currentUserId, room.id]);
   useEffect(() => {
     initialScrollDone.current = false;
     lastObservedLatestMessageIdRef.current = null;
@@ -6928,6 +7039,7 @@ function ChatRoom({
       .then(() => submitTextMessage(localId, text, reply))
       .catch(() => undefined);
   };
+  scrollToLatestRef.current = scrollToLatest;
   const sendHeart = async (targetNameOverride?: string): Promise<boolean> => {
     const createdAt = new Date().toISOString();
     const targetName = targetNameOverride ?? selectedMember ?? "느린준";
@@ -7061,7 +7173,9 @@ function ChatRoom({
             requestId: `pt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`,
           };
         }
-        const result = await transferRoomPoints({
+        if (typeof transferRoomPointsOnServer !== "function")
+          throw new Error("POINT_TRANSFER_CLIENT_NOT_READY");
+        const result = await transferRoomPointsOnServer({
           roomId: room.id,
           recipientUserId: target.userId,
           amount,
@@ -7532,6 +7646,22 @@ function ChatRoom({
   useEffect(() => {
     latestReadableMessageIdRef.current = latestReadableMessageId;
   }, [latestReadableMessageId]);
+  useEffect(() => {
+    if (!chatReady || !initialMessagesLoaded || !latestReadableMessageId)
+      return;
+    onReadRef.current?.(room.id);
+    void (usesServerReadReceipt
+      ? markRoomRead(room.id, latestReadableMessageId)
+      : AsyncStorage.setItem(readStorageKey, latestReadableMessageId)
+    ).catch(() => undefined);
+  }, [
+    chatReady,
+    initialMessagesLoaded,
+    latestReadableMessageId,
+    readStorageKey,
+    room.id,
+    usesServerReadReceipt,
+  ]);
   const unreadMarkerId = useMemo(() => {
     if (!readBoundaryLoaded || !readBoundaryId) return null;
     const boundaryIndex = visibleMessages.findIndex(
@@ -7893,6 +8023,8 @@ function ChatRoom({
         20000,
         "방 삭제 요청 시간이 초과되었습니다.",
       );
+      const remainingRoom = await getRoomById(room.id);
+      if (remainingRoom) throw new Error("ROOM_DELETE_NOT_CONFIRMED");
       setDrawerOpen(false);
       setToast("방이 삭제되었습니다.");
       setTimeout(() => {
@@ -8480,9 +8612,11 @@ function ChatRoom({
                                   );
                                 }}
                               >
-                                <Text style={s.expandMessage}>
+                                <RNText
+                                  style={[s.expandMessage, { color: "#1C1C1C" }]}
+                                >
                                   {expanded ? "접기" : "전체보기"}
-                                </Text>
+                                </RNText>
                               </Pressable>
                             )}
                           </View>
@@ -12956,11 +13090,14 @@ function EditRoom({
       : room.category === "concept"
         ? "concept"
         : "member";
-  const [name, setName] = useState(room.name);
-  const [description, setDescription] = useState(room.description);
+  const [name, setName] = useState(room.name ?? "");
+  const [description, setDescription] = useState(room.description ?? "");
   const [roomType, setRoomType] = useState(initialType);
   const [region, setRegion] = useState(room.region ?? "");
-  const [maxMembers, setMaxMembers] = useState(room.maxMembers);
+  const currentMemberCount = Math.max(1, Number(room.memberCount) || 1);
+  const [maxMembers, setMaxMembers] = useState(
+    Math.min(80, Math.max(currentMemberCount, Number(room.maxMembers) || 5)),
+  );
   const [coverAsset, setCoverAsset] =
     useState<ImagePicker.ImagePickerAsset | null>(null);
   const [coverRemoved, setCoverRemoved] = useState(false);
@@ -12968,32 +13105,39 @@ function EditRoom({
   const appTheme = useAppTheme();
   const setCapacity = (value: number) =>
     setMaxMembers(
-      Math.min(80, Math.max(room.memberCount, value || room.memberCount)),
+      Math.min(80, Math.max(currentMemberCount, value || currentMemberCount)),
     );
   const pickCover = async () => {
-    const source = await promptImageSource({
-      allowDelete: Boolean(coverAsset || room.coverUri),
-    });
-    if (!source) return;
-    if (source === "remove") {
-      setCoverAsset(null);
-      setCoverRemoved(true);
-      return;
-    }
-    const asset = await pickSingleImage({
-      source,
-      aspect: [1, 1],
-      quality: 0.78,
-    });
-    if (asset) {
-      setCoverAsset(asset);
-      setCoverRemoved(false);
+    try {
+      const source = await promptImageSource({
+        allowDelete: Boolean(coverAsset || room.coverUri),
+      });
+      if (!source) return;
+      if (source === "remove") {
+        setCoverAsset(null);
+        setCoverRemoved(true);
+        return;
+      }
+      const asset = await pickSingleImage({
+        source,
+        aspect: [1, 1],
+        quality: 0.78,
+      });
+      if (asset) {
+        setCoverAsset(asset);
+        setCoverRemoved(false);
+      }
+    } catch (error) {
+      Alert.alert("대표 이미지 선택 실패", serverErrorMessage(error));
     }
   };
   const disabled =
     saving ||
     !name.trim() ||
-    !description.trim();
+    !description.trim() ||
+    !Number.isFinite(maxMembers) ||
+    maxMembers < currentMemberCount ||
+    maxMembers > 80;
   const save = async () => {
     if (disabled) return;
     setSaving(true);
@@ -13012,18 +13156,14 @@ function EditRoom({
         coverUri = undefined;
       }
       if (coverAsset) {
-        const resized = await ImageManipulator.manipulateAsync(
-          coverAsset.uri,
-          [{ resize: { width: 720 } }],
-          { compress: 0.72, format: ImageManipulator.SaveFormat.JPEG },
-        );
+        const resized = await resizeLocalImage(coverAsset.uri, 720, 0.72);
         const bytes = await (await fetch(resized.uri)).arrayBuffer();
         const upload = await uploadValidatedImage({
           uri: resized.uri,
           mimeType: "image/jpeg",
           fileSize: bytes.byteLength,
-          width: 720,
-          height: 720,
+          width: resized.width,
+          height: resized.height,
           purpose: "room-cover",
           roomId: room.id,
         });
@@ -13864,7 +14004,20 @@ function Settings({
     setProcessingAccount(true);
     try {
       await signOut();
+    } catch (error) {
+      const message = serverErrorMessage(error);
+      if (!/SecureStore|Invalid key/i.test(message)) {
+        setProcessingAccount(false);
+        Alert.alert("濡쒓렇?꾩썐 ?ㅽ뙣", message);
+        return;
+      }
+    }
+    try {
       await clearAppLockCredentials();
+    } catch {
+      // Local session has already been cleared; cleanup errors must not block logout.
+    }
+    try {
       onSignedOut();
     } catch (error) {
       setProcessingAccount(false);
@@ -17715,7 +17868,7 @@ const s = StyleSheet.create({
   fab: {
     position: "absolute",
     right: 20,
-    bottom: 126,
+    bottom: 176,
     width: 52,
     height: 52,
     borderRadius: 26,
@@ -17723,6 +17876,18 @@ const s = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: colors.mint600,
     ...shadows.floating,
+  },
+  mainBannerDock: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 112,
+    minHeight: 50,
+    backgroundColor: "#FFF",
+    zIndex: 18,
+  },
+  mainBannerDockDark: {
+    backgroundColor: "#222222",
   },
   bottomNav: {
     position: "absolute",
@@ -20357,10 +20522,10 @@ const s = StyleSheet.create({
     position: "absolute",
     left: 82,
     right: 62,
-    bottom: 108,
+    bottom: 74,
     minHeight: 46,
     borderRadius: 23,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "rgba(255,255,255,.78)",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-start",
@@ -20370,7 +20535,7 @@ const s = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     zIndex: 30,
-    ...shadows.floating,
+    ...shadows.tiny,
   },
   newMessagePreviewDark: {
     backgroundColor: "rgba(0,0,0,.72)",

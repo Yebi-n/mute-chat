@@ -2,6 +2,15 @@ import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { schedulePendingPushDispatch } from './notifications';
 import { getCachedSignedUrls } from './signedUrls';
 
+function schedulePushBestEffort() {
+  try {
+    if (typeof schedulePendingPushDispatch === 'function')
+      schedulePendingPushDispatch();
+  } catch {
+    // Push dispatch is ancillary; room mutations already committed.
+  }
+}
+
 function requireClient() {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error('Supabase 환경 변수가 설정되지 않았습니다.');
@@ -22,7 +31,7 @@ export async function kickOrBanRoomMember(input: {
     p_reason: input.reason ?? '',
   });
   if (error) throw error;
-  schedulePendingPushDispatch();
+  schedulePushBestEffort();
 }
 
 export async function unbanRoomMember(roomId: string, userId: string) {
@@ -78,7 +87,7 @@ export async function configureRoomAccess(input: {
     p_pin: input.pin || null,
   });
   if (error) throw error;
-  schedulePendingPushDispatch();
+  schedulePushBestEffort();
 }
 
 export async function verifyRoomPin(roomId: string, pin: string) {
@@ -117,7 +126,7 @@ export async function deleteRoom(roomId: string) {
     p_room_id: roomId,
   });
   if (error) throw error;
-  schedulePendingPushDispatch();
+  schedulePushBestEffort();
 }
 
 export async function getRoomNotificationsEnabled(roomId:string) {
@@ -141,7 +150,7 @@ export async function setRoomMemberRole(roomId: string, userId: string, role: 'm
     p_role: role,
   });
   if (error) throw error;
-  schedulePendingPushDispatch();
+  schedulePushBestEffort();
 }
 
 export async function transferRoomOwnership(roomId: string, userId: string) {
@@ -150,7 +159,7 @@ export async function transferRoomOwnership(roomId: string, userId: string) {
     p_target_user_id: userId,
   });
   if (error) throw error;
-  schedulePendingPushDispatch();
+  schedulePushBestEffort();
 }
 
 export async function setRoomMemberMute(roomId: string, userId: string, durationSeconds: number) {
@@ -162,7 +171,7 @@ export async function setRoomMemberMute(roomId: string, userId: string, duration
   if (error) throw error;
   if (typeof data !== 'string' || !Number.isFinite(Date.parse(data)))
     throw new Error('ROOM_MUTE_INVALID_RESPONSE');
-  schedulePendingPushDispatch();
+  schedulePushBestEffort();
   return data;
 }
 
@@ -172,5 +181,5 @@ export async function clearRoomMemberMute(roomId: string, userId: string) {
     p_target_user_id: userId,
   });
   if (error) throw error;
-  schedulePendingPushDispatch();
+  schedulePushBestEffort();
 }
