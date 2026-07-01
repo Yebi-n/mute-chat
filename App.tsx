@@ -562,18 +562,19 @@ type AppTheme = {
   id: string;
   name: string;
   productId?: string;
+  legacyProductIds?: string[];
   priceKrw?: number;
   gradient: [string, string];
   accent: string;
 };
 const APP_THEMES: AppTheme[] = [
   { id: "mint", name: "기본 테마", gradient: ["#82B9C1", "#5DBB8C"], accent: "#4FAE7D" },
-  { id: "ocean", name: "오션", productId: STORE_PRODUCTS.themeOcean, priceKrw: 4900, gradient: ["#82B4D3", "#6898C9"], accent: "#5F91C5" },
-  { id: "lavender", name: "라벤더", productId: STORE_PRODUCTS.themeLavender, priceKrw: 4900, gradient: ["#B3A1D1", "#9C87C4"], accent: "#927BC0" },
-  { id: "sunset", name: "선셋", productId: STORE_PRODUCTS.themeSunset, priceKrw: 4900, gradient: ["#E4A095", "#DB8592"], accent: "#D77E8C" },
-  { id: "mono", name: "모노", productId: STORE_PRODUCTS.themeMono, priceKrw: 4900, gradient: ["#747A7E", "#585D61"], accent: "#62686C" },
-  { id: "white", name: "화이트", productId: STORE_PRODUCTS.themeWhite, priceKrw: 3900, gradient: ["#FFFFFF", "#FFFFFF"], accent: "#1C1C1C" },
-  { id: "dark", name: "다크", productId: STORE_PRODUCTS.themeDark, priceKrw: 3900, gradient: ["#222222", "#222222"], accent: "#D2D2D2" },
+  { id: "ocean", name: "오션", productId: STORE_PRODUCTS.themeOcean, legacyProductIds: [STORE_PRODUCTS.legacyThemeOcean], priceKrw: 4900, gradient: ["#82B4D3", "#6898C9"], accent: "#5F91C5" },
+  { id: "lavender", name: "라벤더", productId: STORE_PRODUCTS.themeLavender, legacyProductIds: [STORE_PRODUCTS.legacyThemeLavender], priceKrw: 4900, gradient: ["#B3A1D1", "#9C87C4"], accent: "#927BC0" },
+  { id: "sunset", name: "선셋", productId: STORE_PRODUCTS.themeSunset, legacyProductIds: [STORE_PRODUCTS.legacyThemeSunset], priceKrw: 4900, gradient: ["#E4A095", "#DB8592"], accent: "#D77E8C" },
+  { id: "mono", name: "모노", productId: STORE_PRODUCTS.themeMono, legacyProductIds: [STORE_PRODUCTS.legacyThemeMono], priceKrw: 4900, gradient: ["#747A7E", "#585D61"], accent: "#62686C" },
+  { id: "white", name: "화이트", productId: STORE_PRODUCTS.themeWhite, legacyProductIds: [STORE_PRODUCTS.legacyThemeWhite], priceKrw: 3900, gradient: ["#FFFFFF", "#FFFFFF"], accent: "#1C1C1C" },
+  { id: "dark", name: "다크", productId: STORE_PRODUCTS.themeDark, legacyProductIds: [STORE_PRODUCTS.legacyThemeDark], priceKrw: 3900, gradient: ["#222222", "#222222"], accent: "#D2D2D2" },
 ];
 let activeAppTheme = APP_THEMES[0];
 const appThemeListeners = new Set<(theme: AppTheme) => void>();
@@ -598,7 +599,10 @@ async function readCachedThemeProductIds(userId: string) {
 
 async function cacheThemeProductIds(userId: string, productIds: string[]) {
   const themeProductIds = new Set(
-    APP_THEMES.flatMap((theme) => (theme.productId ? [theme.productId] : [])),
+    APP_THEMES.flatMap((theme) => [
+      ...(theme.productId ? [theme.productId] : []),
+      ...(theme.legacyProductIds ?? []),
+    ]),
   );
   const owned = [...new Set(productIds.filter((id) => themeProductIds.has(id)))];
   await AsyncStorage.setItem(
@@ -625,7 +629,9 @@ async function loadStoredAppTheme(
   const found = APP_THEMES.find((theme) => theme.id === stored);
   const allowed =
     found &&
-    (!found.productId || ownedProductIds.includes(found.productId));
+    (!found.productId ||
+      ownedProductIds.includes(found.productId) ||
+      (found.legacyProductIds ?? []).some((id) => ownedProductIds.includes(id)));
   const selected = allowed ? found : APP_THEMES[0];
   applyAppTheme(selected);
   await AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, selected.id);
@@ -2292,6 +2298,7 @@ function AuthenticatedApp({
     if (!userId) {
       setAdFreeActive(false);
       applyAppTheme(APP_THEMES[0]);
+      void AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, APP_THEMES[0].id);
       return;
     }
     // Apply the last server-confirmed ownership cache before the network round
@@ -3798,6 +3805,14 @@ function PhoneAuthScreenV2({
     signupReveal.setValue(0);
   };
 
+  const exitSignup = () => {
+    Keyboard.dismiss();
+    if (signupOtpRequested || signupPhoneVerified || normalizedPhone) {
+      void signOut().catch(() => undefined);
+    }
+    resetFlow("login");
+  };
+
   const login = async () => {
     if (!validLoginIdentifier || !validPassword) return;
     setLoading(true);
@@ -3833,8 +3848,8 @@ function PhoneAuthScreenV2({
         onRecoveryStateChange(false);
         setSignupPhoneNotice(
           status.reason === "exists"
-            ? "이미 가입된 전화번호입니다."
-            : "탈퇴 후 3일 동안은 다시 가입할 수 없습니다.",
+            ? "이미 가입된 번호입니다."
+            : "현재 가입할 수 없는 전화번호입니다.",
         );
         return;
       }
@@ -3884,11 +3899,6 @@ function PhoneAuthScreenV2({
     if (!validPhone || cooldown > 0) return;
     setLoading(true);
     try {
-      const status = await checkPhoneSignUpStatus(phone);
-      if (status.canSignUp || status.reason !== "exists") {
-        Alert.alert("비밀번호 찾기", "가입된 전화번호가 아닙니다.");
-        return;
-      }
       setNormalizedPhone(await requestPasswordRecoveryOtp(phone));
       onRecoveryStateChange(true);
       setStep("otp");
@@ -4123,7 +4133,7 @@ function PhoneAuthScreenV2({
     return (
       <SafeAreaView style={s.authScreen}>
         <StatusBar style="dark" />
-        <AuthHeader title="회원가입" onBack={() => resetFlow("login")} />
+        <AuthHeader title="회원가입" onBack={exitSignup} />
         <ScrollView
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={s.authScroll}
@@ -5218,12 +5228,13 @@ function MainScreen({
               appTheme.id === "dark" && s.mainBannerDockDark,
             ]}
           >
-            <InlineBannerAd
-              placement="main"
-              disabled={adsDisabled}
-              dark={appTheme.id === "dark"}
-              reserveSpace
-            />
+            {!adsDisabled && (
+              <InlineBannerAd
+                placement="main"
+                dark={appTheme.id === "dark"}
+                reserveSpace
+              />
+            )}
           </View>
           <BottomNav selected={bottomTab} onSelect={setBottomTab} docked />
         </View>
@@ -6171,6 +6182,8 @@ function ChatRoom({
   onApplicationsBack?: () => void;
   onBack: () => void;
 }) {
+  const initialMessageLimit = 24;
+  const olderMessagePageSize = 30;
   const appTheme = useAppTheme();
   const adsDisabled = useAdFree();
   const [chatKeyboardVisible, setChatKeyboardVisible] = useState(false);
@@ -6359,6 +6372,8 @@ function ChatRoom({
   const [toast, setToast] = useState("");
   const [readBoundaryId, setReadBoundaryId] = useState<string | null>(null);
   const [readBoundaryLoaded, setReadBoundaryLoaded] = useState(false);
+  const [entryUnreadMarkerId, setEntryUnreadMarkerId] = useState<string | null>(null);
+  const entryUnreadResolvedRef = useRef(false);
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     room.id === DEMO_ROOM_ID
       ? [
@@ -6683,7 +6698,7 @@ function ChatRoom({
       }
       return;
     }
-    listRoomMessages(room.id, 50)
+    listRoomMessages(room.id, initialMessageLimit)
       .then((serverMessages) => {
         const pending = LOCAL_PENDING_MESSAGES.get(room.id) ?? [];
         const byId = new Map<string, ChatMessage>();
@@ -6702,7 +6717,7 @@ function ChatRoom({
         );
         lastSyncedServerMessageIdRef.current =
           serverMessages[serverMessages.length - 1]?.id ?? null;
-        setHasOlderMessages(serverMessages.length === 50);
+        setHasOlderMessages(serverMessages.length === initialMessageLimit);
         setChatLoadError("");
         setInitialMessagesLoaded(true);
       })
@@ -6727,7 +6742,10 @@ function ChatRoom({
       try {
         do {
           reloadPending = false;
-          const serverMessages = await listRoomMessages(room.id);
+          const serverMessages = await listRoomMessages(
+            room.id,
+            initialMessageLimit,
+          );
           lastSyncedServerMessageIdRef.current =
             serverMessages[serverMessages.length - 1]?.id ?? null;
           setMessages((current) => {
@@ -6780,7 +6798,6 @@ function ChatRoom({
         () => scheduleReload(),
       )
       .subscribe((status) => {
-        if (status === "SUBSCRIBED") scheduleReload();
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT")
           void checkForMissedMessages();
       });
@@ -6811,7 +6828,7 @@ function ChatRoom({
           filter: `room_id=eq.${room.id}`,
         },
         () =>
-          listRoomMessages(room.id)
+          listRoomMessages(room.id, initialMessageLimit)
             .then((rows) =>
               setMessages((current) => [
                 ...rows.map((item) =>
@@ -6919,11 +6936,15 @@ function ChatRoom({
       viewportOffset: Math.max(0, topVisibleY - scrollMetrics.current.offsetY),
     };
     try {
-      const older = await listRoomMessages(room.id, 50, oldest.createdAt);
+      const older = await listRoomMessages(
+        room.id,
+        olderMessagePageSize,
+        oldest.createdAt,
+      );
       const mapped = older.map((item) =>
         mapServerChatMessage(item, currentUserId),
       );
-      setHasOlderMessages(older.length === 50);
+      setHasOlderMessages(older.length === olderMessagePageSize);
       setMessages((current) => {
         const byId = new Map<string, ChatMessage>();
         [...mapped, ...current].forEach((item) => byId.set(item.id, item));
@@ -7717,7 +7738,7 @@ function ChatRoom({
     room.id,
     usesServerReadReceipt,
   ]);
-  const unreadMarkerId = useMemo(() => {
+  const computedUnreadMarkerId = useMemo(() => {
     if (!readBoundaryLoaded || !readBoundaryId) return null;
     const boundaryIndex = visibleMessages.findIndex(
       (item) => item.id === readBoundaryId,
@@ -7731,9 +7752,18 @@ function ChatRoom({
     );
   }, [readBoundaryId, readBoundaryLoaded, visibleMessages]);
   useEffect(() => {
+    if (!readBoundaryLoaded || !initialMessagesLoaded || entryUnreadResolvedRef.current)
+      return;
+    entryUnreadResolvedRef.current = true;
+    setEntryUnreadMarkerId(computedUnreadMarkerId);
+  }, [computedUnreadMarkerId, initialMessagesLoaded, readBoundaryLoaded]);
+  const unreadMarkerId = entryUnreadMarkerId;
+  useEffect(() => {
     let active = true;
     setReadBoundaryLoaded(false);
     setReadBoundaryId(null);
+    setEntryUnreadMarkerId(null);
+    entryUnreadResolvedRef.current = false;
     const load = usesServerReadReceipt
       ? getRoomReadReceipt(room.id).then(
           (value) => value?.lastReadMessageId ?? null,
@@ -8756,7 +8786,7 @@ function ChatRoom({
         )}
         {newMessagePreview && (
           <Pressable
-            onPress={() => scrollToLatest()}
+            onPress={() => scrollToLatest(false)}
             style={[
               s.newMessagePreview,
               appTheme.id === "dark" && s.newMessagePreviewDark,
@@ -8940,10 +8970,9 @@ function ChatRoom({
                   </LinearGradient>
                 </Pressable>
                 </View>
-                {chatKeyboardVisible && (
+                {chatKeyboardVisible && !adsDisabled && (
                   <InlineBannerAd
                     placement="chat"
-                    disabled={adsDisabled}
                     dark={appTheme.id === "dark"}
                     reserveSpace
                   />
@@ -10248,11 +10277,12 @@ function StoryDetail({
             />
           ),
         )}
-        <InlineBannerAd
-          placement="story"
-          disabled={adsDisabled}
-          dark={theme.id === "dark"}
-        />
+        {!adsDisabled && (
+          <InlineBannerAd
+            placement="story"
+            dark={theme.id === "dark"}
+          />
+        )}
         <View style={s.commentSection}>
           <Text style={s.commentCount}>댓글 {story.comments.length}</Text>
           {story.comments.map((item) => (
@@ -10291,13 +10321,6 @@ function StoryDetail({
             keyboardInset > 0 && { marginBottom: keyboardInset },
           ]}
         >
-          {keyboardInset > 0 && (
-            <InlineBannerAd
-              placement="chat"
-              disabled={adsDisabled}
-              dark={theme.id === "dark"}
-            />
-          )}
           <View
             style={[
               s.commentComposer,
@@ -12681,7 +12704,11 @@ function ItemShopScreen({
   const selectedTheme = APP_THEMES.find((item) => item.id === themeChoice) ?? APP_THEMES[0];
   const selectedThemeOwned =
     !selectedTheme.productId ||
-    storeItems.some((item) => item.productId === selectedTheme.productId);
+    storeItems.some(
+      (item) =>
+        item.productId === selectedTheme.productId ||
+        (selectedTheme.legacyProductIds ?? []).includes(item.productId),
+    );
   const adFree = storeItems.find(
     (item) =>
       item.productId === STORE_PRODUCTS.adFreeMonthly &&
@@ -12703,7 +12730,11 @@ function ItemShopScreen({
             const free = !item.productId;
             const owned =
               free ||
-              storeItems.some((ownedItem) => ownedItem.productId === item.productId);
+              storeItems.some(
+                (ownedItem) =>
+                  ownedItem.productId === item.productId ||
+                  (item.legacyProductIds ?? []).includes(ownedItem.productId),
+              );
             const selected = themeChoice === item.id;
             return (
               <Pressable
@@ -13237,6 +13268,7 @@ function EditRoom({
     maxMembers > 80;
   const save = async () => {
     if (disabled) return;
+    Keyboard.dismiss();
     setSaving(true);
     try {
       await updateRoom({
@@ -13281,7 +13313,7 @@ function EditRoom({
                   : "Member",
         ]),
       ];
-      onUpdated({
+      const nextRoom: Room = {
         ...room,
         name: name.trim(),
         description: description.trim(),
@@ -13298,7 +13330,8 @@ function EditRoom({
         coverUri,
         updatedAt: Date.now(),
         tags: nextTags,
-      });
+      };
+      requestAnimationFrame(() => onUpdated(nextRoom));
     } catch (error) {
       Alert.alert("방 수정 실패", serverErrorMessage(error));
       setSaving(false);
@@ -17667,7 +17700,8 @@ const s = StyleSheet.create({
   authScroll: {
     flexGrow: 1,
     justifyContent: "flex-start",
-    paddingVertical: 12,
+    paddingTop: 12,
+    paddingBottom: 160,
   },
   authPhoneRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   authPhoneInput: { flex: 1, minWidth: 0 },

@@ -25,6 +25,13 @@ const consumableProductIds = new Set([
   'mute_points_60000',
   'mute_points_200000',
   'mute_points_390000',
+  'mute_theme_white_unlock_v2',
+  'mute_theme_mint_unlock_v2',
+  'mute_theme_ocean_unlock_v2',
+  'mute_theme_lavender_unlock_v2',
+  'mute_theme_sunset_unlock_v2',
+  'mute_theme_mono_unlock_v2',
+  'mute_theme_dark_unlock_v2',
 ]);
 
 const storeProductIds = new Set([
@@ -36,6 +43,13 @@ const storeProductIds = new Set([
   'mute_theme_sunset',
   'mute_theme_mono',
   'mute_theme_dark',
+  'mute_theme_white_unlock_v2',
+  'mute_theme_mint_unlock_v2',
+  'mute_theme_ocean_unlock_v2',
+  'mute_theme_lavender_unlock_v2',
+  'mute_theme_sunset_unlock_v2',
+  'mute_theme_mono_unlock_v2',
+  'mute_theme_dark_unlock_v2',
   'mute_ad_free_monthly',
 ]);
 
@@ -133,11 +147,58 @@ async function waitForPurchase(productId: string, startPurchase: () => Promise<u
   });
 }
 
+function decodeBase64UrlJson(value: string): Record<string, unknown> | null {
+  try {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+    const atobFn = (globalThis as { atob?: (input: string) => string }).atob;
+    if (typeof atobFn !== 'function') return null;
+    const decoded = atobFn(padded);
+    const json = decodeURIComponent(
+      decoded
+        .split('')
+        .map((char) => `%${char.charCodeAt(0).toString(16).padStart(2, '0')}`)
+        .join(''),
+    );
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function getSignedTransactionInfo(purchase: Purchase) {
+  const record = purchase as unknown as Record<string, unknown>;
+  const candidates = [
+    record.purchaseToken,
+    record.signedTransactionInfo,
+    record.jwsRepresentationIOS,
+    record.transactionReceipt,
+  ];
+  return candidates.find(
+    (candidate): candidate is string =>
+      typeof candidate === 'string' && candidate.split('.').length >= 3,
+  ) ?? null;
+}
+
+function getVerifiedTransactionId(purchase: Purchase) {
+  const signedTransactionInfo = getSignedTransactionInfo(purchase);
+  if (signedTransactionInfo) {
+    const payload = decodeBase64UrlJson(signedTransactionInfo.split('.')[1] ?? '');
+    const transactionId = payload?.transactionId;
+    if (typeof transactionId === 'string' || typeof transactionId === 'number') {
+      return String(transactionId);
+    }
+  }
+  return purchase.transactionId ?? purchase.id ?? null;
+}
+
 async function verifyStorePurchase(productId: string, purchase: Purchase) {
-  const transactionId = purchase.transactionId ?? purchase.id;
+  const transactionId = getVerifiedTransactionId(purchase);
   if (!transactionId) {
     throw new Error('구매 거래 ID를 확인할 수 없습니다.');
   }
+
+  const signedTransactionInfo = getSignedTransactionInfo(purchase);
 
   const { data, error } = await requireSupabase().functions.invoke(
     'verify-store-purchase',
@@ -147,7 +208,7 @@ async function verifyStorePurchase(productId: string, purchase: Purchase) {
         platform: Platform.OS,
         productId,
         transactionId,
-        signedTransactionInfo: purchase.purchaseToken ?? null,
+        signedTransactionInfo,
       },
     },
   );

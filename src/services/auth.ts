@@ -92,6 +92,10 @@ export async function signUpWithPhonePassword(phoneNumber: string, password: str
 
 export async function requestSignUpPhoneOtp(phoneNumber: string, temporaryPassword?: string) {
   const phone = normalizeKoreanPhoneNumber(phoneNumber);
+  const status = await checkPhoneSignUpStatus(phone);
+  if (!status.canSignUp) {
+    throw new Error(status.reason === 'exists' ? '이미 가입된 번호입니다.' : '가입할 수 없는 전화번호입니다.');
+  }
   const { data, error } = await requireClient().auth.signInWithOtp({
     phone,
     options: {
@@ -119,6 +123,10 @@ export async function checkPhoneSignUpStatus(phoneNumber: string) {
 
 export async function requestPasswordRecoveryOtp(phoneNumber: string) {
   const phone = normalizeKoreanPhoneNumber(phoneNumber);
+  const status = await checkPhoneSignUpStatus(phone);
+  if (status.canSignUp || status.reason !== 'exists') {
+    throw new Error('가입된 전화번호가 아닙니다.');
+  }
   const { error } = await requireClient().auth.signInWithOtp({
     phone,
     options: { shouldCreateUser: false },

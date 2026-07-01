@@ -56,7 +56,7 @@ export default function InlineBannerAd({
     : placement === 'chat'
       ? BannerAdSize.BANNER
       : BannerAdSize.ANCHORED_ADAPTIVE_BANNER;
-  const maxHeight = placement === 'story' ? 90 : placement === 'chat' ? 50 : 58;
+  const maxHeight = placement === 'story' ? 64 : placement === 'chat' ? 50 : 58;
   const adWidth = Math.max(320, Math.floor(width));
   const containerStyle = useMemo(
     () => [
@@ -123,10 +123,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#E8E8E8',
     borderTopWidth: StyleSheet.hairlineWidth,
-    marginTop: 8,
-    marginBottom: 8,
-    minHeight: 74,
-    paddingVertical: 6,
+    marginTop: 4,
+    marginBottom: 4,
+    minHeight: 56,
+    paddingVertical: 2,
   },
   dark: {
     borderBottomColor: '#343434',

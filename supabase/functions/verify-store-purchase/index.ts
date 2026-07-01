@@ -21,7 +21,17 @@ const themeProducts = new Set([
   'mute_theme_sunset',
   'mute_theme_mono',
   'mute_theme_dark',
+  'mute_theme_white_unlock_v2',
+  'mute_theme_mint_unlock_v2',
+  'mute_theme_ocean_unlock_v2',
+  'mute_theme_lavender_unlock_v2',
+  'mute_theme_sunset_unlock_v2',
+  'mute_theme_mono_unlock_v2',
+  'mute_theme_dark_unlock_v2',
 ]);
+const accountThemeProducts = new Set(
+  [...themeProducts].filter((productId) => productId.endsWith('_unlock_v2')),
+);
 const adFreeProduct = 'mute_ad_free_monthly';
 
 function base64Url(input: string | Uint8Array) {
@@ -103,6 +113,33 @@ async function fetchAppleTransaction(transactionId: string) {
   throw new Error('APPLE_TRANSACTION_NOT_FOUND');
 }
 
+function getSignedTransactionId(signedTransactionInfo: unknown) {
+  if (typeof signedTransactionInfo !== 'string') return null;
+  const parts = signedTransactionInfo.split('.');
+  if (parts.length < 2) return null;
+  try {
+    const payload = decodeBase64UrlJson<Record<string, unknown>>(parts[1]);
+    const transactionId = payload.transactionId;
+    return typeof transactionId === 'string' || typeof transactionId === 'number'
+      ? String(transactionId)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === 'object') {
+    const value = error as Record<string, unknown>;
+    const parts = [value.code, value.message, value.details, value.hint]
+      .filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
+    if (parts.length > 0) return parts.join(': ');
+  }
+  if (typeof error === 'string' && error.trim()) return error;
+  return 'STORE_VERIFICATION_FAILED';
+}
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: cors });
   const authorization = request.headers.get('authorization');
@@ -119,7 +156,12 @@ Deno.serve(async (request) => {
   if (authError || !authData.user)
     return Response.json({ error: 'UNAUTHORIZED' }, { status: 401, headers: cors });
 
-  const { productId, transactionId, platform } = await request.json().catch(() => ({}));
+  const {
+    productId,
+    transactionId,
+    signedTransactionInfo,
+    platform,
+  } = await request.json().catch(() => ({}));
   if (typeof productId !== 'string' || typeof transactionId !== 'string')
     return Response.json({ error: 'INVALID_PURCHASE' }, { status: 400, headers: cors });
   if (!(productId in pointProducts) && !themeProducts.has(productId) && productId !== adFreeProduct)
@@ -129,11 +171,16 @@ Deno.serve(async (request) => {
 
   try {
     const bundleId = Deno.env.get('APP_STORE_BUNDLE_ID') ?? 'app.mute.chat';
-    const verified = await fetchAppleTransaction(transactionId);
+    const verifiedTransactionId = getSignedTransactionId(signedTransactionInfo) ?? transactionId;
+    const verified = await fetchAppleTransaction(verifiedTransactionId);
     const tx = verified.transaction;
     if (tx.bundleId !== bundleId) throw new Error('BUNDLE_ID_MISMATCH');
     if (tx.productId !== productId) throw new Error('PRODUCT_ID_MISMATCH');
-    if (String(tx.transactionId) !== transactionId) throw new Error('TRANSACTION_ID_MISMATCH');
+    if (String(tx.transactionId) !== verifiedTransactionId) throw new Error('TRANSACTION_ID_MISMATCH');
+    if (
+      accountThemeProducts.has(productId) &&
+      String(tx.appAccountToken ?? '').toLowerCase() !== authData.user.id.toLowerCase()
+    ) throw new Error('APP_ACCOUNT_TOKEN_MISMATCH');
     if (tx.revocationDate) throw new Error('TRANSACTION_REVOKED');
 
     let entitlementExpiresAt: string | null = null;
@@ -146,7 +193,7 @@ Deno.serve(async (request) => {
     const { data, error } = await service.rpc('apply_verified_store_purchase', {
       p_user_id: authData.user.id,
       p_provider: 'app_store',
-      p_transaction_id: transactionId,
+      p_transaction_id: verifiedTransactionId,
       p_product_id: productId,
       p_points: pointProducts[productId] ?? 0,
       p_entitlement_type: themeProducts.has(productId)
@@ -156,19 +203,28 @@ Deno.serve(async (request) => {
       p_environment: verified.environment,
       p_raw_payload: {
         transaction: tx,
+        clientTransactionId: transactionId,
         apple: verified.raw,
         verifiedAt: new Date().toISOString(),
       },
     });
-    if (error) throw error;
+    if (error) throw new Error(getErrorMessage(error));
     const row = Array.isArray(data) ? data[0] : data;
     return Response.json({
       pointBalance: Number(row?.point_balance ?? 0),
       credited: Boolean(row?.credited),
     }, { headers: cors });
   } catch (error) {
+    const message = getErrorMessage(error);
+    console.error('verify-store-purchase failed', {
+      userId: authData.user.id,
+      productId,
+      transactionId,
+      signedTransactionId: getSignedTransactionId(signedTransactionInfo),
+      error: message,
+    });
     return Response.json(
-      { error: error instanceof Error ? error.message : 'STORE_VERIFICATION_FAILED' },
+      { error: message },
       { headers: cors },
     );
   }
