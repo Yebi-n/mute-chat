@@ -199,6 +199,12 @@ import {
 import { colors, radius, shadows, spacing } from "./src/theme";
 import { MainTab, Room } from "./src/types";
 import InlineBannerAd from "./src/components/InlineBannerAd";
+import {
+  SCREENSHOT_DEMO_ENABLED,
+  screenshotDemoMembers,
+  screenshotDemoRooms,
+  screenshotDemoUnreadCounts,
+} from "./src/screenshotDemo";
 
 type Screen =
   | "main"
@@ -305,7 +311,13 @@ type Notice = {
   time: string;
   read: boolean;
   roomId?: string;
-  destination?: "chat" | "detail" | "applications" | "promotion";
+  storyId?: string;
+  destination?:
+    | "chat"
+    | "detail"
+    | "applications"
+    | "stories"
+    | "promotion";
 };
 type StoryVisibility = "room" | "public";
 type StoryBlock =
@@ -399,6 +411,107 @@ type ChatMessage =
       event: "join" | "heart" | "point" | "leave" | "room" | "kick";
       text: string;
     });
+
+function screenshotDemoChatMessages(myDisplayName: string): ChatMessage[] {
+  return [
+    {
+      id: "demo-chat-1",
+      userId: "demo-user-sora",
+      kind: "text",
+      mine: false,
+      name: "소라",
+      avatarUri: "https://i.pravatar.cc/300?img=32",
+      text: "오늘 발견한 사진 한 장씩 공유해볼래?",
+      time: "오후 7:24",
+      createdAt: "2026-07-01T10:24:00.000Z",
+    },
+    {
+      id: "demo-chat-2",
+      userId: "demo-user-me",
+      kind: "text",
+      mine: true,
+      name: myDisplayName || "하루",
+      avatarUri: "https://i.pravatar.cc/300?img=47",
+      text: "좋아! 나는 노을 사진 올려볼게.",
+      time: "오후 7:25",
+      createdAt: "2026-07-01T10:25:00.000Z",
+    },
+    {
+      id: "demo-chat-3",
+      userId: "demo-user-jun",
+      kind: "text",
+      mine: false,
+      name: "준",
+      avatarUri: "https://i.pravatar.cc/300?img=12",
+      text: "나도 참여할게. 재미있는 앨범을 하나 찾았어.",
+      time: "오후 7:26",
+      createdAt: "2026-07-01T10:26:00.000Z",
+    },
+    {
+      id: "demo-chat-heart",
+      kind: "system",
+      event: "heart",
+      text: "소라님이 하루님에게 하트를 보냈습니다.",
+      createdAt: "2026-07-01T10:26:30.000Z",
+    },
+    {
+      id: "demo-chat-reply",
+      userId: "demo-user-me",
+      kind: "text",
+      mine: true,
+      name: myDisplayName || "하루",
+      avatarUri: "https://i.pravatar.cc/300?img=47",
+      text: "당연하지. 다 보고 감상도 남겨줘!",
+      time: "오후 7:27",
+      createdAt: "2026-07-01T10:27:00.000Z",
+      replyTo: {
+        id: "demo-chat-3",
+        name: "준",
+        text: "나도 참여할게. 재미있는 앨범을 하나 찾았어.",
+      },
+    },
+    {
+      id: "demo-chat-secret",
+      userId: "demo-user-sora",
+      kind: "secret",
+      mine: false,
+      name: "소라",
+      avatarUri: "https://i.pravatar.cc/300?img=32",
+      recipient: myDisplayName || "하루",
+      text: "준 생일 축하 메시지는 자정에 같이 올리자.",
+      time: "오후 7:28",
+      createdAt: "2026-07-01T10:28:00.000Z",
+    },
+    {
+      id: "demo-chat-images",
+      userId: "demo-user-jun",
+      kind: "image",
+      mine: false,
+      name: "준",
+      avatarUri: "https://i.pravatar.cc/300?img=12",
+      imageUris: [
+        "https://picsum.photos/seed/mute-gallery-1/900/900",
+        "https://picsum.photos/seed/mute-gallery-2/900/900",
+        "https://picsum.photos/seed/mute-gallery-3/1200/700",
+      ],
+      time: "오후 7:29",
+      createdAt: "2026-07-01T10:29:00.000Z",
+    },
+    {
+      id: "demo-chat-final",
+      userId: "demo-user-sora",
+      kind: "text",
+      mine: false,
+      name: "소라",
+      avatarUri: "https://i.pravatar.cc/300?img=32",
+      bubbleColor: "#E7F3EE",
+      textColor: "#3F9A70",
+      text: "분위기 좋다. 여기로 정하자!",
+      time: "오후 7:30",
+      createdAt: "2026-07-01T10:30:00.000Z",
+    },
+  ];
+}
 const IOS_HIDE_ADULT_UI = Platform.OS === "ios";
 const SCREEN_WIDTH=Dimensions.get("window").width;
 const CHAT_IMAGE_GRID_WIDTH = Math.min(196, Math.floor(SCREEN_WIDTH * 0.48));
@@ -1115,6 +1228,8 @@ const ROOM_UPDATED_AT: Record<string, number> = {
 };
 
 function membersForRoom(room: Room) {
+  if (SCREENSHOT_DEMO_ENABLED && room.id === DEMO_ROOM_ID)
+    return screenshotDemoMembers;
   return Array.from(
     { length: room.memberCount },
     (_, index) =>
@@ -2147,6 +2262,9 @@ function AuthenticatedApp({
     (adultVerified && (!IOS_HIDE_ADULT_UI || iosAdultContentEnabled));
   const canUseAdultFeatures = isSuperAdmin || adultVerified;
   const [chatInitialPanel, setChatInitialPanel] = useState<ChatPanel>(null);
+  const [chatInitialStoryId, setChatInitialStoryId] = useState<string | null>(
+    null,
+  );
   const [chatInitialUnreadFocus, setChatInitialUnreadFocus] = useState(false);
   const [returnToNotifications, setReturnToNotifications] = useState(false);
   const [notificationDrawerSignal, setNotificationDrawerSignal] = useState(0);
@@ -2366,6 +2484,24 @@ function AuthenticatedApp({
     };
   }, [session?.user.id]);
   const reloadAppData = async (showSpinner = false, silent = false) => {
+    if (SCREENSHOT_DEMO_ENABLED) {
+      const joined = screenshotDemoRooms.map((room) => room.id);
+      setRoomData(screenshotDemoRooms);
+      setJoinedIds(joined);
+      setOwnedRoomIds([DEMO_ROOM_ID]);
+      setUnreadCounts(screenshotDemoUnreadCounts);
+      setRoomSummaries(
+        Object.fromEntries(
+          screenshotDemoRooms.map((room) => [
+            room.id,
+            { lastMessage: room.lastMessage, updatedAt: room.updatedAt },
+          ]),
+        ),
+      );
+      setRoomDataLoaded(true);
+      setDataRefreshing(false);
+      return;
+    }
     if (!isSupabaseConfigured) {
       setRoomData([]);
       setJoinedIds([]);
@@ -2448,6 +2584,7 @@ function AuthenticatedApp({
     return () => subscription.remove();
   }, []);
   useEffect(() => {
+    if (SCREENSHOT_DEMO_ENABLED) return;
     if (!supabase || !isSupabaseConfigured || !session?.user.id) return;
     const client = supabase;
     let active = true;
@@ -2505,6 +2642,7 @@ function AuthenticatedApp({
     };
   }, []);
   useEffect(() => {
+    if (SCREENSHOT_DEMO_ENABLED) return;
     if (!supabase || !isSupabaseConfigured || !session?.user.id) return;
     const client = supabase;
     let active = true;
@@ -2610,6 +2748,7 @@ function AuthenticatedApp({
       return;
     }
     setChatInitialPanel(null);
+    setChatInitialStoryId(null);
     setChatInitialUnreadFocus(false);
     setReturnToNotifications(false);
     setSelectedRoom(room);
@@ -2672,12 +2811,20 @@ function AuthenticatedApp({
     setAdminReadOnly(Boolean(isSuperAdmin && !joinedIds.includes(room.id)));
     setReturnToNotifications(notice.destination === "applications");
     setChatInitialPanel(
-      notice.destination === "applications" ? "applications" : null,
+      notice.destination === "applications"
+        ? "applications"
+        : notice.destination === "stories"
+          ? "stories"
+          : null,
+    );
+    setChatInitialStoryId(
+      notice.destination === "stories" ? notice.storyId ?? null : null,
     );
     setChatInitialUnreadFocus(notice.destination === "chat");
     const openChat =
       notice.destination === "chat" ||
       notice.destination === "applications" ||
+      notice.destination === "stories" ||
       joinedIds.includes(room.id);
     if (appNavigationRef.isReady()) {
       appNavigationRef.navigate(openChat ? "Chat" : "Detail");
@@ -2692,6 +2839,8 @@ function AuthenticatedApp({
       const roomId = typeof data?.roomId === "string" ? data.roomId : undefined;
       if (!roomId) return null;
       const type = String(data?.type ?? "chat");
+      const storyId =
+        typeof data?.storyId === "string" ? data.storyId : undefined;
       return {
         id: `push-${Date.now()}`,
         icon: type === "join_request" ? "person-add-outline" : "chatbubble-outline",
@@ -2700,9 +2849,12 @@ function AuthenticatedApp({
         time: "지금",
         read: true,
         roomId,
+        storyId,
         destination:
           type === "join_request"
             ? "applications"
+            : type === "story" || type === "story_comment"
+              ? "stories"
             : type === "join_rejected"
               ? "detail"
               : "chat",
@@ -2931,6 +3083,7 @@ function AuthenticatedApp({
               return;
             }
             setChatInitialPanel(null);
+            setChatInitialStoryId(null);
             setChatInitialUnreadFocus(false);
             setReturnToNotifications(false);
             setSelectedRoom(room);
@@ -2952,13 +3105,33 @@ function AuthenticatedApp({
             setAdminReadOnly(Boolean(isSuperAdmin && !joinedIds.includes(room.id)));
             navigation.navigate("Detail");
           };
-          const navigateNotification = (notice: Notice) => {
+          const navigateNotification = async (notice: Notice) => {
             if (notice.destination === "promotion") {
               setBottomTab("discover");
               setCategory("promotion");
               return;
             }
-            const room = roomData.find((item) => item.id === notice.roomId);
+            let room = roomData.find((item) => item.id === notice.roomId);
+            if (
+              !room &&
+              notice.roomId &&
+              isUuid(notice.roomId) &&
+              isSupabaseConfigured
+            ) {
+              try {
+                const serverRoom = await getRoomById(notice.roomId);
+                if (serverRoom) {
+                  room = mapServerRoom(serverRoom);
+                  setRoomData((items) =>
+                    items.some((item) => item.id === room!.id)
+                      ? items
+                      : [room!, ...items],
+                  );
+                }
+              } catch {
+                room = undefined;
+              }
+            }
             if (!room) {
               Alert.alert("알림 이동 실패", "삭제되었거나 접근할 수 없는 방입니다.");
               return;
@@ -2971,11 +3144,23 @@ function AuthenticatedApp({
             setAdminReadOnly(Boolean(isSuperAdmin && !joinedIds.includes(room.id)));
             setReturnToNotifications(notice.destination === "applications");
             setChatInitialPanel(
-              notice.destination === "applications" ? "applications" : null,
+              notice.destination === "applications"
+                ? "applications"
+                : notice.destination === "stories"
+                  ? "stories"
+                  : null,
+            );
+            setChatInitialStoryId(
+              notice.destination === "stories"
+                ? notice.storyId ?? null
+                : null,
             );
             setChatInitialUnreadFocus(notice.destination === "chat");
             navigation.navigate(
-              notice.destination === "chat" || joinedIds.includes(room.id)
+              notice.destination === "chat" ||
+                notice.destination === "applications" ||
+                notice.destination === "stories" ||
+                joinedIds.includes(room.id)
                 ? "Chat"
                 : "Detail",
             );
@@ -3014,7 +3199,7 @@ function AuthenticatedApp({
                 adminReport("room", room.id, room.name)
               }
               topSpaceProgress={topSpaceProgress}
-              onNotification={navigateNotification}
+              onNotification={(notice) => void navigateNotification(notice)}
               notificationDrawerSignal={notificationDrawerSignal}
               onRanking={() => navigation.navigate("Ranking")}
               onPointBalanceChange={setPoints}
@@ -3105,12 +3290,14 @@ function AuthenticatedApp({
             onAdminReportUser={(id, label) => adminReport("user", id, label)}
             onEditRoom={() => navigation.navigate("EditRoom")}
             initialPanel={chatInitialPanel}
+            initialStoryId={chatInitialStoryId}
             initialFocusUnread={chatInitialUnreadFocus}
             onApplicationsBack={
               returnToNotifications
                 ? () => {
                     setReturnToNotifications(false);
                     setChatInitialPanel(null);
+                    setChatInitialStoryId(null);
                     setChatInitialUnreadFocus(false);
                     navigation.popToTop();
                     setNotificationDrawerSignal((value) => value + 1);
@@ -3146,6 +3333,7 @@ function AuthenticatedApp({
             onBack={() => {
               setReturnToNotifications(false);
               setChatInitialPanel(null);
+              setChatInitialStoryId(null);
               setChatInitialUnreadFocus(false);
               navigation.goBack();
             }}
@@ -6146,6 +6334,7 @@ function ChatRoom({
   onAdminReportUser,
   onEditRoom,
   initialPanel = null,
+  initialStoryId = null,
   initialFocusUnread = false,
   points,
   onPointBalanceChange,
@@ -6167,6 +6356,7 @@ function ChatRoom({
   onAdminReportUser: (id: string, label: string) => void;
   onEditRoom: () => void;
   initialPanel?: ChatPanel;
+  initialStoryId?: string | null;
   initialFocusUnread?: boolean;
   points: number;
   onPointBalanceChange: (balance: number) => void;
@@ -6332,9 +6522,22 @@ function ChatRoom({
     { id: string; name: string; createdAt: string }[]
   >([]);
   const [storyPanelInitialId, setStoryPanelInitialId] = useState<string | null>(
-    null,
+    initialStoryId,
   );
   const [storyPanelInitialWrite, setStoryPanelInitialWrite] = useState(false);
+  useEffect(() => {
+    if (initialPanel === "stories") {
+      setPanel("stories");
+      setStoryPanelInitialId(initialStoryId ?? null);
+      setStoryPanelInitialWrite(false);
+      return;
+    }
+    if (initialPanel === "applications") {
+      setPanel("applications");
+      setStoryPanelInitialId(null);
+      setStoryPanelInitialWrite(false);
+    }
+  }, [initialPanel, initialStoryId, room.id]);
   const [photoViewer, setPhotoViewer] = useState<{
     uris:string[];
     index:number;
@@ -6376,7 +6579,9 @@ function ChatRoom({
   const entryUnreadResolvedRef = useRef(false);
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     room.id === DEMO_ROOM_ID
-      ? [
+      ? SCREENSHOT_DEMO_ENABLED
+        ? screenshotDemoChatMessages(myDisplayName)
+        : [
           {
             id: "1",
             kind: "text",
@@ -9379,6 +9584,103 @@ function ChatRoom({
 }
 
 function initialStoryItems(room: Room): StoryItem[] {
+  if (SCREENSHOT_DEMO_ENABLED) {
+    return [
+      {
+        id: "demo-story-1",
+        roomId: room.id,
+        roomName: room.name,
+        title: "비 온 뒤의 창가",
+        author: "소라",
+        authorAvatarUri: "https://i.pravatar.cc/300?img=32",
+        createdAt: new Date(Date.now() - 18 * 60 * 1000).toISOString(),
+        visibility: "public",
+        blocks: [
+          {
+            id: "demo-story-1-text-1",
+            type: "text",
+            text: "비가 그친 뒤 창밖의 색이 유난히 선명했어요. 오늘 발견한 장면들을 남겨봅니다.",
+          },
+          {
+            id: "demo-story-1-image-1",
+            type: "image",
+            uri: "https://picsum.photos/seed/mute-story-rain/1200/900",
+          },
+          {
+            id: "demo-story-1-text-2",
+            type: "text",
+            text: "여러분이 발견한 장면도 댓글로 들려주세요.",
+          },
+        ],
+        comments: [
+          {
+            id: "demo-comment-1",
+            author: "준",
+            authorAvatarUri: "https://i.pravatar.cc/300?img=12",
+            body: "사진 분위기 정말 좋다. 나도 오늘 찍은 사진 올려볼게!",
+            createdAt: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
+          },
+          {
+            id: "demo-comment-2",
+            author: "하루",
+            authorAvatarUri: "https://i.pravatar.cc/300?img=47",
+            body: "빛이 예쁘게 담겼다.",
+            createdAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+            mine: true,
+          },
+        ],
+        views: 126,
+        hearts: 18,
+        liked: true,
+      },
+      {
+        id: "demo-story-2",
+        roomId: room.id,
+        roomName: room.name,
+        title: "오늘의 작은 기록",
+        author: "준",
+        authorAvatarUri: "https://i.pravatar.cc/300?img=12",
+        createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        visibility: "public",
+        blocks: [
+          {
+            id: "demo-story-2-text-1",
+            type: "text",
+            text: "좋아하는 음악과 따뜻한 커피로 시작한 하루.",
+          },
+          {
+            id: "demo-story-2-image-1",
+            type: "image",
+            uri: "https://picsum.photos/seed/mute-story-coffee/1200/900",
+          },
+        ],
+        comments: [],
+        views: 84,
+        hearts: 11,
+      },
+      {
+        id: "demo-story-3",
+        roomId: room.id,
+        roomName: room.name,
+        title: "오늘 발견한 문장",
+        author: "하루",
+        authorAvatarUri: "https://i.pravatar.cc/300?img=47",
+        createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+        visibility: "public",
+        blocks: [
+          {
+            id: "demo-story-3-text-1",
+            type: "text",
+            text: "오래 기억하고 싶은 문장을 만났어요.",
+          },
+        ],
+        comments: [],
+        views: 63,
+        hearts: 9,
+        mine: true,
+      },
+    ];
+  }
   return [
     {
       id: "demo-story-1",
@@ -10720,15 +11022,25 @@ function PublicStoryFeed({
   );
   const [selected, setSelected] = useState<StoryItem | null>(null);
   const [editing, setEditing] = useState(false);
-  const [publicStories, setPublicStories] = useState<StoryItem[]>([]);
+  const [publicStories, setPublicStories] = useState<StoryItem[]>(() =>
+    SCREENSHOT_DEMO_ENABLED
+      ? initialStoryItems(screenshotDemoRooms[0])
+      : [],
+  );
   const [refreshing, setRefreshing] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(SCREENSHOT_DEMO_ENABLED);
   const [loadError, setLoadError] = useState("");
   useEffect(() => {
     onDetailChange?.(Boolean(selected));
     return () => onDetailChange?.(false);
   }, [onDetailChange, selected]);
   const reloadPublicStories = async (showSpinner = false) => {
+    if (SCREENSHOT_DEMO_ENABLED) {
+      setPublicStories(initialStoryItems(screenshotDemoRooms[0]));
+      setLoaded(true);
+      setRefreshing(false);
+      return;
+    }
     if (!supabase) {
       setLoaded(true);
       return;
@@ -10758,6 +11070,7 @@ function PublicStoryFeed({
     reloadPublicStories(false).catch(() => undefined);
   }, []);
   useEffect(() => {
+    if (SCREENSHOT_DEMO_ENABLED) return;
     if (!supabase) return;
     const client = supabase;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -16528,6 +16841,8 @@ function mapServerNotice(row: ServerNotice): Notice {
   const type = String(row.data?.type ?? row.eventType);
   const roomId =
     typeof row.data?.roomId === "string" ? row.data.roomId : undefined;
+  const storyId =
+    typeof row.data?.storyId === "string" ? row.data.storyId : undefined;
   return {
     id: row.id,
     icon:
@@ -16547,9 +16862,12 @@ function mapServerNotice(row: ServerNotice): Notice {
     time: formatStoryTime(row.createdAt),
     read: Boolean(row.readAt),
     roomId,
+    storyId,
     destination:
       type === "join_request"
         ? "applications"
+        : type === "story" || type === "story_comment"
+          ? "stories"
         : type === "join_rejected"
           ? "detail"
           : "chat",
