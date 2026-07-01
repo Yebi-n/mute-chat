@@ -256,6 +256,15 @@ type ComposerTool = "media" | "style" | "secret" | null;
 const CHAT_COLLAPSE_CHAR_THRESHOLD = 140;
 const CHAT_COLLAPSE_LINE_LIMIT = 4;
 const DEMO_ROOM_ID = "green-table";
+const SCREENSHOT_DEMO_ROOM_IDS = new Set(
+  screenshotDemoRooms.map((room) => room.id),
+);
+function isScreenshotDemoRoomId(roomId: string) {
+  return SCREENSHOT_DEMO_ENABLED && SCREENSHOT_DEMO_ROOM_IDS.has(roomId);
+}
+function isLocalDemoRoomId(roomId: string) {
+  return isScreenshotDemoRoomId(roomId) || roomId === DEMO_ROOM_ID;
+}
 const DEMO_ROOM: Room = {
   id: DEMO_ROOM_ID,
   name: "테스트 방",
@@ -1228,7 +1237,7 @@ const ROOM_UPDATED_AT: Record<string, number> = {
 };
 
 function membersForRoom(room: Room) {
-  if (SCREENSHOT_DEMO_ENABLED && room.id === DEMO_ROOM_ID)
+  if (isScreenshotDemoRoomId(room.id))
     return screenshotDemoMembers;
   return Array.from(
     { length: room.memberCount },
@@ -5743,7 +5752,7 @@ function RoomDetail({
   const [pinError, setPinError] = useState("");
   const [pinChecking, setPinChecking] = useState(false);
   const [members, setMembers] = useState<RoomMember[]>(() =>
-    room.id === DEMO_ROOM_ID ? membersForRoom(room) : [],
+    isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
   );
   const [storyOverlayId, setStoryOverlayId] = useState<string | null>(null);
   const [storyWriteOpen, setStoryWriteOpen] = useState(false);
@@ -5767,7 +5776,7 @@ function RoomDetail({
   }, [providedCurrentUserId]);
   useEffect(() => {
     if (!isSupabaseConfigured || !isUuid(room.id)) {
-      setMembers(room.id === DEMO_ROOM_ID ? membersForRoom(room) : []);
+      setMembers(isLocalDemoRoomId(room.id) ? membersForRoom(room) : []);
       return;
     }
     listRoomMembersVisible(room.id)
@@ -6378,7 +6387,7 @@ function ChatRoom({
   const adsDisabled = useAdFree();
   const [chatKeyboardVisible, setChatKeyboardVisible] = useState(false);
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
-    room.id === DEMO_ROOM_ID ? membersForRoom(room) : [],
+    isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
   );
   useEffect(() => {
     if (isUuid(room.id)) setForegroundRoomId(room.id);
@@ -6388,7 +6397,7 @@ function ChatRoom({
   }, [room.id]);
   const myProfile =
     roomMembers.find((member) => member.mine) ??
-    (room.id === DEMO_ROOM_ID
+    (isLocalDemoRoomId(room.id)
       ? ROOM_MEMBERS.find((member) => member.mine)
       : undefined);
   const myDisplayName = myProfile?.name ?? "나";
@@ -6578,8 +6587,8 @@ function ChatRoom({
   const [entryUnreadMarkerId, setEntryUnreadMarkerId] = useState<string | null>(null);
   const entryUnreadResolvedRef = useRef(false);
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
-    room.id === DEMO_ROOM_ID
-      ? SCREENSHOT_DEMO_ENABLED
+    isLocalDemoRoomId(room.id)
+      ? isScreenshotDemoRoomId(room.id)
         ? screenshotDemoChatMessages(myDisplayName)
         : [
           {
@@ -6807,7 +6816,7 @@ function ChatRoom({
   ]);
   useEffect(() => {
     if (!isSupabaseConfigured || !isUuid(room.id)) {
-      setRoomMembers(room.id === DEMO_ROOM_ID ? membersForRoom(room) : []);
+      setRoomMembers(isLocalDemoRoomId(room.id) ? membersForRoom(room) : []);
       return;
     }
     listRoomMembersVisible(room.id)
@@ -6895,12 +6904,19 @@ function ChatRoom({
     setShowScrollToBottom(false);
     setMessages([]);
     if (!isSupabaseConfigured || !isUuid(room.id)) {
-      if (room.id !== DEMO_ROOM_ID)
-        setMessages(LOCAL_PENDING_MESSAGES.get(room.id) ?? []);
-      else {
-        setInitialMessagesLoaded(true);
-        setChatReady(true);
-      }
+      const pending = LOCAL_PENDING_MESSAGES.get(room.id) ?? [];
+      setMessages(
+        isScreenshotDemoRoomId(room.id)
+          ? [...screenshotDemoChatMessages(myDisplayName), ...pending]
+          : isLocalDemoRoomId(room.id)
+            ? pending.length
+              ? pending
+              : messages
+            : pending,
+      );
+      setHasOlderMessages(false);
+      setInitialMessagesLoaded(true);
+      setChatReady(true);
       return;
     }
     listRoomMessages(room.id, initialMessageLimit)
@@ -9818,14 +9834,14 @@ function StoryPanel({
   const [staff, setStaff] = useState(initialStaff);
   const isStaff = staff;
   const [items, setItems] = useState<StoryItem[]>(() =>
-    room.id === DEMO_ROOM_ID ? initialStoryItems(room) : [],
+    isLocalDemoRoomId(room.id) ? initialStoryItems(room) : [],
   );
   const [selected, setSelected] = useState<StoryItem | null>(null);
   const [editing, setEditing] = useState<StoryItem | null>(null);
   const [writing, setWriting] = useState(initialWrite);
   const [currentProfile, setCurrentProfile] = useState<RoomMember | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [storiesLoaded, setStoriesLoaded] = useState(room.id === DEMO_ROOM_ID);
+  const [storiesLoaded, setStoriesLoaded] = useState(isLocalDemoRoomId(room.id));
   const [storiesLoadError, setStoriesLoadError] = useState("");
   const seededSelection = useRef(false);
   useEffect(() => {
@@ -9836,7 +9852,18 @@ function StoryPanel({
       ? items
       : items.filter((item) => item.visibility === filter);
   const reloadStories = async (showSpinner = false) => {
-    if (!supabase || !isUuid(room.id)) return;
+    if (!supabase || !isUuid(room.id)) {
+      setItems(isLocalDemoRoomId(room.id) ? initialStoryItems(room) : []);
+      setCurrentProfile(
+        isLocalDemoRoomId(room.id)
+          ? (membersForRoom(room).find((member) => member.mine) ?? null)
+          : null,
+      );
+      setStoriesLoaded(true);
+      setStoriesLoadError("");
+      if (showSpinner) setRefreshing(false);
+      return;
+    }
     if (showSpinner) setRefreshing(true);
     try {
       const [serverStories, userResult, serverMembers] = await Promise.all([
@@ -11409,14 +11436,14 @@ function MemberPanel({
   onProfile: (member: RoomMember) => void;
 }) {
   const [members, setMembers] = useState<RoomMember[]>(() =>
-    room.id === DEMO_ROOM_ID ? membersForRoom(room) : [],
+    isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
   );
   const [editing, setEditing] = useState<string | null>(null);
-  const [loading, setLoading] = useState(room.id !== DEMO_ROOM_ID);
+  const [loading, setLoading] = useState(!isLocalDemoRoomId(room.id));
   const [loadError, setLoadError] = useState("");
   useEffect(() => {
     if (!isSupabaseConfigured || !isUuid(room.id)) {
-      setMembers(room.id === DEMO_ROOM_ID ? membersForRoom(room) : []);
+      setMembers(isLocalDemoRoomId(room.id) ? membersForRoom(room) : []);
       setLoading(false);
       return;
     }
@@ -12238,18 +12265,18 @@ function RoomOverview({
   onProfile: (member: RoomMember) => void;
 }) {
   const [members, setMembers] = useState<RoomMember[]>(() =>
-    room.id === DEMO_ROOM_ID ? membersForRoom(room) : [],
+    isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
   );
   const [stories, setStories] = useState<StoryItem[]>(() =>
-    room.id === DEMO_ROOM_ID ? initialStoryItems(room) : [],
+    isLocalDemoRoomId(room.id) ? initialStoryItems(room) : [],
   );
-  const [loading, setLoading] = useState(room.id !== DEMO_ROOM_ID);
+  const [loading, setLoading] = useState(!isLocalDemoRoomId(room.id));
   const [loadError, setLoadError] = useState("");
   useEffect(() => {
     let active = true;
     if (!isSupabaseConfigured || !isUuid(room.id)) {
-      setMembers(room.id === DEMO_ROOM_ID ? membersForRoom(room) : []);
-      setStories(room.id === DEMO_ROOM_ID ? initialStoryItems(room) : []);
+      setMembers(isLocalDemoRoomId(room.id) ? membersForRoom(room) : []);
+      setStories(isLocalDemoRoomId(room.id) ? initialStoryItems(room) : []);
       setLoading(false);
       return () => {
         active = false;
