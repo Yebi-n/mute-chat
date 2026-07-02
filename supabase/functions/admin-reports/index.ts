@@ -30,13 +30,12 @@ type ReportRow = {
 };
 
 function html(body: string) {
+  const headers = new Headers(corsHeaders);
+  headers.set("content-type", "text/html; charset=utf-8");
+  headers.set("cache-control", "no-store, no-cache, must-revalidate");
   return new Response(body, {
     status: 200,
-    headers: {
-      ...corsHeaders,
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store, no-cache, must-revalidate",
-    },
+    headers,
   });
 }
 

@@ -138,6 +138,7 @@ import {
   listRoomMessages,
   listRoomReadReceipts,
   markRoomRead,
+  searchRoomMessages,
   sendSecretMessage,
   softDeleteMyMessage,
   sendSystemMessage,
@@ -421,6 +422,47 @@ type ChatMessage =
       event: "join" | "heart" | "point" | "leave" | "room" | "kick";
       text: string;
     });
+
+type ChatSearchResult = {
+  id: string;
+  createdAt: string;
+  text: string;
+};
+
+function normalizedChatMessageId(id: string) {
+  return id.startsWith("server-") ? id.slice(7) : id;
+}
+
+function chatMessageMergeKey(message: ChatMessage) {
+  if (message.kind === "story" && message.storyId) {
+    return `story:${message.storyId}`;
+  }
+  return normalizedChatMessageId(message.id);
+}
+
+function sortChatMessages(messages: ChatMessage[]) {
+  return [...messages].sort((first, second) => {
+    const firstTime = Date.parse(first.createdAt ?? "") || 0;
+    const secondTime = Date.parse(second.createdAt ?? "") || 0;
+    return firstTime === secondTime
+      ? normalizedChatMessageId(first.id).localeCompare(
+          normalizedChatMessageId(second.id),
+        )
+      : firstTime - secondTime;
+  });
+}
+
+function mergeChatMessages(...groups: ChatMessage[][]) {
+  const byKey = new Map<string, ChatMessage>();
+  groups.flat().forEach((message) => {
+    const normalized =
+      message.kind === "story"
+        ? message
+        : { ...message, id: normalizedChatMessageId(message.id) };
+    byKey.set(chatMessageMergeKey(normalized), normalized);
+  });
+  return sortChatMessages([...byKey.values()]);
+}
 
 function screenshotDemoChatMessages(myDisplayName: string): ChatMessage[] {
   return [
@@ -1642,10 +1684,7 @@ async function resizeLocalImage(
   compress: number,
 ) {
   if (!uri) throw new Error("IMAGE_URI_REQUIRED");
-  const context = ImageManipulator.ImageManipulator.manipulate(uri);
-  context.resize({ width });
-  const rendered = await context.renderAsync();
-  return rendered.saveAsync({
+  return ImageManipulator.manipulateAsync(uri, [{ resize: { width } }], {
     compress,
     format: ImageManipulator.SaveFormat.JPEG,
   });
@@ -3197,6 +3236,7 @@ function AuthenticatedApp({
                 activeTopSpaces,
                 now,
                 roomData: enrichedRoomData,
+                hiddenRoomIds: reportedRoomIds,
                 adultVerified,
                 showAdultTab,
                 canSeeAdultRooms,
@@ -4921,6 +4961,7 @@ function MainScreen({
   activeTopSpaces,
   now: parentNow,
   roomData,
+  hiddenRoomIds,
   adultVerified,
   showAdultTab,
   canSeeAdultRooms,
@@ -4957,6 +4998,7 @@ function MainScreen({
   activeTopSpaces: Room[];
   now: number;
   roomData: Room[];
+  hiddenRoomIds: string[];
   adultVerified: boolean;
   showAdultTab: boolean;
   canSeeAdultRooms: boolean;
@@ -5410,6 +5452,7 @@ function MainScreen({
         <PublicStoryFeed
           roomData={roomData}
           joinedIds={joinedIds}
+          hiddenRoomIds={hiddenRoomIds}
           openRoom={openRoom}
           query={storyQuery}
           loading={!dataLoaded}
@@ -6496,6 +6539,8 @@ function ChatRoom({
   const [expandedMessages, setExpandedMessages] = useState<string[]>([]);
   const [chatSearchOpen, setChatSearchOpen] = useState(false);
   const [chatSearch, setChatSearch] = useState("");
+  const [chatSearchResults, setChatSearchResults] = useState<ChatSearchResult[]>([]);
+  const [chatSearchLoading, setChatSearchLoading] = useState(false);
   const [chatSearchCursor, setChatSearchCursor] = useState(0);
   const chatScrollRef = useRef<React.ElementRef<typeof RNScrollView> | null>(null);
   const composerInputRef = useRef<React.ElementRef<typeof RNTextInput> | null>(null);
@@ -6965,13 +7010,7 @@ function ChatRoom({
           ),
           ...pending,
         ].forEach((item) => byId.set(item.id, item));
-        setMessages(
-          [...byId.values()].sort(
-            (first, second) =>
-              (Date.parse(first.createdAt ?? "") || 0) -
-              (Date.parse(second.createdAt ?? "") || 0),
-          ),
-        );
+        setMessages(mergeChatMessages([...byId.values()]));
         lastSyncedServerMessageIdRef.current =
           serverMessages[serverMessages.length - 1]?.id ?? null;
         setHasOlderMessages(serverMessages.length === initialMessageLimit);
@@ -7006,15 +7045,10 @@ function ChatRoom({
           lastSyncedServerMessageIdRef.current =
             serverMessages[serverMessages.length - 1]?.id ?? null;
           setMessages((current) => {
-            const byId = new Map(current.map((item) => [item.id, item]));
-            serverMessages.forEach((item) => {
-              const mapped = mapServerChatMessage(item, currentUserId);
-              byId.set(mapped.id, mapped);
-            });
-            return [...byId.values()].sort((first, second) =>
-              (Date.parse(first.createdAt ?? "") || 0) -
-              (Date.parse(second.createdAt ?? "") || 0),
+            const mapped = serverMessages.map((item) =>
+              mapServerChatMessage(item, currentUserId),
             );
+            return mergeChatMessages(current, mapped);
           });
         } while (reloadPending);
       } catch {
@@ -7087,15 +7121,17 @@ function ChatRoom({
         () =>
           listRoomMessages(room.id, initialMessageLimit)
             .then((rows) =>
-              setMessages((current) => [
-                ...rows.map((item) =>
-                  mapServerChatMessage(item, currentUserId),
+              setMessages((current) =>
+                mergeChatMessages(
+                  rows.map((item) =>
+                    mapServerChatMessage(item, currentUserId),
+                  ),
+                  current.filter(
+                    (item) =>
+                      item.delivery === "sending" || item.delivery === "failed",
+                  ),
                 ),
-                ...current.filter(
-                  (item) =>
-                    item.delivery === "sending" || item.delivery === "failed",
-                ),
-              ]),
+              ),
             )
             .catch(() => undefined),
       )
@@ -7203,13 +7239,7 @@ function ChatRoom({
       );
       setHasOlderMessages(older.length === olderMessagePageSize);
       setMessages((current) => {
-        const byId = new Map<string, ChatMessage>();
-        [...mapped, ...current].forEach((item) => byId.set(item.id, item));
-        return [...byId.values()].sort(
-          (first, second) =>
-            (Date.parse(first.createdAt ?? "") || 0) -
-            (Date.parse(second.createdAt ?? "") || 0),
-        );
+        return mergeChatMessages(mapped, current);
       });
     } catch (error) {
       prependHeightRef.current = null;
@@ -7246,15 +7276,9 @@ function ChatRoom({
       const through = new Date(new Date(createdAt).getTime() + 1).toISOString();
       const context = await listRoomMessages(room.id, 50, through);
       setMessages((current) => {
-        const byId = new Map<string, ChatMessage>();
-        [
-          ...context.map((item) => mapServerChatMessage(item, currentUserId)),
-          ...current,
-        ].forEach((item) => byId.set(item.id, item));
-        return [...byId.values()].sort(
-          (first, second) =>
-            (Date.parse(first.createdAt ?? "") || 0) -
-            (Date.parse(second.createdAt ?? "") || 0),
+        return mergeChatMessages(
+          context.map((item) => mapServerChatMessage(item, currentUserId)),
+          current,
         );
       });
       setTimeout(() => scrollToMessagePosition(messageId), 120);
@@ -7927,7 +7951,6 @@ function ChatRoom({
     ]);
   };
   const combinedMessages = useMemo(() => {
-    const byId = new Map<string, ChatMessage>();
     const requestMessages: ChatMessage[] = isOwner
       ? pendingJoinRequests.map((request) => ({
           id: `request-${request.id}`,
@@ -7937,20 +7960,7 @@ function ChatRoom({
           createdAt: request.createdAt,
         }))
       : [];
-    [...messages, ...requestMessages].forEach((item) => {
-      const normalizedId = item.id.startsWith("server-")
-        ? item.id.slice(7)
-        : item.id;
-      if (!byId.has(normalizedId))
-        byId.set(normalizedId, { ...item, id: normalizedId });
-    });
-    return [...byId.values()].sort((first, second) => {
-      const firstTime = Date.parse(first.createdAt ?? "") || 0;
-      const secondTime = Date.parse(second.createdAt ?? "") || 0;
-      return firstTime === secondTime
-        ? first.id.localeCompare(second.id)
-        : firstTime - secondTime;
-    });
+    return mergeChatMessages(messages, requestMessages);
   }, [isOwner, messages, pendingJoinRequests]);
   const visibleMessages = combinedMessages.filter((item) => {
     if (item.kind !== "secret") return true;
@@ -8105,28 +8115,62 @@ function ChatRoom({
       ? latestVisibleMessage.text
       : undefined,
   ]);
-  const chatSearchMatches = chatSearch.trim()
-    ? combinedMessages
-        .filter(
-          (item) =>
-            item.kind === "text" &&
-            item.text.toLowerCase().includes(chatSearch.trim().toLowerCase()),
-        )
-        .reverse()
-    : [];
+  const chatSearchMatches = chatSearchResults;
   const activeSearchMessage = chatSearchMatches[chatSearchCursor];
   useEffect(() => {
     setChatSearchCursor(0);
+    setChatSearchResults([]);
   }, [chatSearch]);
   useEffect(() => {
     if (!activeSearchMessage) return;
-    const y = messagePositions.current[activeSearchMessage.id];
-    if (y !== undefined)
-      chatScrollRef.current?.scrollTo({
-        y: Math.max(0, y - 100),
-        animated: true,
-      });
+    void jumpToMessage(activeSearchMessage.id);
   }, [activeSearchMessage?.id]);
+  const runChatSearch = async () => {
+    const keyword = chatSearch.trim();
+    if (keyword.length < 2) {
+      setChatSearchResults([]);
+      setChatSearchCursor(0);
+      Alert.alert("검색어를 2글자 이상 입력해주세요.");
+      return;
+    }
+    if (!isUuid(room.id)) {
+      const localResults = combinedMessages
+        .filter(
+          (item): item is Extract<ChatMessage, { kind: "text" }> =>
+            item.kind === "text" &&
+            item.text.toLowerCase().includes(keyword.toLowerCase()),
+        )
+        .reverse()
+        .map((item) => ({
+          id: item.id,
+          createdAt: item.createdAt ?? new Date().toISOString(),
+          text: item.text,
+        }));
+      setChatSearchResults(localResults);
+      setChatSearchCursor(0);
+      return;
+    }
+    setChatSearchLoading(true);
+    try {
+      const rows = (await searchRoomMessages(room.id, keyword)) as Array<{
+        id: string;
+        body: string | null;
+        created_at: string;
+      }>;
+      setChatSearchResults(
+        rows.map((row) => ({
+          id: row.id,
+          createdAt: row.created_at,
+          text: row.body ?? "",
+        })),
+      );
+      setChatSearchCursor(0);
+    } catch (error) {
+      Alert.alert("검색 실패", serverErrorMessage(error));
+    } finally {
+      setChatSearchLoading(false);
+    }
+  };
   const moveSearch = (delta: number) => {
     if (!chatSearchMatches.length) return;
     setChatSearchCursor(
@@ -8422,6 +8466,7 @@ function ChatRoom({
         onSecondaryTrailingPress={() => {
           setChatSearchOpen((value) => !value);
           setChatSearch("");
+          setChatSearchResults([]);
         }}
         trailing="menu"
         onTrailingPress={() => {
@@ -8439,10 +8484,25 @@ function ChatRoom({
             autoFocus
             value={chatSearch}
             onChangeText={setChatSearch}
+            onSubmitEditing={runChatSearch}
             placeholder="이 방의 채팅 검색"
             placeholderTextColor={colors.textMuted}
             style={s.chatSearchInput}
           />
+          <Pressable
+            disabled={chatSearchLoading}
+            onPress={runChatSearch}
+            style={[
+              s.chatSearchButton,
+              chatSearchLoading && s.chatSearchButtonDisabled,
+            ]}
+          >
+            {chatSearchLoading ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={s.chatSearchButtonText}>검색</Text>
+            )}
+          </Pressable>
           <Text style={s.chatSearchCount}>
             {chatSearchMatches.length
               ? `${chatSearchCursor + 1}/${chatSearchMatches.length}`
@@ -8478,6 +8538,7 @@ function ChatRoom({
             onPress={() => {
               setChatSearchOpen(false);
               setChatSearch("");
+              setChatSearchResults([]);
             }}
             style={s.chatSearchNav}
           >
@@ -8921,7 +8982,7 @@ function ChatRoom({
                               <RNIonicons
                                 name="lock-closed"
                                 size={12}
-                                color={FIXED_POINT_COLOR}
+                                color={colors.pink600}
                               />
                               <RNText style={s.secretLabelText}>
                                 {item.recipient}님에게만 보이는 쪽지
@@ -10759,6 +10820,7 @@ function StoryEditor({
     initial?.blocks ?? [{ id: "text-1", type: "text", text: "" }],
   );
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const updateText = (id: string, text: string) =>
     setBlocks((items) =>
       items.map((item) =>
@@ -10821,6 +10883,7 @@ function StoryEditor({
     ]);
   };
   const save = async () => {
+    if (savingRef.current) return;
     const normalized = blocks
       .filter((block) => block.type === "image" || block.text.trim())
       .map((block) =>
@@ -10834,6 +10897,7 @@ function StoryEditor({
       )
     )
       return;
+    savingRef.current = true;
     setSaving(true);
     try {
       const payload: StoryBlockInput[] = normalized.map((block) =>
@@ -10903,6 +10967,7 @@ function StoryEditor({
     } catch (error) {
       Alert.alert("스토리 저장 실패", serverErrorMessage(error));
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -11070,6 +11135,7 @@ function StoryEditor({
 function PublicStoryFeed({
   roomData,
   joinedIds,
+  hiddenRoomIds = [],
   openRoom,
   query = "",
   loading = false,
@@ -11077,6 +11143,7 @@ function PublicStoryFeed({
 }: {
   roomData: Room[];
   joinedIds: string[];
+  hiddenRoomIds?: string[];
   openRoom: (room: Room) => void;
   query?: string;
   loading?: boolean;
@@ -11097,8 +11164,13 @@ function PublicStoryFeed({
   const [refreshing, setRefreshing] = useState(false);
   const [loaded, setLoaded] = useState(SCREENSHOT_DEMO_ENABLED);
   const [loadError, setLoadError] = useState("");
+  const [visibleStoryCount, setVisibleStoryCount] = useState(12);
   const [randomBucket, setRandomBucket] = useState(() =>
     Math.floor(Date.now() / THREE_HOURS_MS),
+  );
+  const hiddenStoryRoomIds = useMemo(
+    () => new Set(hiddenRoomIds),
+    [hiddenRoomIds],
   );
   useEffect(() => {
     onDetailChange?.(Boolean(selected));
@@ -11174,8 +11246,9 @@ function PublicStoryFeed({
     const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
     const result = publicStories.filter(
       (story) =>
-        !normalizedQuery ||
-        story.title.toLocaleLowerCase("ko-KR").includes(normalizedQuery),
+        !hiddenStoryRoomIds.has(story.roomId) &&
+        (!normalizedQuery ||
+          story.title.toLocaleLowerCase("ko-KR").includes(normalizedQuery)),
     );
     if (sort === "views") return result.sort((a, b) => b.views - a.views);
     if (sort === "hearts") return result.sort((a, b) => b.hearts - a.hearts);
@@ -11189,7 +11262,19 @@ function PublicStoryFeed({
         stableHash(`${randomBucket}:${a.id}`) -
         stableHash(`${randomBucket}:${b.id}`),
     );
-  }, [publicStories, query, sort, randomBucket]);
+  }, [hiddenStoryRoomIds, publicStories, query, sort, randomBucket]);
+  useEffect(() => {
+    setVisibleStoryCount(12);
+  }, [query, sort, randomBucket, hiddenRoomIds]);
+  const visibleStories = useMemo(
+    () => sortedStories.slice(0, visibleStoryCount),
+    [sortedStories, visibleStoryCount],
+  );
+  const hasMoreStories = visibleStoryCount < sortedStories.length;
+  const loadMoreStories = () => {
+    if (!loaded || loading || !hasMoreStories) return;
+    setVisibleStoryCount((count) => Math.min(count + 12, sortedStories.length));
+  };
   if (selected) {
     const linkedRoom = roomData.find((item) => item.id === selected.roomId);
     if (editing && linkedRoom)
@@ -11242,7 +11327,7 @@ function PublicStoryFeed({
   }
   return (
     <FlatList
-      data={sortedStories}
+      data={visibleStories}
       keyExtractor={(item) => item.id}
       style={isDarkTheme ? s.publicStoryListDark : undefined}
       contentContainerStyle={[
@@ -11303,6 +11388,15 @@ function PublicStoryFeed({
           </View>
         )
       }
+      ListFooterComponent={
+        hasMoreStories ? (
+          <View style={s.publicStoryLoadingMore}>
+            <ActivityIndicator color={activeAppTheme.accent} />
+          </View>
+        ) : null
+      }
+      onEndReached={loadMoreStories}
+      onEndReachedThreshold={0.35}
       renderItem={({ item }) => {
         const body = item.blocks
           .filter((block) => block.type === "text")
@@ -13655,6 +13749,7 @@ function EditRoom({
     useState<ImagePicker.ImagePickerAsset | null>(null);
   const [coverRemoved, setCoverRemoved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const appTheme = useAppTheme();
   const setCapacity = (value: number) =>
     setMaxMembers(
@@ -13692,7 +13787,8 @@ function EditRoom({
     maxMembers < currentMemberCount ||
     maxMembers > 80;
   const save = async () => {
-    if (disabled) return;
+    if (disabled || savingRef.current) return;
+    savingRef.current = true;
     Keyboard.dismiss();
     setSaving(true);
     try {
@@ -13759,6 +13855,7 @@ function EditRoom({
       requestAnimationFrame(() => onUpdated(nextRoom));
     } catch (error) {
       Alert.alert("방 수정 실패", serverErrorMessage(error));
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -17737,6 +17834,16 @@ const s = StyleSheet.create({
     textAlign: "left",
     letterSpacing: 0,
   },
+  chatSearchButton: {
+    height: 32,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.mint700,
+  },
+  chatSearchButtonDisabled: { opacity: 0.55 },
+  chatSearchButtonText: { color: "#fff", fontSize: 12, fontWeight: "800" },
   chatSearchCount: { color: colors.mint700, fontSize: 11, fontWeight: "700" },
   chatSearchNav: {
     width: 30,
@@ -17912,6 +18019,11 @@ const s = StyleSheet.create({
   visibilityText: { color: colors.textSubtle, fontSize: 10, fontWeight: "700" },
   publicStoryList: { paddingBottom: 100, backgroundColor: "#FFF" },
   publicStoryListDark: { backgroundColor: "#222222" },
+  publicStoryLoadingMore: {
+    minHeight: 64,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   publicStoryHeader: {
     minHeight: 74,
     justifyContent: "center",
@@ -19517,7 +19629,7 @@ const s = StyleSheet.create({
     marginBottom: 7,
   },
   secretLabelText: {
-    color: FIXED_POINT_COLOR,
+    color: colors.pink600,
     fontSize: 9,
     fontWeight: "700",
   },
