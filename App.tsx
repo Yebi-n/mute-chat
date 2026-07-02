@@ -5460,7 +5460,7 @@ function MainScreen({
         />
       )}
       {(bottomTab === "discover" || bottomTab === "myRooms") && (
-        <Pressable onPress={onCreate} style={s.fab}>
+        <Pressable onPress={onCreate} style={[s.fab, adsDisabled && s.fabNoAd]}>
           <LinearGradient
             colors={["#82B9C1", "#5DBB8C"]}
             start={{ x: 0, y: 0 }}
@@ -13820,24 +13820,27 @@ function EditRoom({
                   : "Member",
         ]),
       ];
-      const nextRoom: Room = {
-        ...room,
-        name: name.trim(),
-        description: description.trim(),
-        maxMembers,
-        region: roomType === "region" ? region.trim() : undefined,
-        category:
-          roomType === "concept"
-            ? "concept"
-            : roomType === "member"
-              ? "member"
-              : "general",
-        isAdult: roomType === "adult",
-        isPrivate: room.isPrivate,
-        coverUri,
-        updatedAt: Date.now(),
-        tags: nextTags,
-      };
+      const savedRoom = await getRoomById(room.id).catch(() => null);
+      const nextRoom: Room = savedRoom
+        ? mapServerRoom(savedRoom)
+        : {
+            ...room,
+            name: name.trim(),
+            description: description.trim(),
+            maxMembers,
+            region: roomType === "region" ? region.trim() : undefined,
+            category:
+              roomType === "concept"
+                ? "concept"
+                : roomType === "member"
+                  ? "member"
+                  : "general",
+            isAdult: roomType === "adult",
+            isPrivate: room.isPrivate,
+            coverUri,
+            updatedAt: Date.now(),
+            tags: nextTags,
+          };
       Keyboard.dismiss();
       const finish = () => onUpdated(nextRoom);
       if (Platform.OS === "ios") setTimeout(finish, 220);
@@ -18540,6 +18543,9 @@ const s = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: colors.mint600,
     ...shadows.floating,
+  },
+  fabNoAd: {
+    bottom: 126,
   },
   mainBannerDock: {
     width: "100%",
