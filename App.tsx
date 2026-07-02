@@ -6562,6 +6562,7 @@ function ChatRoom({
   const composerFocusPreparedRef = useRef(false);
   const scrollToLatestRef = useRef<(animated?: boolean) => void>(() => undefined);
   const prependHeightRef = useRef<number | null>(null);
+  const prependOffsetRef = useRef<number | null>(null);
   const prependAnchorRef = useRef<{
     id: string;
     initialY: number;
@@ -7214,20 +7215,6 @@ function ChatRoom({
     );
     if (!oldest?.createdAt) return;
     setLoadingOlder(true);
-    prependHeightRef.current = scrollMetrics.current.contentHeight;
-    const topVisibleMessage =
-      messages.find((item) => {
-        const y = messagePositions.current[item.id];
-        return y !== undefined && y >= scrollMetrics.current.offsetY - 4;
-      }) ?? oldest;
-    const topVisibleY =
-      messagePositions.current[topVisibleMessage.id] ??
-      scrollMetrics.current.offsetY;
-    prependAnchorRef.current = {
-      id: topVisibleMessage.id,
-      initialY: topVisibleY,
-      viewportOffset: Math.max(0, topVisibleY - scrollMetrics.current.offsetY),
-    };
     try {
       const older = await listRoomMessages(
         room.id,
@@ -7238,11 +7225,17 @@ function ChatRoom({
         mapServerChatMessage(item, currentUserId),
       );
       setHasOlderMessages(older.length === olderMessagePageSize);
+      if (mapped.length > 0) {
+        prependHeightRef.current = scrollMetrics.current.contentHeight;
+        prependOffsetRef.current = scrollMetrics.current.offsetY;
+        prependAnchorRef.current = null;
+      }
       setMessages((current) => {
         return mergeChatMessages(mapped, current);
       });
     } catch (error) {
       prependHeightRef.current = null;
+      prependOffsetRef.current = null;
       prependAnchorRef.current = null;
       Alert.alert("이전 채팅 불러오기 실패", serverErrorMessage(error));
     } finally {
@@ -8608,26 +8601,19 @@ function ChatRoom({
             if (!initialMessagesLoaded) return;
             if (prependHeightRef.current !== null) {
               const previousHeight = prependHeightRef.current;
-              const anchor = prependAnchorRef.current;
+              const previousOffset =
+                prependOffsetRef.current ?? scrollMetrics.current.offsetY;
               prependHeightRef.current = null;
+              prependOffsetRef.current = null;
               prependAnchorRef.current = null;
               const delta = Math.max(0, height - previousHeight);
-              if (anchor) {
-                const immediateY = Math.max(
-                  0,
-                  scrollMetrics.current.offsetY + delta,
-                );
+              const nextY = Math.max(0, previousOffset + delta);
+              requestAnimationFrame(() => {
                 chatScrollRef.current?.scrollTo({
-                  y: immediateY,
+                  y: nextY,
                   animated: false,
                 });
-                scrollMetrics.current.offsetY = immediateY;
-                scrollMetrics.current.contentHeight = height;
-                return;
-              }
-              chatScrollRef.current?.scrollTo({
-                y: scrollMetrics.current.offsetY + delta,
-                animated: false,
+                scrollMetrics.current.offsetY = nextY;
               });
               scrollMetrics.current.contentHeight = height;
               return;
@@ -13852,7 +13838,10 @@ function EditRoom({
         updatedAt: Date.now(),
         tags: nextTags,
       };
-      requestAnimationFrame(() => onUpdated(nextRoom));
+      Keyboard.dismiss();
+      const finish = () => onUpdated(nextRoom);
+      if (Platform.OS === "ios") setTimeout(finish, 220);
+      else finish();
     } catch (error) {
       Alert.alert("방 수정 실패", serverErrorMessage(error));
       savingRef.current = false;
