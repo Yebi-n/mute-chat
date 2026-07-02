@@ -5811,6 +5811,27 @@ function RoomDetail({
         member={profile}
         room={room}
         viewerRole={adminReadOnly || isSuperAdmin ? null : viewerRole}
+        onReport={
+          !joined
+            ? async () => {
+                if (!profile.userId || !isUuid(profile.userId)) {
+                  Alert.alert(
+                    "신고 불가",
+                    "서버에 등록된 멤버만 신고할 수 있습니다.",
+                  );
+                  return;
+                }
+                const submitted = await confirmReportSubmission({
+                  targetType: "user",
+                  targetId: profile.userId,
+                  reason: "other",
+                  detail: `멤버 신고: ${profile.name}`,
+                });
+                if (submitted)
+                  Alert.alert("신고 접수 완료", "멤버 신고가 접수되었습니다.");
+              }
+            : undefined
+        }
         onBack={() => setProfile(null)}
       />
     );
@@ -5822,6 +5843,7 @@ function RoomDetail({
           key={`overlay-${storyOverlayId}`}
           room={room}
           joined={joined}
+          isSuperAdmin={isSuperAdmin}
           isStaff={members.some(
             (member) => member.mine && (member.owner || member.coHost),
           )}
@@ -5848,6 +5870,7 @@ function RoomDetail({
           key="room-story-write"
           room={room}
           joined={joined}
+          isSuperAdmin={isSuperAdmin}
           isStaff={members.some(
             (member) => member.mine && (member.owner || member.coHost),
           )}
@@ -6118,6 +6141,7 @@ function RoomDetail({
           key={`room-story-${storyPanelKey}`}
           room={room}
           joined={joined}
+          isSuperAdmin={isSuperAdmin}
           isStaff={members.some(
             (member) => member.mine && (member.owner || member.coHost),
           )}
@@ -9812,6 +9836,7 @@ function mapServerStory(story: ServerStory, currentUserId?: string): StoryItem {
 function StoryPanel({
   room,
   joined,
+  isSuperAdmin = false,
   isStaff: initialStaff,
   showChatButton = true,
   showInternalHeader = false,
@@ -9827,6 +9852,7 @@ function StoryPanel({
 }: {
   room: Room;
   joined: boolean;
+  isSuperAdmin?: boolean;
   isStaff: boolean;
   showChatButton?: boolean;
   showInternalHeader?: boolean;
@@ -9840,8 +9866,9 @@ function StoryPanel({
   onOpenDetail?: (story: StoryItem) => void;
   onWriteRequest?: () => void;
 }) {
+  const canViewMemberStories = joined || isSuperAdmin;
   const [filter, setFilter] = useState<"all" | StoryVisibility>(
-    room.isAdult ? (joined ? "all" : "room") : joined ? "all" : "public",
+    canViewMemberStories ? "all" : "public",
   );
   const [staff, setStaff] = useState(initialStaff);
   const isStaff = staff;
@@ -9857,8 +9884,9 @@ function StoryPanel({
   const [storiesLoadError, setStoriesLoadError] = useState("");
   const seededSelection = useRef(false);
   useEffect(() => {
-    if (room.isAdult && filter === "public") setFilter(joined ? "all" : "room");
-  }, [filter, joined, room.isAdult]);
+    if (room.isAdult && filter === "public")
+      setFilter(canViewMemberStories ? "all" : "room");
+  }, [canViewMemberStories, filter, room.isAdult]);
   const visible =
     filter === "all"
       ? items
@@ -9879,7 +9907,7 @@ function StoryPanel({
     if (showSpinner) setRefreshing(true);
     try {
       const [serverStories, userResult, serverMembers] = await Promise.all([
-        listStories({ roomId: room.id, publicOnly: !joined }),
+        listStories({ roomId: room.id, publicOnly: !canViewMemberStories }),
         supabase.auth.getUser(),
         listRoomMembersVisible(room.id).catch(() => []),
       ]);
@@ -9923,7 +9951,7 @@ function StoryPanel({
   useEffect(() => {
     if (!supabase || !isUuid(room.id)) return;
     reloadStories(false).catch(() => undefined);
-  }, [joined, room.id]);
+  }, [canViewMemberStories, room.id]);
   useEffect(() => {
     if (!supabase || !isUuid(room.id)) return;
     const client = supabase;
@@ -9954,8 +9982,8 @@ function StoryPanel({
     };
   }, [joined, room.id]);
   useEffect(() => {
-    if (!joined && filter !== "public") setFilter("public");
-  }, [filter, joined]);
+    if (!canViewMemberStories && filter !== "public") setFilter("public");
+  }, [canViewMemberStories, filter]);
   useEffect(() => {
     if (!initialSelectedId || seededSelection.current || selected) return;
     const target = items.find((item) => item.id === initialSelectedId);
@@ -10059,7 +10087,7 @@ function StoryPanel({
   const content = (
     <View style={s.flex}>
       <View style={s.storyVisibility}>
-        {joined && (
+        {canViewMemberStories && (
           <>
             <Pressable
               onPress={() => setFilter("all")}
@@ -11673,6 +11701,7 @@ function MemberProfile({
   onHeart,
   onPoint,
   onSecret,
+  onReport,
   availablePoints = 0,
 }: {
   member: RoomMember;
@@ -11685,6 +11714,7 @@ function MemberProfile({
   onHeart?: () => Promise<boolean>;
   onPoint?: (amount: string) => Promise<boolean>;
   onSecret?: (body: string) => Promise<boolean>;
+  onReport?: () => void | Promise<void>;
   availablePoints?: number;
 }) {
   const [photoOpen, setPhotoOpen] = useState(false);
@@ -11814,7 +11844,11 @@ function MemberProfile({
       setSaving(false);
     }
   };
+  const reportOnly = !editable && !member.mine && !viewerRole && Boolean(onReport);
   const canShowMenu = !editable && !member.mine && Boolean(viewerRole);
+  const showQuickActions = Boolean(
+    onHeart || onPoint || onSecret || canShowMenu,
+  );
   const manageableUserId =
     member.userId && isUuid(member.userId) ? member.userId : null;
   const canManageTarget = Boolean(
@@ -11973,9 +12007,19 @@ function MemberProfile({
       <TopBar
         title={editable && editMode ? "프로필 수정" : "프로필"}
         onBack={onBack}
-        trailing={canShowMenu ? "ellipsis-horizontal" : undefined}
+        trailing={
+          reportOnly
+            ? "warning-outline"
+            : canShowMenu
+              ? "ellipsis-horizontal"
+              : undefined
+        }
         onTrailingPress={
-          canShowMenu ? () => setMenuOpen((value) => !value) : undefined
+          reportOnly
+            ? () => void onReport?.()
+            : canShowMenu
+              ? () => setMenuOpen((value) => !value)
+              : undefined
         }
       />
       {canShowMenu && menuOpen && (
@@ -12104,26 +12148,40 @@ function MemberProfile({
                 <Text style={s.memberProfileLabel}>자기 소개</Text>
                 <Text style={s.memberProfileIntro}>{member.intro}</Text>
               </View>
-              <View style={s.memberProfileActions}>
-                <ProfileQuickAction icon="heart-outline" label="하트" onPress={confirmHeart} />
-                <ProfileQuickAction
-                  icon="cash-outline"
-                  label="포인트"
-                  onPress={onPoint ? () => setQuickAction("point") : undefined}
-                />
-                <ProfileQuickAction
-                  icon="mail-outline"
-                  label="쪽지"
-                  onPress={onSecret ? () => setQuickAction("secret") : undefined}
-                />
-                {canShowMenu && (
-                  <ProfileQuickAction
-                    icon="ban-outline"
-                    label={isMuted ? "금지 해제" : "채팅 금지"}
-                    onPress={() => selectAction(isMuted ? "채팅 금지 해제" : "채팅 금지")}
-                  />
-                )}
-              </View>
+              {showQuickActions && (
+                <View style={s.memberProfileActions}>
+                  {onHeart && (
+                    <ProfileQuickAction
+                      icon="heart-outline"
+                      label="하트"
+                      onPress={confirmHeart}
+                    />
+                  )}
+                  {onPoint && (
+                    <ProfileQuickAction
+                      icon="cash-outline"
+                      label="포인트"
+                      onPress={() => setQuickAction("point")}
+                    />
+                  )}
+                  {onSecret && (
+                    <ProfileQuickAction
+                      icon="mail-outline"
+                      label="쪽지"
+                      onPress={() => setQuickAction("secret")}
+                    />
+                  )}
+                  {canShowMenu && (
+                    <ProfileQuickAction
+                      icon="ban-outline"
+                      label={isMuted ? "금지 해제" : "채팅 금지"}
+                      onPress={() =>
+                        selectAction(isMuted ? "채팅 금지 해제" : "채팅 금지")
+                      }
+                    />
+                  )}
+                </View>
+              )}
             </>
           )}
         </ScrollView>
