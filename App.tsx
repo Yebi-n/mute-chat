@@ -3411,7 +3411,7 @@ function AuthenticatedApp({
               setRoomData((items) =>
                 items.map((item) => (item.id === updated.id ? updated : item)),
               );
-              navigation.navigate("Chat");
+              navigation.goBack();
             }}
           />
         )}
@@ -13841,9 +13841,8 @@ function EditRoom({
             updatedAt: Date.now(),
             tags: nextTags,
           };
-      Keyboard.dismiss();
       const finish = () => onUpdated(nextRoom);
-      if (Platform.OS === "ios") setTimeout(finish, 220);
+      if (Platform.OS === "ios") setTimeout(finish, 500);
       else finish();
     } catch (error) {
       Alert.alert("방 수정 실패", serverErrorMessage(error));
