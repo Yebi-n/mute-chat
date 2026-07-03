@@ -13962,17 +13962,23 @@ function EditRoom({
             <View style={s.radioList}>
               {(
                 [
-                  ["member", "Member"],
-                  ["concept", "콘셉트"],
-                  ["region", "지역별"],
-                  ["adult", "성인"],
-                ] as const
-              ).map(([value, label]) => (
+                   ["member", "Member", false, undefined],
+                   ["concept", "콘셉트", false, undefined],
+                   ["region", "지역별", false, undefined],
+                   [
+                      "adult",
+                      Platform.OS === "ios" ? "iOS에서 이용할 수 없는 기능입니다" : "성인",
+                      Platform.OS === "ios",
+                      "현재 iOS에서 지원되지 않는 기능입니다.",
+                   ],
+                 ] as const
+              ).map(([value, label, typeDisabled, disabledReason]) => (
                 <Pressable
-                  key={value}
-                  onPress={() => setRoomType(value)}
-                  style={s.radioRow}
-                >
+                    key={value}
+                    disabled={typeDisabled}
+                    onPress={() => setRoomType(value)}
+                    style={[s.radioRow, typeDisabled && s.radioDisabled]}
+                 >
                   <View
                     style={[
                       s.radioCircle,
