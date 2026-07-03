@@ -26,3 +26,8 @@ export async function setCustomChatEntitlementValue(productId:string,value:strin
   if(error)throw error;
   return Array.isArray(data)?data[0]:data;
 }
+
+export async function expireMyChatEntitlement(productId:string){
+  const {error}=await client().rpc('expire_my_chat_entitlement',{p_product_id:productId});
+  if(error)throw error;
+}

@@ -54,7 +54,7 @@ export async function showRewardedAd(
   const configuredUnitId = Platform.OS === 'ios'
     ? IOS_REWARDED_UNIT_ID
     : process.env.EXPO_PUBLIC_ADMOB_REWARDED_ANDROID_ID;
-  const useTestAds = __DEV__ || process.env.EXPO_PUBLIC_ADMOB_USE_TEST_ADS !== 'false';
+  const useTestAds = __DEV__ || process.env.EXPO_PUBLIC_ADMOB_USE_TEST_ADS === 'true';
   const productionUnitId = useTestAds ? undefined : configuredUnitId;
   const unitId = productionUnitId || TestIds.REWARDED;
   let rewardKey = `admob-test-${Date.now()}`;

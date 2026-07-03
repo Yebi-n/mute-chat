@@ -25,13 +25,6 @@ const consumableProductIds = new Set([
   'mute_points_60000',
   'mute_points_200000',
   'mute_points_390000',
-  'mute_theme_white',
-  'mute_theme_mint',
-  'mute_theme_ocean',
-  'mute_theme_lavender',
-  'mute_theme_sunset',
-  'mute_theme_mono',
-  'mute_theme_dark',
 ]);
 
 const storeProductIds = new Set([
@@ -205,7 +198,7 @@ function purchaseBelongsToConfiguredUser(purchase: Purchase) {
   // while the user has switched accounts, do not verify it against the
   // current Supabase user. This prevents stale purchases from becoming
   // TRANSACTION_OWNED_BY_ANOTHER_ACCOUNT on the server.
-  if (!appAccountToken) return true;
+  if (!appAccountToken) return false;
   return appAccountToken === configuredUserId.toLowerCase();
 }
 
@@ -226,6 +219,7 @@ async function verifyStorePurchase(productId: string, purchase: Purchase) {
         productId,
         transactionId,
         signedTransactionInfo,
+        appAccountToken: configuredUserId,
       },
     },
   );
@@ -287,6 +281,7 @@ export async function restoreStorePurchases() {
 
   for (const purchase of purchases ?? []) {
     if (!storeProductIds.has(purchase.productId)) continue;
+    if (consumableProductIds.has(purchase.productId)) continue;
     if (!purchaseBelongsToConfiguredUser(purchase)) continue;
     const result = await verifyStorePurchase(purchase.productId, purchase);
     pointBalance = result.pointBalance;

@@ -48,7 +48,7 @@ export default function InlineBannerAd({
   const [sdkReady, setSdkReady] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
-  const useTestAds = __DEV__ || process.env.EXPO_PUBLIC_ADMOB_USE_TEST_ADS !== 'false';
+  const useTestAds = __DEV__ || process.env.EXPO_PUBLIC_ADMOB_USE_TEST_ADS === 'true';
   const configured = configuredUnitId(placement);
   const unitId = useTestAds ? TestIds.ADAPTIVE_BANNER : configured;
   const size = placement === 'story'

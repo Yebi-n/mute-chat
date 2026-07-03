@@ -6,6 +6,7 @@ type UploadInput = {
   uri: string;
   mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
   fileSize: number;
+  bytes?: ArrayBuffer;
   width: number;
   height: number;
   purpose: MediaPurpose;
@@ -34,6 +35,13 @@ export async function uploadValidatedImage(input: UploadInput) {
   }
 
   const client = requireClient();
+  let bytes = input.bytes;
+  if (!bytes) {
+    const response = await fetch(input.uri);
+    if (!response.ok) throw new Error(`MEDIA_FILE_READ_FAILED:${response.status}`);
+    bytes = await response.arrayBuffer();
+  }
+  const byteSize = bytes.byteLength;
   const bucket = input.purpose === 'room-cover'
     ? 'room-covers'
     : input.purpose === 'chat' || input.purpose === 'story'
@@ -44,7 +52,7 @@ export async function uploadValidatedImage(input: UploadInput) {
       p_room_id: input.roomId ?? null,
     p_extension: extensionFor(input.mimeType),
     p_mime_type: input.mimeType,
-    p_byte_size: input.fileSize,
+    p_byte_size: byteSize,
     p_width: input.width,
     p_height: input.height,
   });
@@ -53,8 +61,6 @@ export async function uploadValidatedImage(input: UploadInput) {
   const ticket = Array.isArray(ticketRows) ? ticketRows[0] : ticketRows;
   if (!ticket) throw new Error('Failed to create an upload ticket.');
 
-  const response = await fetch(input.uri);
-  const bytes = await response.arrayBuffer();
   const { error: uploadError } = await client.storage
     .from(bucket)
     .upload(ticket.object_path, bytes, {

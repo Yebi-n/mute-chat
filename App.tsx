@@ -171,7 +171,6 @@ import {
   listPointLedger,
   showRewardedAd,
 } from "./src/services/monetization";
-import { transferRoomPoints as transferRoomPointsOnServer } from "./src/services/wallet";
 import {
   configurePurchases,
   listStoreEntitlements,
@@ -195,6 +194,7 @@ import {
   listRoomChatStyles,
   saveMyRoomChatStyle,
   setCustomChatEntitlementValue,
+  expireMyChatEntitlement,
   ChatEntitlement,
   RoomChatStyle,
 } from "./src/services/chatStyles";
@@ -1221,6 +1221,15 @@ function withCustomPaletteColor(
   );
   return [...filtered, ...added];
 }
+
+function isCustomChatProductId(productId?: string) {
+  if (!productId) return false;
+  return (
+    productId.startsWith("mute_custom_bubble_color_") ||
+    productId.startsWith("mute_custom_text_color_") ||
+    productId.startsWith("mute_custom_background_")
+  );
+}
 const ROOM_MEMBERS: RoomMember[] = [
   {
     userId: "00000000-0000-4000-8000-000000000001",
@@ -1953,7 +1962,11 @@ export default function App() {
             onSignedOut={() => {
               setPasswordRecoveryActive(false);
               resetPurchaseConfiguration();
-              selectAppTheme(APP_THEMES[0], null);
+              try {
+                selectAppTheme(APP_THEMES[0], null);
+              } catch {
+                // Local theme reset must not block session cleanup.
+              }
               setSession(null);
             }}
           />
@@ -3620,6 +3633,13 @@ function serverErrorMessage(error: unknown) {
   }
   if (message.includes("UNSUPPORTED_PRODUCT"))
     return "서버 검증 대상에 등록되지 않은 상품입니다. 앱 버전과 서버 설정을 같이 확인해주세요.";
+  if (
+    message.includes("TRANSACTION_OWNED_BY_ANOTHER_ACCOUNT") ||
+    message.includes("APP_ACCOUNT_TOKEN_MISMATCH")
+  )
+    return "이 Apple ID의 구매 내역이 다른 앱 계정에 이미 연결되어 있습니다. 해당 구매를 사용하려면 처음 구매한 앱 계정으로 로그인하거나, 다른 앱 계정 테스트에는 다른 Apple ID를 사용해주세요.";
+  if (message.includes("APP_ACCOUNT_TOKEN_MISSING"))
+    return "구매 계정 식별 정보가 없어 현재 앱 계정으로 검증할 수 없습니다. 앱을 완전히 종료한 뒤 다시 시도하고, 계속 실패하면 다른 Apple ID로 테스트해주세요.";
   if (message.includes("REWARDED_AD_ATTENDANCE_REQUIRED"))
     return "출석 체크 후 대기 시간 동안 한 번만 광고 보상을 받을 수 있습니다.";
   if (message.includes("REWARDED_AD_ALREADY_CLAIMED"))
@@ -6575,6 +6595,7 @@ function ChatRoom({
   const [chatLoadError, setChatLoadError] = useState("");
   const [chatReloadNonce, setChatReloadNonce] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadingOlderRef = useRef(false);
   const [hasOlderMessages, setHasOlderMessages] = useState(true);
   const [newMessagePreview, setNewMessagePreview] = useState<{
     name: string;
@@ -6590,12 +6611,17 @@ function ChatRoom({
       if (!composerFocusPreparedRef.current)
         keyboardOpenedAtBottomRef.current = nearBottomRef.current;
       setChatKeyboardVisible(true);
+      if (keyboardOpenedAtBottomRef.current)
+        requestAnimationFrame(() => scrollToLatestRef.current(false));
     });
     const didShow = Keyboard.addListener("keyboardDidShow", () => {
       setChatKeyboardVisible(true);
       if (keyboardOpenedAtBottomRef.current) {
         requestAnimationFrame(() => scrollToLatestRef.current(false));
+        setTimeout(() => scrollToLatestRef.current(false), 20);
         setTimeout(() => scrollToLatestRef.current(false), 40);
+        setTimeout(() => scrollToLatestRef.current(false), 120);
+        setTimeout(() => scrollToLatestRef.current(false), 260);
       }
     });
     const hide = Keyboard.addListener("keyboardDidHide", () => {
@@ -7204,7 +7230,7 @@ function ChatRoom({
   }, [isOwner, room.id]);
   const loadOlderMessages = async () => {
     if (
-      loadingOlder ||
+      loadingOlderRef.current ||
       !hasOlderMessages ||
       !isSupabaseConfigured ||
       !isUuid(room.id)
@@ -7214,6 +7240,9 @@ function ChatRoom({
       (item) => item.createdAt && !item.id.startsWith("pending-"),
     );
     if (!oldest?.createdAt) return;
+    prependHeightRef.current = scrollMetrics.current.contentHeight;
+    prependOffsetRef.current = scrollMetrics.current.offsetY;
+    loadingOlderRef.current = true;
     setLoadingOlder(true);
     try {
       const older = await listRoomMessages(
@@ -7225,11 +7254,6 @@ function ChatRoom({
         mapServerChatMessage(item, currentUserId),
       );
       setHasOlderMessages(older.length === olderMessagePageSize);
-      if (mapped.length > 0) {
-        prependHeightRef.current = scrollMetrics.current.contentHeight;
-        prependOffsetRef.current = scrollMetrics.current.offsetY;
-        prependAnchorRef.current = null;
-      }
       setMessages((current) => {
         return mergeChatMessages(mapped, current);
       });
@@ -7239,6 +7263,7 @@ function ChatRoom({
       prependAnchorRef.current = null;
       Alert.alert("이전 채팅 불러오기 실패", serverErrorMessage(error));
     } finally {
+      loadingOlderRef.current = false;
       setLoadingOlder(false);
     }
   };
@@ -7303,6 +7328,13 @@ function ChatRoom({
     composerFocusPreparedRef.current = true;
     // Reserve the banner slot before iOS starts its keyboard transition.
     setChatKeyboardVisible(true);
+    if (keyboardOpenedAtBottomRef.current) {
+      requestAnimationFrame(() => scrollToLatestRef.current(false));
+      setTimeout(() => scrollToLatestRef.current(false), 20);
+      setTimeout(() => scrollToLatestRef.current(false), 80);
+      setTimeout(() => scrollToLatestRef.current(false), 180);
+      setTimeout(() => scrollToLatestRef.current(false), 320);
+    }
   };
   useEffect(() => {
     initialScrollDone.current = false;
@@ -7519,14 +7551,27 @@ function ChatRoom({
             requestId: `pt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`,
           };
         }
-        if (typeof transferRoomPointsOnServer !== "function")
-          throw new Error("POINT_TRANSFER_CLIENT_NOT_READY");
-        const result = await transferRoomPointsOnServer({
+        const transferInput = {
           roomId: room.id,
           recipientUserId: target.userId,
           amount,
           requestId: pointTransferRequestRef.current.requestId,
+        };
+        if (!supabase) throw new Error("POINT_TRANSFER_CLIENT_NOT_READY");
+        const { data, error } = await supabase.rpc("transfer_room_points", {
+          p_room_id: transferInput.roomId,
+          p_recipient_user_id: transferInput.recipientUserId,
+          p_amount: transferInput.amount,
+          p_request_id: transferInput.requestId,
         });
+        if (error) throw error;
+        const row = Array.isArray(data) ? data[0] : data;
+        if (!row?.message_id || !Number.isFinite(Number(row?.point_balance)))
+          throw new Error("POINT_TRANSFER_INVALID_RESPONSE");
+        const result = {
+          pointBalance: Number(row.point_balance ?? 0),
+          messageId: row.message_id as string,
+        };
         id = result.messageId;
         if (typeof onPointBalanceChange === "function")
           onPointBalanceChange(result.pointBalance);
@@ -8425,8 +8470,6 @@ function ChatRoom({
         20000,
         "방 삭제 요청 시간이 초과되었습니다.",
       );
-      if (!(await confirmRoomDeleted()))
-        throw new Error("ROOM_DELETE_NOT_CONFIRMED");
       finishRoomDelete();
     } catch (error) {
       // A committed request can still lose its response. Reconcile with the
@@ -8472,7 +8515,6 @@ function ChatRoom({
       />
       {chatSearchOpen && (
         <View style={s.chatSearchBar}>
-          <Ionicons name="search" size={18} color={colors.textMuted} />
           <TextInput
             autoFocus
             value={chatSearch}
@@ -8493,10 +8535,26 @@ function ChatRoom({
             {chatSearchLoading ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
-              <Text style={s.chatSearchButtonText}>검색</Text>
+              <Ionicons
+                name="search"
+                size={18}
+                color={themeForeground(appTheme)}
+              />
             )}
           </Pressable>
-          <Text style={s.chatSearchCount}>
+          <Text
+            style={[
+              s.chatSearchCount,
+              {
+                color:
+                  appTheme.id === "white"
+                    ? "#1C1C1C"
+                    : appTheme.id === "dark"
+                      ? "#F2F2F2"
+                      : appTheme.accent,
+              },
+            ]}
+          >
             {chatSearchMatches.length
               ? `${chatSearchCursor + 1}/${chatSearchMatches.length}`
               : "0건"}
@@ -8557,6 +8615,7 @@ function ChatRoom({
             opacity: chatReady ? 1 : 0,
           }}
           contentContainerStyle={s.messages}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           onLayout={(event) => {
@@ -8638,7 +8697,7 @@ function ChatRoom({
               restoreScrollAfterPanelRef.current = false;
               chatScrollRef.current?.scrollToEnd({ animated: false });
               requestAnimationFrame(() => setChatReady(true));
-            } else if (nearBottomRef.current) scrollToLatest();
+            } else if (nearBottomRef.current) scrollToLatest(false);
           }}
         >
           {visibleMessages.map((item, index) => {
@@ -9162,6 +9221,9 @@ function ChatRoom({
                 bubbleColor={bubbleColor}
                 textColor={textColor}
                 backgroundColor={effectiveChatBackground}
+                bubbleProductId={bubbleProductId}
+                textProductId={textProductId}
+                backgroundProductId={backgroundProductId}
                 onBubbleColor={(color,productId)=>{setBubbleColor(color);setBubbleProductId(productId);}}
                 onTextColor={(color,productId)=>{setTextColor(color);setTextProductId(productId);}}
                 onBackgroundColor={(color,productId)=>{setChatBackground(color);setBackgroundProductId(productId);}}
@@ -14663,6 +14725,8 @@ function Settings({
     try {
       onSignedOut();
     } catch (error) {
+      const message = serverErrorMessage(error);
+      if (/SecureStore|Invalid key|Keys must/i.test(message)) return;
       setProcessingAccount(false);
       Alert.alert("로그아웃 실패", serverErrorMessage(error));
     }
@@ -16078,6 +16142,9 @@ function ComposerPanel({
   bubbleColor,
   textColor,
   backgroundColor,
+  bubbleProductId,
+  textProductId,
+  backgroundProductId,
   onBubbleColor,
   onTextColor,
   onBackgroundColor,
@@ -16100,6 +16167,9 @@ function ComposerPanel({
   bubbleColor: string;
   textColor: string;
   backgroundColor: string;
+  bubbleProductId?: string;
+  textProductId?: string;
+  backgroundProductId?: string;
   onBubbleColor: (value: string,productId?:string) => void;
   onTextColor: (value: string,productId?:string) => void;
   onBackgroundColor: (value: string,productId?:string) => void;
@@ -16216,6 +16286,8 @@ function ComposerPanel({
             label="채팅 배경"
             values={backgroundPalette}
             selected={backgroundColor}
+            selectedProductId={backgroundProductId}
+            defaultColor="#FFFFFF"
             onSelect={onBackgroundColor}
             entitlements={entitlements}
             onEntitlementsChange={onEntitlementsChange}
@@ -16225,6 +16297,8 @@ function ComposerPanel({
             label="말풍선 색상"
             values={bubblePalette}
             selected={bubbleColor}
+            selectedProductId={bubbleProductId}
+            defaultColor={appTheme.id === "dark" ? "#303030" : "#F5F5F5"}
             onSelect={onBubbleColor}
             onCustomColor={canAddCustomBubble ? () => onCustomColor("bubble") : undefined}
             entitlements={entitlements}
@@ -16234,6 +16308,8 @@ function ComposerPanel({
             label="텍스트 색상"
             values={textPalette}
             selected={textColor}
+            selectedProductId={textProductId}
+            defaultColor={appTheme.id === "dark" ? "#F2F2F2" : "#1C1C1C"}
             onSelect={onTextColor}
             onCustomColor={canAddCustomText ? () => onCustomColor("text") : undefined}
             entitlements={entitlements}
@@ -16467,6 +16543,8 @@ function ColorPicker({
   label,
   values,
   selected,
+  selectedProductId,
+  defaultColor,
   onSelect,
   onCustomColor,
   entitlements,
@@ -16475,12 +16553,41 @@ function ColorPicker({
   label: string;
   values: ColorProduct[];
   selected: string;
+  selectedProductId?: string;
+  defaultColor: string;
   onSelect: (value: string, productId?: string) => void;
   onCustomColor?: () => void;
   entitlements: ChatEntitlement[];
   onEntitlementsChange: (items: ChatEntitlement[]) => void;
 }) {
   const customEnabled = Boolean(onCustomColor);
+  const deleteCustom = (item: ColorProduct) => {
+    const productId = item.productId;
+    if (!productId || !isCustomChatProductId(productId)) return;
+    Alert.alert(
+      item.name,
+      `${item.name} 색상을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "삭제",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await expireMyChatEntitlement(productId);
+              const refreshed = await listActiveChatEntitlements();
+              onEntitlementsChange(refreshed);
+              if (selectedProductId === productId) {
+                onSelect(defaultColor, undefined);
+              }
+            } catch (error) {
+              Alert.alert("삭제 실패", serverErrorMessage(error));
+            }
+          },
+        },
+      ],
+    );
+  };
   const choose = (item: ColorProduct) => {
     if (item.price === 0) {
       onSelect(item.color, undefined);
@@ -16533,26 +16640,33 @@ function ColorPicker({
         <Text style={s.colorLabel}>{label}</Text>
       </View>
       <View style={s.colorOptions}>
-        {values.map((item) => (
-          <Pressable
-            accessibilityLabel={`${item.name} ${item.price}포인트`}
-            key={`${label}-${item.color}`}
-            onPress={() => choose(item)}
-            style={[
-              s.colorDot,
-              { backgroundColor: item.color },
-              selected === item.color && s.colorDotActive,
-            ]}
-          >
-            {selected === item.color && (
-              <Ionicons
-                name="checkmark"
-                size={14}
-                color={item.color === "#FFFFFF" ? "#1C1C1C" : "#FFF"}
-              />
-            )}
-          </Pressable>
-        ))}
+        {values.map((item) => {
+          const isSelected = item.productId
+            ? selectedProductId === item.productId
+            : !selectedProductId &&
+              selected.toUpperCase() === item.color.toUpperCase();
+          return (
+            <Pressable
+              accessibilityLabel={`${item.name} ${item.price}포인트`}
+              key={`${label}-${item.productId ?? item.color}`}
+              onPress={() => choose(item)}
+              onLongPress={() => deleteCustom(item)}
+              style={[
+                s.colorDot,
+                { backgroundColor: item.color },
+                isSelected && s.colorDotActive,
+              ]}
+            >
+              {isSelected && (
+                <Ionicons
+                  name="checkmark"
+                  size={14}
+                  color={item.color === "#FFFFFF" ? "#1C1C1C" : "#FFF"}
+                />
+              )}
+            </Pressable>
+          );
+        })}
         {customEnabled && (
           <Pressable
             accessibilityLabel={`${label} 커스텀 색상`}
@@ -17827,7 +17941,7 @@ const s = StyleSheet.create({
   },
   chatSearchButton: {
     height: 32,
-    paddingHorizontal: 12,
+    width: 42,
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",

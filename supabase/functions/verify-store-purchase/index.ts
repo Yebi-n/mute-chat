@@ -152,6 +152,7 @@ Deno.serve(async (request) => {
     transactionId,
     signedTransactionInfo,
     platform,
+    appAccountToken,
   } = await request.json().catch(() => ({}));
   if (typeof productId !== 'string' || typeof transactionId !== 'string')
     return Response.json({ error: 'INVALID_PURCHASE' }, { status: 400, headers: cors });
@@ -168,10 +169,17 @@ Deno.serve(async (request) => {
     if (tx.bundleId !== bundleId) throw new Error('BUNDLE_ID_MISMATCH');
     if (tx.productId !== productId) throw new Error('PRODUCT_ID_MISMATCH');
     if (String(tx.transactionId) !== verifiedTransactionId) throw new Error('TRANSACTION_ID_MISMATCH');
-    if (
-      accountThemeProducts.has(productId) &&
-      String(tx.appAccountToken ?? '').toLowerCase() !== authData.user.id.toLowerCase()
-    ) throw new Error('APP_ACCOUNT_TOKEN_MISMATCH');
+    const expectedAppAccountToken =
+      typeof appAccountToken === 'string' && appAccountToken.trim()
+        ? appAccountToken.toLowerCase()
+        : authData.user.id.toLowerCase();
+    const verifiedAppAccountToken =
+      typeof tx.appAccountToken === 'string'
+        ? tx.appAccountToken.toLowerCase()
+        : '';
+    if (!verifiedAppAccountToken) throw new Error('APP_ACCOUNT_TOKEN_MISSING');
+    if (verifiedAppAccountToken !== expectedAppAccountToken)
+      throw new Error('APP_ACCOUNT_TOKEN_MISMATCH');
     if (tx.revocationDate) throw new Error('TRANSACTION_REVOKED');
 
     let entitlementExpiresAt: string | null = null;
