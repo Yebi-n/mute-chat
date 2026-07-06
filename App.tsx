@@ -7401,7 +7401,9 @@ function ChatRoom({
     ]);
     setMessage("");
     setReplyTo(null);
-    scrollToLatest();
+    requestAnimationFrame(() => scrollToLatestRef.current(false));
+    setTimeout(() => scrollToLatestRef.current(false), 40);
+    setTimeout(() => scrollToLatestRef.current(false), 140);
     textSendQueueRef.current = textSendQueueRef.current
       .then(() => submitTextMessage(localId, text, reply))
       .catch(() => undefined);
@@ -8527,20 +8529,37 @@ function ChatRoom({
           <Pressable
             disabled={chatSearchLoading}
             onPress={runChatSearch}
-            style={[
-              s.chatSearchButton,
-              chatSearchLoading && s.chatSearchButtonDisabled,
-            ]}
+            style={s.chatSearchButtonWrap}
           >
-            {chatSearchLoading ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Ionicons
-                name="search"
-                size={18}
-                color={themeForeground(appTheme)}
-              />
-            )}
+            <LinearGradient
+              colors={
+                appTheme.id === "white"
+                  ? ["#F6F6F6", "#F6F6F6"]
+                  : appTheme.id === "dark"
+                    ? ["#222222", "#222222"]
+                    : ["#82B9C1", "#5DBB8C"]
+              }
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={[
+                s.chatSearchButton,
+                appTheme.id === "white" && s.chatSearchButtonWhite,
+                chatSearchLoading && s.chatSearchButtonDisabled,
+              ]}
+            >
+              {chatSearchLoading ? (
+                <ActivityIndicator
+                  size="small"
+                  color={appTheme.id === "white" ? "#1C1C1C" : "#fff"}
+                />
+              ) : (
+                <Ionicons
+                  name="search"
+                  size={18}
+                  color={appTheme.id === "white" ? "#1C1C1C" : "#fff"}
+                />
+              )}
+            </LinearGradient>
           </Pressable>
           <Text
             style={[
@@ -13985,7 +14004,7 @@ function EditRoom({
                    ["region", "지역별", false, undefined],
                    [
                       "adult",
-                      Platform.OS === "ios" ? "iOS에서 이용할 수 없는 기능입니다" : "성인",
+                      Platform.OS === "ios" ? "인증 필요" : "성인",
                       Platform.OS === "ios",
                       "현재 iOS에서 지원되지 않는 기능입니다.",
                    ],
@@ -17975,6 +17994,12 @@ const s = StyleSheet.create({
     textAlign: "left",
     letterSpacing: 0,
   },
+  chatSearchButtonWrap: {
+    height: 32,
+    width: 42,
+    borderRadius: 16,
+    overflow: "hidden",
+  },
   chatSearchButton: {
     height: 32,
     width: 42,
@@ -17982,6 +18007,10 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.mint700,
+  },
+  chatSearchButtonWhite: {
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   chatSearchButtonDisabled: { opacity: 0.55 },
   chatSearchButtonText: { color: "#fff", fontSize: 12, fontWeight: "800" },
@@ -20139,8 +20168,8 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginTop: 14,
-    marginBottom: 22,
+    marginTop: 15,
+    marginBottom: 24,
     maxWidth: "100%",
   },
   unreadLine: { flex: 1, height: 1, backgroundColor: "#D7DDD9" },
