@@ -257,11 +257,6 @@ const ChatStack = createNativeStackNavigator<ChatStackParamList>();
 type ComposerTool = "media" | "style" | "secret" | null;
 const CHAT_COLLAPSE_CHAR_THRESHOLD = 140;
 const CHAT_COLLAPSE_LINE_LIMIT = 4;
-const COMPOSER_LINE_HEIGHT = 20;
-const COMPOSER_MIN_HEIGHT = 40;
-const COMPOSER_MAX_LINES = 7;
-const COMPOSER_MAX_HEIGHT =
-  COMPOSER_MIN_HEIGHT + COMPOSER_LINE_HEIGHT * (COMPOSER_MAX_LINES - 1);
 const DEMO_ROOM_ID = "green-table";
 const SCREENSHOT_DEMO_ROOM_IDS = new Set(
   screenshotDemoRooms.map((room) => room.id),
@@ -5158,13 +5153,15 @@ function MainScreen({
         },
       ],
     );
-  const reportVisibleRoom = (room: Room) => {
-    void confirmReportSubmission({
+  const reportVisibleRoom = async (room: Room) => {
+    const submitted = await confirmReportSubmission({
       targetType: "room",
       targetId: room.id,
       reason: "other",
       detail: room.name,
     });
+    if (!submitted) return;
+    Alert.alert("신고 접수 완료", "방 신고가 접수되었습니다.");
   };
   const filtered = useMemo(
     () =>
@@ -6585,13 +6582,8 @@ function ChatRoom({
   const [chatSearchLoading, setChatSearchLoading] = useState(false);
   const [chatSearchNavigating, setChatSearchNavigating] = useState(false);
   const [chatSearchCursor, setChatSearchCursor] = useState(0);
-  const [composerInputHeight, setComposerInputHeight] = useState(
-    COMPOSER_MIN_HEIGHT,
-  );
   const chatScrollRef = useRef<React.ElementRef<typeof RNScrollView> | null>(null);
   const composerInputRef = useRef<React.ElementRef<typeof RNTextInput> | null>(null);
-  const composerSingleLineHeightRef = useRef<number | null>(null);
-  const composerMeasuredTextRef = useRef<string | null>(null);
   const chatSearchNavigationSeqRef = useRef(0);
   const chatSearchNavigationTimerRefs = useRef<ReturnType<typeof setTimeout>[]>(
     [],
@@ -7432,8 +7424,6 @@ function ChatRoom({
       },
     ]);
     setMessage("");
-    composerMeasuredTextRef.current = null;
-    setComposerInputHeight(COMPOSER_MIN_HEIGHT);
     setReplyTo(null);
     requestAnimationFrame(() => scrollToLatestRef.current(false));
     setTimeout(() => scrollToLatestRef.current(false), 40);
@@ -9398,57 +9388,17 @@ function ChatRoom({
                 <TextInput
                   ref={composerInputRef}
                   value={message}
-                  multiline
-                  blurOnSubmit={false}
-                  scrollEnabled={composerInputHeight >= COMPOSER_MAX_HEIGHT}
                   onPressIn={prepareComposerFocus}
                   onFocus={() => {
                     prepareComposerFocus();
                     focusComposer();
                   }}
                   onChangeText={setMessage}
-                  onContentSizeChange={(event) => {
-                    if (composerMeasuredTextRef.current === message) return;
-                    composerMeasuredTextRef.current = message;
-
-                    const measuredHeight = Math.max(
-                      1,
-                      Math.round(event.nativeEvent.contentSize.height),
-                    );
-                    if (!message) {
-                      composerSingleLineHeightRef.current = measuredHeight;
-                      if (composerInputHeight !== COMPOSER_MIN_HEIGHT)
-                        setComposerInputHeight(COMPOSER_MIN_HEIGHT);
-                      return;
-                    }
-
-                    const singleLineHeight =
-                      composerSingleLineHeightRef.current ?? measuredHeight;
-                    const measuredLines = Math.max(
-                      1,
-                      Math.round(
-                        (measuredHeight - singleLineHeight) /
-                          COMPOSER_LINE_HEIGHT,
-                      ) + 1,
-                    );
-                    const explicitLines = message.split("\n").length;
-                    const lines = Math.min(
-                      COMPOSER_MAX_LINES,
-                      Math.max(measuredLines, explicitLines),
-                    );
-                    const nextHeight =
-                      COMPOSER_MIN_HEIGHT +
-                      (lines - 1) * COMPOSER_LINE_HEIGHT;
-                    if (nextHeight !== composerInputHeight) {
-                      setComposerInputHeight(nextHeight);
-                    }
-                  }}
                   onSubmitEditing={send}
                   placeholder="메시지를 입력해주세요."
                   placeholderTextColor={colors.textMuted}
                   style={[
                     s.composerInput,
-                    { height: composerInputHeight },
                     Platform.OS === "web" &&
                       ({ outlineStyle: "none" } as object),
                   ]}
@@ -19441,17 +19391,13 @@ const s = StyleSheet.create({
   composerInput: {
     flex: 1,
     minWidth: 0,
-    minHeight: COMPOSER_MIN_HEIGHT,
-    maxHeight: COMPOSER_MAX_HEIGHT,
+    height: 40,
     borderRadius: 20,
     backgroundColor: colors.gray050,
     paddingHorizontal: 13,
-    paddingVertical: 10,
     color: colors.text,
     fontSize: 13,
     textAlign: "left",
-    lineHeight: COMPOSER_LINE_HEIGHT,
-    textAlignVertical: "top",
     letterSpacing: 0,
   },
   send: { width: 36, height: 36, borderRadius: 18, overflow: "hidden" },
