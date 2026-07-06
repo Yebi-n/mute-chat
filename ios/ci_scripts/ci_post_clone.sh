@@ -62,35 +62,64 @@ echo "Installing CocoaPods dependencies."
 # Xcode Cloud can restore stale local podspecs after npm dependencies change.
 # Rebuild the sandbox and synchronize all path-based Expo pods in one pass.
 rm -rf Pods
+
+# React Native's Hermes podspec downloads Debug and Release archives while
+# CocoaPods is resolving the pod. Xcode Cloud occasionally drops those Maven
+# connections, and CocoaPods then exits before our post-install repair can run.
+# Pre-warm the exact cache files the podspec checks so pod update does not need
+# to perform the fragile download itself.
+HERMES_VERSION="$(sed -n 's/^  - hermes-engine (\([^)]*\)).*/\1/p' Podfile.lock | head -n 1)"
+if [ -z "$HERMES_VERSION" ]; then
+  HERMES_VERSION="$(sed -n 's/^HERMES_V1_VERSION_NAME=//p' "$REPOSITORY_PATH/node_modules/react-native/sdks/hermes-engine/version.properties" | head -n 1)"
+fi
+if [ -z "$HERMES_VERSION" ]; then
+  echo "error: Unable to resolve Hermes version before CocoaPods install." >&2
+  exit 1
+fi
+
+HERMES_ARTIFACT_DIR="$REPOSITORY_PATH/ios/Pods/hermes-engine-artifacts"
+mkdir -p "$HERMES_ARTIFACT_DIR"
+
+download_hermes_archive() {
+  BUILD_TYPE="$1"
+  TARGET_ARCHIVE="$HERMES_ARTIFACT_DIR/hermes-ios-${HERMES_VERSION}-${BUILD_TYPE}.tar.gz"
+  if [ -s "$TARGET_ARCHIVE" ] && tar -tzf "$TARGET_ARCHIVE" >/dev/null 2>&1; then
+    echo "Hermes ${BUILD_TYPE} archive already cached: $TARGET_ARCHIVE"
+    return 0
+  fi
+
+  TEMP_ARCHIVE="${TARGET_ARCHIVE}.download"
+  rm -f "$TEMP_ARCHIVE"
+  for MAVEN_BASE in "https://repo1.maven.org/maven2" "https://repo.maven.apache.org/maven2"; do
+    HERMES_URL="${MAVEN_BASE}/com/facebook/hermes/hermes-ios/${HERMES_VERSION}/hermes-ios-${HERMES_VERSION}-hermes-ios-${BUILD_TYPE}.tar.gz"
+    echo "Downloading Hermes ${BUILD_TYPE} archive from ${HERMES_URL}"
+    if curl --fail --location \
+      --retry 8 --retry-all-errors --retry-delay 3 \
+      --connect-timeout 20 \
+      "$HERMES_URL" \
+      --output "$TEMP_ARCHIVE"; then
+      tar -tzf "$TEMP_ARCHIVE" >/dev/null
+      mv "$TEMP_ARCHIVE" "$TARGET_ARCHIVE"
+      echo "Hermes ${BUILD_TYPE} archive cached: $TARGET_ARCHIVE"
+      return 0
+    fi
+    rm -f "$TEMP_ARCHIVE"
+  done
+
+  echo "error: Failed to download Hermes ${BUILD_TYPE} archive." >&2
+  exit 1
+}
+
+download_hermes_archive debug
+download_hermes_archive release
+
 pod update --no-repo-update --verbose
 
 # React Native downloads both Debug and Release Hermes archives while resolving
 # the podspec. Its upstream helper does not fail the pod install when one curl
 # request is interrupted, which leaves Xcode archive builds without the Release
 # xcframework. Validate and repair that artifact after CocoaPods finishes.
-HERMES_VERSION="$(sed -n 's/^  - hermes-engine (\([^)]*\)).*/\1/p' Podfile.lock | head -n 1)"
-if [ -z "$HERMES_VERSION" ]; then
-  echo "error: Unable to resolve Hermes version from Podfile.lock." >&2
-  exit 1
-fi
+download_hermes_archive debug
+download_hermes_archive release
 
-HERMES_VERSION_LOWER="$(printf '%s' "$HERMES_VERSION" | tr '[:upper:]' '[:lower:]')"
-HERMES_ARTIFACT_DIR="$REPOSITORY_PATH/ios/Pods/hermes-engine-artifacts"
-HERMES_RELEASE_ARCHIVE="$HERMES_ARTIFACT_DIR/hermes-ios-${HERMES_VERSION_LOWER}-release.tar.gz"
-HERMES_RELEASE_URL="https://repo1.maven.org/maven2/com/facebook/hermes/hermes-ios/${HERMES_VERSION}/hermes-ios-${HERMES_VERSION}-hermes-ios-release.tar.gz"
-
-if [ ! -s "$HERMES_RELEASE_ARCHIVE" ] || ! tar -tzf "$HERMES_RELEASE_ARCHIVE" >/dev/null 2>&1; then
-  echo "Repairing missing Hermes Release archive: $HERMES_VERSION"
-  mkdir -p "$HERMES_ARTIFACT_DIR"
-  HERMES_TEMP_ARCHIVE="${HERMES_RELEASE_ARCHIVE}.download"
-  rm -f "$HERMES_TEMP_ARCHIVE"
-  curl --fail --location \
-    --retry 5 --retry-all-errors --retry-delay 2 \
-    --connect-timeout 20 \
-    "$HERMES_RELEASE_URL" \
-    --output "$HERMES_TEMP_ARCHIVE"
-  tar -tzf "$HERMES_TEMP_ARCHIVE" >/dev/null
-  mv "$HERMES_TEMP_ARCHIVE" "$HERMES_RELEASE_ARCHIVE"
-fi
-
-echo "Hermes Release archive ready: $HERMES_RELEASE_ARCHIVE"
+echo "Hermes archives ready in: $HERMES_ARTIFACT_DIR"
