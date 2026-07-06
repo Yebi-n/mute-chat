@@ -16,7 +16,7 @@ import * as ScreenCapture from "expo-screen-capture";
 import * as SecureStore from "expo-secure-store";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import ExternalColorPicker, {
   BrightnessSlider,
   InputWidget,
@@ -705,6 +705,67 @@ function Pressable(props: AppPressableProps) {
           : undefined
       }
     />
+  );
+}
+
+function SwipeReplyBubble({
+  enabled,
+  onReply,
+  children,
+}: {
+  enabled: boolean;
+  onReply: () => void;
+  children: ReactNode;
+}) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const repliedRef = useRef(false);
+  const reset = useCallback(() => {
+    Animated.spring(translateX, {
+      toValue: 0,
+      useNativeDriver: true,
+      bounciness: 0,
+      speed: 18,
+    }).start(() => {
+      repliedRef.current = false;
+    });
+  }, [translateX]);
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          enabled && gesture.dx < -12 && Math.abs(gesture.dy) < 18,
+        onPanResponderGrant: () => {
+          repliedRef.current = false;
+        },
+        onPanResponderMove: (_event, gesture) => {
+          if (!enabled) return;
+          translateX.setValue(Math.max(-72, Math.min(0, gesture.dx)));
+        },
+        onPanResponderRelease: (_event, gesture) => {
+          if (
+            enabled &&
+            !repliedRef.current &&
+            gesture.dx < -54 &&
+            Math.abs(gesture.dy) < 52
+          ) {
+            repliedRef.current = true;
+            onReply();
+          }
+          reset();
+        },
+        onPanResponderTerminate: reset,
+      }),
+    [enabled, onReply, reset, translateX],
+  );
+
+  return (
+    <Animated.View
+      {...(enabled ? panResponder.panHandlers : {})}
+      style={{ transform: [{ translateX }] }}
+    >
+      {children}
+    </Animated.View>
   );
 }
 
@@ -5153,6 +5214,14 @@ function MainScreen({
         },
       ],
     );
+  const reportVisibleRoom = (room: Room) => {
+    void confirmReportSubmission({
+      targetType: "room",
+      targetId: room.id,
+      reason: "other",
+      detail: room.name,
+    });
+  };
   const filtered = useMemo(
     () =>
       roomData
@@ -5404,6 +5473,15 @@ function MainScreen({
                             text: "서버로 신고",
                             style: "destructive" as const,
                             onPress: () => onAdminReportRoom(item),
+                          },
+                        ]
+                      : []),
+                    ...(bottomTab !== "myRooms"
+                      ? [
+                          {
+                            text: "신고하기",
+                            style: "destructive" as const,
+                            onPress: () => reportVisibleRoom(item),
                           },
                         ]
                       : []),
@@ -6561,9 +6639,15 @@ function ChatRoom({
   const [chatSearch, setChatSearch] = useState("");
   const [chatSearchResults, setChatSearchResults] = useState<ChatSearchResult[]>([]);
   const [chatSearchLoading, setChatSearchLoading] = useState(false);
+  const [chatSearchNavigating, setChatSearchNavigating] = useState(false);
   const [chatSearchCursor, setChatSearchCursor] = useState(0);
+  const [composerInputHeight, setComposerInputHeight] = useState(40);
   const chatScrollRef = useRef<React.ElementRef<typeof RNScrollView> | null>(null);
   const composerInputRef = useRef<React.ElementRef<typeof RNTextInput> | null>(null);
+  const chatSearchNavigationSeqRef = useRef(0);
+  const chatSearchNavigationTimerRefs = useRef<ReturnType<typeof setTimeout>[]>(
+    [],
+  );
   const mountedRef = useRef(true);
   const roomSessionRef = useRef(0);
   const scrollMetrics = useRef({
@@ -7400,6 +7484,7 @@ function ChatRoom({
       },
     ]);
     setMessage("");
+    setComposerInputHeight(40);
     setReplyTo(null);
     requestAnimationFrame(() => scrollToLatestRef.current(false));
     setTimeout(() => scrollToLatestRef.current(false), 40);
@@ -7903,6 +7988,20 @@ function ChatRoom({
       return false;
     }
   };
+  const startReplyToMessage = (
+    item: Extract<ChatMessage, { kind: "text" | "image" }>,
+  ) => {
+    setReplyTo({
+      id: item.id,
+      name: item.name,
+      text: item.kind === "image" ? "?ъ쭊" : item.text,
+    });
+    setTool(null);
+    cancelChatSearchNavigation();
+    if (chatSearchOpen) setChatSearchOpen(false);
+    requestAnimationFrame(() => composerInputRef.current?.focus());
+    setTimeout(() => composerInputRef.current?.focus(), 80);
+  };
   const messageActions = (
     item: Extract<ChatMessage, { kind: "text" | "secret" | "image" }>,
   ) => {
@@ -8157,16 +8256,54 @@ function ChatRoom({
   ]);
   const chatSearchMatches = chatSearchResults;
   const activeSearchMessage = chatSearchMatches[chatSearchCursor];
+  const chatSearchBusy = chatSearchLoading || chatSearchNavigating;
+  const clearChatSearchNavigationTimers = () => {
+    chatSearchNavigationTimerRefs.current.forEach((timer) =>
+      clearTimeout(timer),
+    );
+    chatSearchNavigationTimerRefs.current = [];
+  };
+  const cancelChatSearchNavigation = () => {
+    chatSearchNavigationSeqRef.current += 1;
+    clearChatSearchNavigationTimers();
+    setChatSearchNavigating(false);
+  };
+  const retryScrollToMessagePosition = (messageId: string, seq: number) => {
+    clearChatSearchNavigationTimers();
+    const delays = [40, 120, 240, 420];
+    delays.forEach((delay, index) => {
+      const timer = setTimeout(() => {
+        if (chatSearchNavigationSeqRef.current !== seq) return;
+        const moved = scrollToMessagePosition(messageId);
+        if (moved || index === delays.length - 1) {
+          clearChatSearchNavigationTimers();
+          setChatSearchNavigating(false);
+        }
+      }, delay);
+      chatSearchNavigationTimerRefs.current.push(timer);
+    });
+  };
+  useEffect(() => () => clearChatSearchNavigationTimers(), []);
   useEffect(() => {
     setChatSearchCursor(0);
     setChatSearchResults([]);
   }, [chatSearch]);
   useEffect(() => {
-    if (!activeSearchMessage) return;
-    void jumpToMessage(activeSearchMessage.id);
+    if (!activeSearchMessage) {
+      setChatSearchNavigating(false);
+      return;
+    }
+    const seq = chatSearchNavigationSeqRef.current + 1;
+    chatSearchNavigationSeqRef.current = seq;
+    setChatSearchNavigating(true);
+    void jumpToMessage(activeSearchMessage.id).finally(() => {
+      if (chatSearchNavigationSeqRef.current !== seq) return;
+      retryScrollToMessagePosition(activeSearchMessage.id, seq);
+    });
   }, [activeSearchMessage?.id]);
   const runChatSearch = async () => {
     const keyword = chatSearch.trim();
+    cancelChatSearchNavigation();
     if (keyword.length < 2) {
       setChatSearchResults([]);
       setChatSearchCursor(0);
@@ -8212,7 +8349,7 @@ function ChatRoom({
     }
   };
   const moveSearch = (delta: number) => {
-    if (!chatSearchMatches.length) return;
+    if (!chatSearchMatches.length || chatSearchBusy) return;
     setChatSearchCursor(
       (value) =>
         (value + delta + chatSearchMatches.length) % chatSearchMatches.length,
@@ -8527,7 +8664,7 @@ function ChatRoom({
             style={s.chatSearchInput}
           />
           <Pressable
-            disabled={chatSearchLoading}
+            disabled={chatSearchBusy}
             onPress={runChatSearch}
             style={s.chatSearchButtonWrap}
           >
@@ -8544,10 +8681,10 @@ function ChatRoom({
               style={[
                 s.chatSearchButton,
                 appTheme.id === "white" && s.chatSearchButtonWhite,
-                chatSearchLoading && s.chatSearchButtonDisabled,
+                chatSearchBusy && s.chatSearchButtonDisabled,
               ]}
             >
-              {chatSearchLoading ? (
+              {chatSearchBusy ? (
                 <ActivityIndicator
                   size="small"
                   color={appTheme.id === "white" ? "#1C1C1C" : "#fff"}
@@ -8579,7 +8716,7 @@ function ChatRoom({
               : "0건"}
           </Text>
           <Pressable
-            disabled={!chatSearchMatches.length}
+            disabled={!chatSearchMatches.length || chatSearchBusy}
             onPress={() => moveSearch(1)}
             style={s.chatSearchNav}
           >
@@ -8587,12 +8724,14 @@ function ChatRoom({
               name="chevron-up"
               size={19}
               color={
-                chatSearchMatches.length ? colors.textSubtle : colors.gray300
+                chatSearchMatches.length && !chatSearchBusy
+                  ? colors.textSubtle
+                  : colors.gray300
               }
             />
           </Pressable>
           <Pressable
-            disabled={!chatSearchMatches.length}
+            disabled={!chatSearchMatches.length || chatSearchBusy}
             onPress={() => moveSearch(-1)}
             style={s.chatSearchNav}
           >
@@ -8600,12 +8739,15 @@ function ChatRoom({
               name="chevron-down"
               size={19}
               color={
-                chatSearchMatches.length ? colors.textSubtle : colors.gray300
+                chatSearchMatches.length && !chatSearchBusy
+                  ? colors.textSubtle
+                  : colors.gray300
               }
             />
           </Pressable>
           <Pressable
             onPress={() => {
+              cancelChatSearchNavigation();
               setChatSearchOpen(false);
               setChatSearch("");
               setChatSearchResults([]);
@@ -8957,6 +9099,14 @@ function ChatRoom({
                       ]}
                     >
                       {item.mine && deliveryMeta}
+                      <SwipeReplyBubble
+                        enabled={item.kind === "text" || item.kind === "image"}
+                        onReply={() => {
+                          if (item.kind === "text" || item.kind === "image") {
+                            startReplyToMessage(item);
+                          }
+                        }}
+                      >
                       <Pressable
                         preserveTheme
                         onLongPress={() =>
@@ -9120,6 +9270,7 @@ function ChatRoom({
                           </View>
                         )}
                       </Pressable>
+                      </SwipeReplyBubble>
                       {!item.mine && deliveryMeta}
                     </View>
                   </View>
@@ -9321,17 +9472,33 @@ function ChatRoom({
                 <TextInput
                   ref={composerInputRef}
                   value={message}
+                  multiline
+                  blurOnSubmit={false}
+                  scrollEnabled={composerInputHeight >= 96}
                   onPressIn={prepareComposerFocus}
                   onFocus={() => {
                     prepareComposerFocus();
                     focusComposer();
                   }}
                   onChangeText={setMessage}
+                  onContentSizeChange={(event) => {
+                    const nextHeight = Math.min(
+                      96,
+                      Math.max(
+                        40,
+                        Math.ceil(event.nativeEvent.contentSize.height + 4),
+                      ),
+                    );
+                    if (Math.abs(nextHeight - composerInputHeight) > 1) {
+                      setComposerInputHeight(nextHeight);
+                    }
+                  }}
                   onSubmitEditing={send}
                   placeholder="메시지를 입력해주세요."
                   placeholderTextColor={colors.textMuted}
                   style={[
                     s.composerInput,
+                    { height: composerInputHeight },
                     Platform.OS === "web" &&
                       ({ outlineStyle: "none" } as object),
                   ]}
@@ -19324,13 +19491,16 @@ const s = StyleSheet.create({
   composerInput: {
     flex: 1,
     minWidth: 0,
-    height: 40,
+    minHeight: 40,
+    maxHeight: 96,
     borderRadius: 20,
     backgroundColor: colors.gray050,
     paddingHorizontal: 13,
+    paddingVertical: 10,
     color: colors.text,
     fontSize: 13,
     textAlign: "left",
+    textAlignVertical: "center",
     letterSpacing: 0,
   },
   send: { width: 36, height: 36, borderRadius: 18, overflow: "hidden" },
