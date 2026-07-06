@@ -2597,10 +2597,17 @@ function AuthenticatedApp({
         roomsResult.status === "fulfilled" &&
         reportedRoomsResult.status === "fulfilled"
       ) {
+        const activeRoomIds = new Set(
+          activeIdsResult.status === "fulfilled" ? activeIdsResult.value : [],
+        );
         const hiddenRoomIds = new Set(reportedRoomsResult.value);
         const mapped = roomsResult.value
           .map(mapServerRoom)
-          .filter((room) => room.id !== DEMO_ROOM_ID && !hiddenRoomIds.has(room.id));
+          .filter(
+            (room) =>
+              room.id !== DEMO_ROOM_ID &&
+              (!hiddenRoomIds.has(room.id) || activeRoomIds.has(room.id)),
+          );
         setRoomData(mapped);
         setSelectedRoom((current) =>
           current.id === DEMO_ROOM_ID && mapped.length ? mapped[0] : current,
@@ -3113,9 +3120,10 @@ function AuthenticatedApp({
   const effectiveAdminReadOnly = Boolean(
     adminReadOnly || (isSuperAdmin && !joinedIds.includes(selectedRoom.id)),
   );
+  const joinedIdSet = new Set(joinedIds);
   const hiddenRoomIds = new Set(reportedRoomIds);
   const enrichedRoomData = roomData
-    .filter((room) => !hiddenRoomIds.has(room.id))
+    .filter((room) => !hiddenRoomIds.has(room.id) || joinedIdSet.has(room.id))
     .map((room) => {
     const summary = roomSummaries[room.id];
     return {
@@ -5117,7 +5125,12 @@ function MainScreen({
     }
   };
   const leaveJoinedRoom = (room: Room, report = false) =>
-    Alert.alert(
+    report
+      ? Alert.alert(
+          "신고 불가",
+          "참여 중인 방은 신고할 수 없습니다. 방에서 나간 뒤 신고해 주세요.",
+        )
+      : Alert.alert(
       report ? "신고하고 나가기" : "방 나가기",
       report
         ? "정말 신고하시겠습니까?\n허위 신고 시 서비스 이용에 불이익을 받을 수 있습니다."
@@ -5400,11 +5413,6 @@ function MainScreen({
                             text: "나가기",
                             style: "destructive" as const,
                             onPress: () => leaveJoinedRoom(item),
-                          },
-                          {
-                            text: "신고하고 나가기",
-                            style: "destructive" as const,
-                            onPress: () => leaveJoinedRoom(item, true),
                           },
                         ]
                       : []),
@@ -5991,6 +5999,13 @@ function RoomDetail({
   };
   const onReport = async () => {
     setMenuOpen(false);
+    if (joined) {
+      Alert.alert(
+        "신고 불가",
+        "참여 중인 방은 신고할 수 없습니다. 방에서 나간 뒤 신고해 주세요.",
+      );
+      return;
+    }
     if (!isUuid(room.id)) {
       Alert.alert("신고 불가", "서버에 생성된 방만 신고할 수 있습니다.");
       return;
