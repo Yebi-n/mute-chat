@@ -16,7 +16,7 @@ import * as ScreenCapture from "expo-screen-capture";
 import * as SecureStore from "expo-secure-store";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import type { ComponentProps, ReactNode } from "react";
+import type { ComponentProps } from "react";
 import ExternalColorPicker, {
   BrightnessSlider,
   InputWidget,
@@ -257,6 +257,11 @@ const ChatStack = createNativeStackNavigator<ChatStackParamList>();
 type ComposerTool = "media" | "style" | "secret" | null;
 const CHAT_COLLAPSE_CHAR_THRESHOLD = 140;
 const CHAT_COLLAPSE_LINE_LIMIT = 4;
+const COMPOSER_LINE_HEIGHT = 20;
+const COMPOSER_MIN_HEIGHT = 40;
+const COMPOSER_MAX_LINES = 7;
+const COMPOSER_MAX_HEIGHT =
+  COMPOSER_MIN_HEIGHT + COMPOSER_LINE_HEIGHT * (COMPOSER_MAX_LINES - 1);
 const DEMO_ROOM_ID = "green-table";
 const SCREENSHOT_DEMO_ROOM_IDS = new Set(
   screenshotDemoRooms.map((room) => room.id),
@@ -705,67 +710,6 @@ function Pressable(props: AppPressableProps) {
           : undefined
       }
     />
-  );
-}
-
-function SwipeReplyBubble({
-  enabled,
-  onReply,
-  children,
-}: {
-  enabled: boolean;
-  onReply: () => void;
-  children: ReactNode;
-}) {
-  const translateX = useRef(new Animated.Value(0)).current;
-  const repliedRef = useRef(false);
-  const reset = useCallback(() => {
-    Animated.spring(translateX, {
-      toValue: 0,
-      useNativeDriver: true,
-      bounciness: 0,
-      speed: 18,
-    }).start(() => {
-      repliedRef.current = false;
-    });
-  }, [translateX]);
-
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_event, gesture) =>
-          enabled && gesture.dx < -12 && Math.abs(gesture.dy) < 18,
-        onPanResponderGrant: () => {
-          repliedRef.current = false;
-        },
-        onPanResponderMove: (_event, gesture) => {
-          if (!enabled) return;
-          translateX.setValue(Math.max(-72, Math.min(0, gesture.dx)));
-        },
-        onPanResponderRelease: (_event, gesture) => {
-          if (
-            enabled &&
-            !repliedRef.current &&
-            gesture.dx < -54 &&
-            Math.abs(gesture.dy) < 52
-          ) {
-            repliedRef.current = true;
-            onReply();
-          }
-          reset();
-        },
-        onPanResponderTerminate: reset,
-      }),
-    [enabled, onReply, reset, translateX],
-  );
-
-  return (
-    <Animated.View
-      {...(enabled ? panResponder.panHandlers : {})}
-      style={{ transform: [{ translateX }] }}
-    >
-      {children}
-    </Animated.View>
   );
 }
 
@@ -6641,9 +6585,13 @@ function ChatRoom({
   const [chatSearchLoading, setChatSearchLoading] = useState(false);
   const [chatSearchNavigating, setChatSearchNavigating] = useState(false);
   const [chatSearchCursor, setChatSearchCursor] = useState(0);
-  const [composerInputHeight, setComposerInputHeight] = useState(40);
+  const [composerInputHeight, setComposerInputHeight] = useState(
+    COMPOSER_MIN_HEIGHT,
+  );
   const chatScrollRef = useRef<React.ElementRef<typeof RNScrollView> | null>(null);
   const composerInputRef = useRef<React.ElementRef<typeof RNTextInput> | null>(null);
+  const composerSingleLineHeightRef = useRef<number | null>(null);
+  const composerMeasuredTextRef = useRef<string | null>(null);
   const chatSearchNavigationSeqRef = useRef(0);
   const chatSearchNavigationTimerRefs = useRef<ReturnType<typeof setTimeout>[]>(
     [],
@@ -7484,7 +7432,8 @@ function ChatRoom({
       },
     ]);
     setMessage("");
-    setComposerInputHeight(40);
+    composerMeasuredTextRef.current = null;
+    setComposerInputHeight(COMPOSER_MIN_HEIGHT);
     setReplyTo(null);
     requestAnimationFrame(() => scrollToLatestRef.current(false));
     setTimeout(() => scrollToLatestRef.current(false), 40);
@@ -7987,20 +7936,6 @@ function ChatRoom({
       Alert.alert("저장 실패", serverErrorMessage(error));
       return false;
     }
-  };
-  const startReplyToMessage = (
-    item: Extract<ChatMessage, { kind: "text" | "image" }>,
-  ) => {
-    setReplyTo({
-      id: item.id,
-      name: item.name,
-      text: item.kind === "image" ? "?ъ쭊" : item.text,
-    });
-    setTool(null);
-    cancelChatSearchNavigation();
-    if (chatSearchOpen) setChatSearchOpen(false);
-    requestAnimationFrame(() => composerInputRef.current?.focus());
-    setTimeout(() => composerInputRef.current?.focus(), 80);
   };
   const messageActions = (
     item: Extract<ChatMessage, { kind: "text" | "secret" | "image" }>,
@@ -9099,14 +9034,6 @@ function ChatRoom({
                       ]}
                     >
                       {item.mine && deliveryMeta}
-                      <SwipeReplyBubble
-                        enabled={item.kind === "text" || item.kind === "image"}
-                        onReply={() => {
-                          if (item.kind === "text" || item.kind === "image") {
-                            startReplyToMessage(item);
-                          }
-                        }}
-                      >
                       <Pressable
                         preserveTheme
                         onLongPress={() =>
@@ -9270,7 +9197,6 @@ function ChatRoom({
                           </View>
                         )}
                       </Pressable>
-                      </SwipeReplyBubble>
                       {!item.mine && deliveryMeta}
                     </View>
                   </View>
@@ -9474,7 +9400,7 @@ function ChatRoom({
                   value={message}
                   multiline
                   blurOnSubmit={false}
-                  scrollEnabled={composerInputHeight >= 96}
+                  scrollEnabled={composerInputHeight >= COMPOSER_MAX_HEIGHT}
                   onPressIn={prepareComposerFocus}
                   onFocus={() => {
                     prepareComposerFocus();
@@ -9482,14 +9408,38 @@ function ChatRoom({
                   }}
                   onChangeText={setMessage}
                   onContentSizeChange={(event) => {
-                    const nextHeight = Math.min(
-                      96,
-                      Math.max(
-                        40,
-                        Math.ceil(event.nativeEvent.contentSize.height + 4),
-                      ),
+                    if (composerMeasuredTextRef.current === message) return;
+                    composerMeasuredTextRef.current = message;
+
+                    const measuredHeight = Math.max(
+                      1,
+                      Math.round(event.nativeEvent.contentSize.height),
                     );
-                    if (Math.abs(nextHeight - composerInputHeight) > 1) {
+                    if (!message) {
+                      composerSingleLineHeightRef.current = measuredHeight;
+                      if (composerInputHeight !== COMPOSER_MIN_HEIGHT)
+                        setComposerInputHeight(COMPOSER_MIN_HEIGHT);
+                      return;
+                    }
+
+                    const singleLineHeight =
+                      composerSingleLineHeightRef.current ?? measuredHeight;
+                    const measuredLines = Math.max(
+                      1,
+                      Math.round(
+                        (measuredHeight - singleLineHeight) /
+                          COMPOSER_LINE_HEIGHT,
+                      ) + 1,
+                    );
+                    const explicitLines = message.split("\n").length;
+                    const lines = Math.min(
+                      COMPOSER_MAX_LINES,
+                      Math.max(measuredLines, explicitLines),
+                    );
+                    const nextHeight =
+                      COMPOSER_MIN_HEIGHT +
+                      (lines - 1) * COMPOSER_LINE_HEIGHT;
+                    if (nextHeight !== composerInputHeight) {
                       setComposerInputHeight(nextHeight);
                     }
                   }}
@@ -19491,8 +19441,8 @@ const s = StyleSheet.create({
   composerInput: {
     flex: 1,
     minWidth: 0,
-    minHeight: 40,
-    maxHeight: 96,
+    minHeight: COMPOSER_MIN_HEIGHT,
+    maxHeight: COMPOSER_MAX_HEIGHT,
     borderRadius: 20,
     backgroundColor: colors.gray050,
     paddingHorizontal: 13,
@@ -19500,7 +19450,8 @@ const s = StyleSheet.create({
     color: colors.text,
     fontSize: 13,
     textAlign: "left",
-    textAlignVertical: "center",
+    lineHeight: COMPOSER_LINE_HEIGHT,
+    textAlignVertical: "top",
     letterSpacing: 0,
   },
   send: { width: 36, height: 36, borderRadius: 18, overflow: "hidden" },
