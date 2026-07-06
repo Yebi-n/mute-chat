@@ -1,4 +1,8 @@
 import { Platform } from 'react-native';
+import {
+  getTrackingPermissionsAsync,
+  requestTrackingPermissionsAsync,
+} from 'expo-tracking-transparency';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import {
   AdEventType,
@@ -17,13 +21,32 @@ export {
 } from './wallet';
 
 let adsInitializationPromise: Promise<boolean> | null = null;
+let trackingPermissionPromise: Promise<void> | null = null;
 const IOS_REWARDED_UNIT_ID =
   process.env.EXPO_PUBLIC_ADMOB_REWARDED_IOS_ID
   || 'ca-app-pub-4013454985021474/1566965165';
 
+async function ensureTrackingPermissionRequested(): Promise<void> {
+  if (Platform.OS !== 'ios') return;
+  if (trackingPermissionPromise) return trackingPermissionPromise;
+  trackingPermissionPromise = (async () => {
+    try {
+      const current = await getTrackingPermissionsAsync();
+      if (current.status === 'undetermined' && current.canAskAgain) {
+        await requestTrackingPermissionsAsync();
+      }
+    } catch {
+      // ATT failures should not block contextual ads. AdMob is still requested
+      // with non-personalized ad settings below.
+    }
+  })();
+  return trackingPermissionPromise;
+}
+
 export function initializeAds(): Promise<boolean> {
   if (adsInitializationPromise) return adsInitializationPromise;
   adsInitializationPromise = (async () => {
+    await ensureTrackingPermissionRequested();
     try {
       await AdsConsent.gatherConsent();
     } catch {

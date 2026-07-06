@@ -14,7 +14,10 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIViewControllerBasedStatusBarAppearance": true,
-        "UIDeviceFamily": [1]
+        "NSUserTrackingUsageDescription": "맞춤형 광고 제공 여부를 선택하기 위해 기기 광고 식별자 접근 권한을 요청합니다.",
+        "UIDeviceFamily": [
+          1
+        ]
       }
     },
     "android": {
@@ -36,16 +39,18 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "채팅 이미지를 확인하기 위해 사진 접근 권한이 필요합니다.",
-          "savePhotosPermission": "채팅 이미지를 사진첩에 저장하기 위해 권한이 필요합니다.",
-          "granularPermissions": ["photo"]
+          "photosPermission": "채팅 이미지와 프로필 이미지를 확인하기 위해 사진 접근 권한이 필요합니다.",
+          "savePhotosPermission": "채팅 이미지를 사진 앱에 저장하기 위해 권한이 필요합니다.",
+          "granularPermissions": [
+            "photo"
+          ]
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "채팅과 프로필에 보낼 사진을 선택하기 위해 사진 접근 권한이 필요합니다.",
-          "cameraPermission": "채팅과 프로필에 보낼 사진을 촬영하기 위해 카메라 권한이 필요합니다.",
+          "photosPermission": "채팅, 스토리, 프로필에 사용할 사진을 선택하기 위해 사진 접근 권한이 필요합니다.",
+          "cameraPermission": "채팅, 스토리, 프로필에 사용할 사진을 촬영하기 위해 카메라 권한이 필요합니다.",
           "microphonePermission": false
         }
       ],
@@ -60,7 +65,8 @@
         }
       ],
       "expo-iap",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-tracking-transparency"
     ],
     "extra": {
       "brand": {

@@ -13798,7 +13798,23 @@ function EditRoom({
   const [coverRemoved, setCoverRemoved] = useState(false);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const nameInputRef = useRef<React.ElementRef<typeof RNTextInput> | null>(null);
+  const descriptionInputRef = useRef<React.ElementRef<typeof RNTextInput> | null>(null);
+  const regionInputRef = useRef<React.ElementRef<typeof RNTextInput> | null>(null);
+  const maxMembersInputRef = useRef<React.ElementRef<typeof RNTextInput> | null>(null);
   const appTheme = useAppTheme();
+  const blurRoomEditInputs = useCallback(() => {
+    nameInputRef.current?.blur();
+    descriptionInputRef.current?.blur();
+    regionInputRef.current?.blur();
+    maxMembersInputRef.current?.blur();
+    Keyboard.dismiss();
+  }, []);
+  const goBackSafely = useCallback(() => {
+    blurRoomEditInputs();
+    if (Platform.OS === "ios") setTimeout(onBack, 80);
+    else onBack();
+  }, [blurRoomEditInputs, onBack]);
   const setCapacity = (value: number) =>
     setMaxMembers(
       Math.min(80, Math.max(currentMemberCount, value || currentMemberCount)),
@@ -13837,7 +13853,7 @@ function EditRoom({
   const save = async () => {
     if (disabled || savingRef.current) return;
     savingRef.current = true;
-    Keyboard.dismiss();
+    blurRoomEditInputs();
     setSaving(true);
     try {
       await updateRoom({
@@ -13915,7 +13931,7 @@ function EditRoom({
   return (
     <SafeAreaView style={s.safe}>
       <StatusBar style="dark" hidden={false} />
-      <TopBar title="방 편집하기" onBack={onBack} />
+      <TopBar title="방 편집하기" onBack={goBackSafely} />
       <KeyboardAvoidingView
         style={s.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -13943,6 +13959,7 @@ function EditRoom({
             )}
           </Pressable>
           <LimitedField
+            inputRef={nameInputRef}
             label="방 이름"
             value={name}
             onChange={(value) => setName(value.slice(0, 13))}
@@ -13950,6 +13967,7 @@ function EditRoom({
             limit={13}
           />
           <LimitedField
+            inputRef={descriptionInputRef}
             label="방 설명"
             value={description}
             onChange={(value) => setDescription(value.slice(0, 120))}
@@ -13987,7 +14005,14 @@ function EditRoom({
                   >
                     {roomType === value && <View style={s.radioDot} />}
                   </View>
-                  <Text style={s.radioText}>{label}</Text>
+                  <Text
+                    style={[s.radioText, typeDisabled && s.radioTextDisabled]}
+                  >
+                    {label}
+                  </Text>
+                  {typeDisabled && disabledReason ? (
+                    <Text style={s.radioReason}>{disabledReason}</Text>
+                  ) : null}
                 </Pressable>
               ))}
             </View>
@@ -13998,6 +14023,7 @@ function EditRoom({
                   <Text style={s.inlineOptionalLabel}>(선택사항)</Text>
                 </View>
                 <TextInput
+                  ref={regionInputRef}
                   value={region}
                   maxLength={20}
                   onChangeText={setRegion}
@@ -14024,6 +14050,7 @@ function EditRoom({
                 <Ionicons name="remove" size={20} color={colors.textSubtle} />
               </Pressable>
               <TextInput
+                ref={maxMembersInputRef}
                 keyboardType="number-pad"
                 value={`${maxMembers}`}
                 onChangeText={(value) =>
@@ -17573,6 +17600,7 @@ function PinField({
   );
 }
 function LimitedField({
+  inputRef,
   label,
   value,
   onChange,
@@ -17580,6 +17608,7 @@ function LimitedField({
   limit,
   multiline,
 }: {
+  inputRef?: React.Ref<React.ElementRef<typeof RNTextInput>>;
   label: string;
   value: string;
   onChange: (v: string) => void;
@@ -17596,6 +17625,7 @@ function LimitedField({
         </Text>
       </View>
       <TextInput
+        ref={inputRef}
         value={value}
         maxLength={limit}
         onChangeText={onChange}

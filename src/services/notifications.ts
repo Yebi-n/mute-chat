@@ -43,7 +43,13 @@ export async function registerPushDevice() {
   const current = await Notifications.getPermissionsAsync();
   const permission = current.status === 'granted'
     ? current
-    : await Notifications.requestPermissionsAsync();
+    : await Notifications.requestPermissionsAsync({
+        ios: {
+          allowAlert: true,
+          allowBadge: true,
+          allowSound: true,
+        },
+      });
   if (permission.status !== 'granted') return null;
 
   if (Platform.OS === 'android') {
