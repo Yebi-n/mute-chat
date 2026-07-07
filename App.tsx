@@ -734,10 +734,12 @@ function StatusBar(_props: {
           translucent={false}
         />
       ) : null}
-      <ExpoStatusBar
-        style={resolvedStyle}
-        hidden={_props.hidden ?? false}
-      />
+      {Platform.OS !== "android" ? (
+        <ExpoStatusBar
+          style={resolvedStyle}
+          hidden={_props.hidden ?? false}
+        />
+      ) : null}
     </>
   );
 }
@@ -962,15 +964,26 @@ function View(props: React.ComponentProps<typeof RNView>) {
 }
 
 function SafeAreaView(props: React.ComponentProps<typeof RNSafeAreaView>) {
+  const insets = useSafeAreaInsets();
   const styled = themedStyle(props.style, "view");
   const flattenedStyle = (StyleSheet.flatten(styled) ?? {}) as {
     paddingTop?: number | string;
+    paddingBottom?: number | string;
   };
+  const basePaddingTop =
+    typeof flattenedStyle.paddingTop === "number"
+      ? flattenedStyle.paddingTop
+      : 0;
+  const basePaddingBottom =
+    typeof flattenedStyle.paddingBottom === "number"
+      ? flattenedStyle.paddingBottom
+      : 0;
+  const androidTopInset = Math.max(insets.top, RNStatusBar.currentHeight ?? 0);
   const androidPaddingTop =
-    Platform.OS === "android"
-      ? (typeof flattenedStyle.paddingTop === "number"
-          ? flattenedStyle.paddingTop
-          : 0) + (RNStatusBar.currentHeight ?? 0)
+    Platform.OS === "android" ? basePaddingTop + androidTopInset : undefined;
+  const androidPaddingBottom =
+    Platform.OS === "android" && insets.bottom > 0
+      ? basePaddingBottom + insets.bottom
       : undefined;
   return (
     <RNSafeAreaView
@@ -978,6 +991,7 @@ function SafeAreaView(props: React.ComponentProps<typeof RNSafeAreaView>) {
       style={[
         styled,
         androidPaddingTop ? { paddingTop: androidPaddingTop } : null,
+        androidPaddingBottom ? { paddingBottom: androidPaddingBottom } : null,
       ]}
     />
   );
@@ -6557,7 +6571,10 @@ function ChatRoom({
   const olderMessagePageSize = 30;
   const appTheme = useAppTheme();
   const adsDisabled = useAdFree();
+  const safeAreaInsets = useSafeAreaInsets();
   const [chatKeyboardVisible, setChatKeyboardVisible] = useState(false);
+  const androidChatBottomInset =
+    Platform.OS === "android" && !chatKeyboardVisible ? safeAreaInsets.bottom : 0;
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
     isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
   );
@@ -8755,7 +8772,6 @@ function ChatRoom({
             opacity: chatReady ? 1 : 0,
           }}
           contentContainerStyle={s.messages}
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           onLayout={(event) => {
@@ -9389,6 +9405,11 @@ function ChatRoom({
             )}
             {!readOnly && (
               <View
+                style={
+                  androidChatBottomInset
+                    ? { paddingBottom: androidChatBottomInset }
+                    : undefined
+                }
                 onLayout={() => {
                   if (!keyboardOpenedAtBottomRef.current) return;
                   requestAnimationFrame(() => scrollToLatestRef.current(false));
@@ -15472,6 +15493,8 @@ function BottomNav({
   docked?: boolean;
 }) {
   const theme = useAppTheme();
+  const insets = useSafeAreaInsets();
+  const androidBottomInset = Platform.OS === "android" ? insets.bottom : 0;
   const items: [BottomTab, IconName, IconName, string][] = [
     ["myRooms", "chatbubbles-outline", "chatbubbles", "내 채팅"],
     ["discover", "home-outline", "home", "홈"],
@@ -15479,7 +15502,18 @@ function BottomNav({
     ["profile", "person-outline", "person", "내 정보"],
   ];
   return (
-    <View style={[s.bottomNav, docked && s.bottomNavDocked]}>
+    <View
+      style={[
+        s.bottomNav,
+        androidBottomInset
+          ? {
+              height: 112 + androidBottomInset,
+              paddingBottom: 28 + androidBottomInset,
+            }
+          : null,
+        docked && s.bottomNavDocked,
+      ]}
+    >
       {items.map(([key, icon, active, label]) => (
         <Pressable key={key} onPress={() => onSelect(key)} style={s.navItem}>
           <Ionicons
@@ -15532,7 +15566,7 @@ function TopBar({
         colors={["#82B9C1", "#5DBB8C"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 0 }}
-        style={s.topBar}
+        style={[s.topBar, Platform.OS === "android" && s.androidHeaderInset58]}
       >
         <IconButton name="chevron-back" color={foreground} onPress={onBack} />
         <View style={s.topCenter}>
@@ -18670,7 +18704,7 @@ const s = StyleSheet.create({
   },
   muteLogo: { height: 44, flexDirection: "row", alignItems: "center", gap: 9 },
   muteLogoSymbol: { width: 38, height: 28 },
-  splashLogoWrap: { transform: [{ scale: 0.72 }] },
+  splashLogoWrap: { transform: [{ scale: 0.42 }] },
   muteLogoMark: { width: 50, height: 36 },
   muteName: {
     color: colors.text,
