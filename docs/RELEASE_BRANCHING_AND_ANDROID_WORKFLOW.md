@@ -41,6 +41,42 @@ Rules:
 - Do not force push `main`.
 - Do not push to `main` just to test Android.
 
+## Build Router
+
+Use `scripts\build-route.ps1` whenever a build is requested. It blocks the build if the current branch does not match the requested platform.
+
+When the request is "iOS branch build":
+
+```bat
+cd C:\Users\trudy\mute-chat
+git switch ios/review-4ce86e4
+powershell -ExecutionPolicy Bypass -File scripts\build-route.ps1 ios
+```
+
+The iOS route only verifies the branch and runs typecheck. The actual iOS archive should be started manually from Xcode Cloud on the `ios/review-4ce86e4` branch.
+
+When the request is "Android branch APK build":
+
+```bat
+cd C:\Users\trudy\mute-chat
+git switch android/release
+powershell -ExecutionPolicy Bypass -File scripts\build-route.ps1 android-apk
+```
+
+When the request is "Android branch production build":
+
+```bat
+cd C:\Users\trudy\mute-chat
+git switch android/release
+powershell -ExecutionPolicy Bypass -File scripts\build-route.ps1 android-production
+```
+
+Routing rule:
+
+- iOS build request -> `ios/review-4ce86e4`
+- Android build request -> `android/release`
+- Any other current branch -> stop before build
+
 ## Xcode Cloud Setting To Check Manually
 
 In App Store Connect:
