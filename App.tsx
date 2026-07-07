@@ -727,7 +727,7 @@ function StatusBar(_props: {
           barStyle={resolvedStyle === "light" ? "light-content" : "dark-content"}
           backgroundColor={androidBackgroundColor}
           hidden={_props.hidden ?? false}
-          translucent
+          translucent={false}
         />
       ) : null}
       {Platform.OS !== "android" ? (
@@ -974,9 +974,8 @@ function SafeAreaView(props: React.ComponentProps<typeof RNSafeAreaView>) {
     typeof flattenedStyle.paddingBottom === "number"
       ? flattenedStyle.paddingBottom
       : 0;
-  const androidTopInset = Math.max(insets.top, RNStatusBar.currentHeight ?? 0);
   const androidPaddingTop =
-    Platform.OS === "android" ? basePaddingTop + androidTopInset : undefined;
+    Platform.OS === "android" ? basePaddingTop : undefined;
   const androidPaddingBottom =
     Platform.OS === "android" && insets.bottom > 0
       ? basePaddingBottom + insets.bottom
@@ -18676,10 +18675,10 @@ const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background, overflow: "hidden" },
   flex: { flex: 1, minWidth: 0 },
   androidHeaderInset56: {
-    marginTop: ANDROID_STATUS_BAR_HEIGHT,
+    marginTop: 0,
   },
   androidHeaderInset58: {
-    marginTop: ANDROID_STATUS_BAR_HEIGHT,
+    marginTop: 0,
   },
   mainHeader: {
     height: 56,
@@ -18698,7 +18697,7 @@ const s = StyleSheet.create({
   },
   muteLogo: { height: 44, flexDirection: "row", alignItems: "center", gap: 9 },
   muteLogoSymbol: { width: 38, height: 28 },
-  splashLogoWrap: { transform: [{ scale: 0.42 }] },
+  splashLogoWrap: { transform: [{ scale: 0.28 }] },
   muteLogoMark: { width: 50, height: 36 },
   muteName: {
     color: colors.text,

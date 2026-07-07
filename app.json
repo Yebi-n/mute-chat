@@ -43,7 +43,7 @@
     "androidStatusBar": {
       "barStyle": "dark-content",
       "backgroundColor": "#FFFFFF",
-      "translucent": true
+      "translucent": false
     },
     "androidNavigationBar": {
       "barStyle": "dark-content",
