@@ -719,11 +719,7 @@ function StatusBar(_props: {
   const theme = useAppTheme();
   const resolvedStyle = _props.style ?? (theme.id === "dark" ? "light" : "dark");
   const androidBackgroundColor =
-    resolvedStyle === "light"
-      ? theme.gradient[0]
-      : theme.id === "dark"
-        ? "#222222"
-        : "#FFFFFF";
+    resolvedStyle === "light" ? "#222222" : "#FFFFFF";
   return (
     <>
       {Platform.OS === "android" ? (
@@ -731,7 +727,7 @@ function StatusBar(_props: {
           barStyle={resolvedStyle === "light" ? "light-content" : "dark-content"}
           backgroundColor={androidBackgroundColor}
           hidden={_props.hidden ?? false}
-          translucent={false}
+          translucent
         />
       ) : null}
       {Platform.OS !== "android" ? (
@@ -18680,12 +18676,10 @@ const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background, overflow: "hidden" },
   flex: { flex: 1, minWidth: 0 },
   androidHeaderInset56: {
-    height: 56 + ANDROID_STATUS_BAR_HEIGHT,
-    paddingTop: ANDROID_STATUS_BAR_HEIGHT,
+    marginTop: ANDROID_STATUS_BAR_HEIGHT,
   },
   androidHeaderInset58: {
-    height: 58 + ANDROID_STATUS_BAR_HEIGHT,
-    paddingTop: ANDROID_STATUS_BAR_HEIGHT,
+    marginTop: ANDROID_STATUS_BAR_HEIGHT,
   },
   mainHeader: {
     height: 56,
