@@ -49,6 +49,7 @@ import {
   ScrollView as RNScrollView,
   Share,
   StyleSheet,
+  StatusBar as RNStatusBar,
   Switch as RNSwitch,
   Text as RNText,
   TextProps,
@@ -207,6 +208,9 @@ import {
   screenshotDemoRooms,
   screenshotDemoUnreadCounts,
 } from "./src/screenshotDemo";
+
+const ANDROID_STATUS_BAR_HEIGHT =
+  Platform.OS === "android" ? RNStatusBar.currentHeight ?? 0 : 0;
 
 type Screen =
   | "main"
@@ -713,11 +717,28 @@ function StatusBar(_props: {
   hidden?: boolean;
 }) {
   const theme = useAppTheme();
+  const resolvedStyle = _props.style ?? (theme.id === "dark" ? "light" : "dark");
+  const androidBackgroundColor =
+    resolvedStyle === "light"
+      ? theme.gradient[0]
+      : theme.id === "dark"
+        ? "#222222"
+        : "#FFFFFF";
   return (
-    <ExpoStatusBar
-      style={theme.id === "dark" ? "light" : "dark"}
-      hidden={_props.hidden ?? false}
-    />
+    <>
+      {Platform.OS === "android" ? (
+        <RNStatusBar
+          barStyle={resolvedStyle === "light" ? "light-content" : "dark-content"}
+          backgroundColor={androidBackgroundColor}
+          hidden={_props.hidden ?? false}
+          translucent={false}
+        />
+      ) : null}
+      <ExpoStatusBar
+        style={resolvedStyle}
+        hidden={_props.hidden ?? false}
+      />
+    </>
   );
 }
 
@@ -941,8 +962,24 @@ function View(props: React.ComponentProps<typeof RNView>) {
 }
 
 function SafeAreaView(props: React.ComponentProps<typeof RNSafeAreaView>) {
+  const styled = themedStyle(props.style, "view");
+  const flattenedStyle = (StyleSheet.flatten(styled) ?? {}) as {
+    paddingTop?: number | string;
+  };
+  const androidPaddingTop =
+    Platform.OS === "android"
+      ? (typeof flattenedStyle.paddingTop === "number"
+          ? flattenedStyle.paddingTop
+          : 0) + (RNStatusBar.currentHeight ?? 0)
+      : undefined;
   return (
-    <RNSafeAreaView {...props} style={themedStyle(props.style, "view")} />
+    <RNSafeAreaView
+      {...props}
+      style={[
+        styled,
+        androidPaddingTop ? { paddingTop: androidPaddingTop } : null,
+      ]}
+    />
   );
 }
 
@@ -1900,7 +1937,7 @@ function AuthHeader({ title, onBack }: { title: string; onBack?: () => void }) {
   return (
     <>
       <EdgeBackLayer onBack={onBack} />
-      <View style={s.authHeader}>
+      <View style={[s.authHeader, s.androidHeaderInset58]}>
         <Pressable disabled={!onBack} onPress={onBack} style={s.authHeaderBack}>
           {onBack ? (
             <Ionicons name="chevron-back" size={22} color={colors.textSubtle} />
@@ -3691,7 +3728,9 @@ function SplashScreen() {
   return (
     <LinearGradient colors={theme.gradient} style={s.authSplash}>
       <StatusBar style="light" hidden />
-      <MuteLogo variant="white" />
+      <View style={s.splashLogoWrap}>
+        <MuteLogo variant="white" compact />
+      </View>
     </LinearGradient>
   );
 }
@@ -4496,7 +4535,7 @@ function PhoneAuthScreenV2({
                   },
                 ]}
               >
-                <View style={s.authPinHeader}>
+                <View style={[s.authPinHeader, s.androidHeaderInset58]}>
                   <Text style={s.authPinLabel}>
                     {signupPhoneVerified
                       ? "전화번호 인증이 완료됐어요."
@@ -4779,7 +4818,7 @@ function PhoneAuthScreenV2({
                   },
                 ]}
               >
-                <View style={s.authPinHeader}>
+                <View style={[s.authPinHeader, s.androidHeaderInset58]}>
                   <Text style={s.authPinLabel}>
                     {signupPhoneVerified
                       ? "전화번호 인증이 완료됐어요."
@@ -5236,7 +5275,7 @@ function MainScreen({
     <SafeAreaView style={s.safe}>
       <StatusBar style="dark" />
       {!storyDetailOpen && storySearchOpen && bottomTab === "stories" ? (
-        <View style={s.searchHeader}>
+        <View style={[s.searchHeader, s.androidHeaderInset58]}>
           <IconButton
             name="chevron-back"
             color={colors.textSubtle}
@@ -5271,7 +5310,7 @@ function MainScreen({
             colors={["#82B9C1", "#5DBB8C"]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
-            style={s.mainHeader}
+            style={[s.mainHeader, s.androidHeaderInset56]}
           >
             <View style={s.mainHeaderLogoWrap}>
               <MuteLogo symbolOnly variant="white" compact />
@@ -5591,7 +5630,7 @@ function SearchScreen({
     <SafeAreaView style={s.safe}>
       <EdgeBackLayer onBack={onBack} />
       <StatusBar style="dark" />
-      <View style={s.searchHeader}>
+      <View style={[s.searchHeader, s.androidHeaderInset58]}>
         <IconButton
           name="chevron-back"
           color={colors.textSubtle}
@@ -10747,7 +10786,7 @@ function StoryDetail({
           colors={["#82B9C1", "#5DBB8C"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
-          style={s.storyDetailHeader}
+          style={[s.storyDetailHeader, s.androidHeaderInset58]}
         >
           <Pressable onPress={onBack} style={s.storyHeaderAction}>
             <Ionicons name="chevron-back" size={22} color={foreground} />
@@ -18606,6 +18645,14 @@ const s = StyleSheet.create({
   authBackText: { color: colors.mint700, fontSize: 12, fontWeight: "700" },
   safe: { flex: 1, backgroundColor: colors.background, overflow: "hidden" },
   flex: { flex: 1, minWidth: 0 },
+  androidHeaderInset56: {
+    height: 56 + ANDROID_STATUS_BAR_HEIGHT,
+    paddingTop: ANDROID_STATUS_BAR_HEIGHT,
+  },
+  androidHeaderInset58: {
+    height: 58 + ANDROID_STATUS_BAR_HEIGHT,
+    paddingTop: ANDROID_STATUS_BAR_HEIGHT,
+  },
   mainHeader: {
     height: 56,
     paddingHorizontal: 12,
@@ -18623,6 +18670,7 @@ const s = StyleSheet.create({
   },
   muteLogo: { height: 44, flexDirection: "row", alignItems: "center", gap: 9 },
   muteLogoSymbol: { width: 38, height: 28 },
+  splashLogoWrap: { transform: [{ scale: 0.72 }] },
   muteLogoMark: { width: 50, height: 36 },
   muteName: {
     color: colors.text,
