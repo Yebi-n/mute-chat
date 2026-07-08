@@ -43,3 +43,13 @@ yarn-error.*
 
 # local credentials and bootstrap artifacts
 /.local/
+
+# local diagnostics and generated review assets
+artifacts/*.log
+artifacts/*.err.log
+artifacts/*backup*.txt
+artifacts/appstore_screenshot_contact_sheet.jpg
+artifacts/appstore_screenshots/
+
+# Supabase CLI local cache
+supabase/.temp/
