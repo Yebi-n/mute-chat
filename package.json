@@ -50,6 +50,9 @@
     "verify:room-delete": "node scripts/verify-room-delete.mjs",
     "verify:point-transfer": "node scripts/verify-point-transfer.mjs",
     "preview:android": "eas build --profile preview --platform android",
+    "preview:android:apk": "eas build --profile androidPreview --platform android",
+    "build:android": "eas build --profile production --platform android",
+    "submit:android": "eas submit --platform android --latest",
     "preview:ios": "eas build --profile preview --platform ios"
   },
   "private": true
