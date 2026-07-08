@@ -169,7 +169,6 @@ import {
 import {
   claimPointReward,
   getMyWallet,
-  initializeAds,
   listPointLedger,
   showRewardedAd,
 } from "./src/services/monetization";
@@ -2586,9 +2585,6 @@ function AuthenticatedApp({
       if (state === "active") syncPushState();
     });
     return () => subscription.remove();
-  }, []);
-  useEffect(() => {
-    runStartupTask(() => initializeAds());
   }, []);
   useEffect(()=>{
     if(!supabase||!isSupabaseConfigured)return;

@@ -71,15 +71,18 @@ export default function InlineBannerAd({
   useEffect(() => {
     if (disabled || !unitId) return;
     let active = true;
-    initializeAds()
-      .then((ready) => {
-        if (active) setSdkReady(ready);
-      })
-      .catch(() => {
-        if (active) setFailed(true);
-      });
+    const timer = setTimeout(() => {
+      initializeAds()
+        .then((ready) => {
+          if (active) setSdkReady(ready);
+        })
+        .catch(() => {
+          if (active) setFailed(true);
+        });
+    }, 1500);
     return () => {
       active = false;
+      clearTimeout(timer);
     };
   }, [disabled, unitId]);
 

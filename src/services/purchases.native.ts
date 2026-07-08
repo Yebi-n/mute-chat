@@ -58,7 +58,6 @@ async function ensureConnection() {
 
 export async function configurePurchases(appUserId: string) {
   configuredUserId = appUserId;
-  await ensureConnection();
 }
 
 export function resetPurchaseConfiguration() {
