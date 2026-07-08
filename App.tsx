@@ -582,19 +582,38 @@ const PRIVACY_POLICY_URL =
 const FIXED_POINT_COLOR = "#3F9A70";
 const FIXED_POINT_SOFT = "#EFF9F5";
 
+function isSecureStoreKeyError(error: unknown) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  return /SecureStore|Invalid key|Keys must/i.test(message);
+}
+
 async function readAppLockPin() {
   if (Platform.OS === "web") return AsyncStorage.getItem(APP_LOCK_PIN_KEY);
 
-  const secured = await SecureStore.getItemAsync(APP_LOCK_SECURE_PIN_KEY);
+  let secured: string | null = null;
+  try {
+    secured = await SecureStore.getItemAsync(APP_LOCK_SECURE_PIN_KEY);
+  } catch (error) {
+    if (!isSecureStoreKeyError(error)) throw error;
+  }
   if (secured !== null) return secured;
 
   // Migrate PINs saved by versions released before SecureStore was introduced.
   const legacy = await AsyncStorage.getItem(APP_LOCK_PIN_KEY);
   if (legacy !== null) {
-    await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, legacy, {
-      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-    });
-    await AsyncStorage.removeItem(APP_LOCK_PIN_KEY);
+    try {
+      await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, legacy, {
+        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+      });
+      await AsyncStorage.removeItem(APP_LOCK_PIN_KEY);
+    } catch (error) {
+      if (!isSecureStoreKeyError(error)) throw error;
+    }
   }
   return legacy;
 }
@@ -604,10 +623,15 @@ async function writeAppLockPin(pin: string) {
     await AsyncStorage.setItem(APP_LOCK_PIN_KEY, pin);
     return;
   }
-  await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, pin, {
-    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-  });
-  await AsyncStorage.removeItem(APP_LOCK_PIN_KEY);
+  try {
+    await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, pin, {
+      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    });
+    await AsyncStorage.removeItem(APP_LOCK_PIN_KEY);
+  } catch (error) {
+    if (!isSecureStoreKeyError(error)) throw error;
+    await AsyncStorage.setItem(APP_LOCK_PIN_KEY, pin);
+  }
 }
 
 async function clearAppLockCredentials() {
@@ -18854,7 +18878,7 @@ const s = StyleSheet.create({
   },
   muteLogo: { height: 44, flexDirection: "row", alignItems: "center", gap: 9 },
   muteLogoSymbol: { width: 38, height: 28 },
-  splashLogoWrap: { transform: [{ scale: 0.42 }] },
+  splashLogoWrap: { transform: [{ scale: 0.68 }] },
   muteLogoMark: { width: 50, height: 36 },
   muteName: {
     color: colors.text,
