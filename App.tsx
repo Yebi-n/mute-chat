@@ -11,7 +11,8 @@ import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { Image as ExpoImage } from "expo-image";
 import { LinearGradient as ExpoLinearGradient } from "expo-linear-gradient";
-import * as Notifications from "./src/services/expoNotifications";
+import * as Notifications from "expo-notifications";
+import * as ScreenCapture from "expo-screen-capture";
 import * as SecureStore from "expo-secure-store";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -48,7 +49,6 @@ import {
   ScrollView as RNScrollView,
   Share,
   StyleSheet,
-  StatusBar as RNStatusBar,
   Switch as RNSwitch,
   Text as RNText,
   TextProps,
@@ -107,7 +107,6 @@ import {
   markNotificationRead,
   markRoomJoinRequestNotificationsRead,
   registerPushDevice,
-  configureNotificationHandler,
   clearForegroundRoomId,
   ServerNotice,
   setForegroundRoomId,
@@ -149,7 +148,6 @@ import {
 import { sendUploadedImages, uploadValidatedImage } from "./src/services/media";
 import {
   acceptSignupCompliance,
-  blockUser,
   listReportedRoomIds,
   requestAccountDeletion,
   submitReport,
@@ -169,6 +167,7 @@ import {
 import {
   claimPointReward,
   getMyWallet,
+  initializeAds,
   listPointLedger,
   showRewardedAd,
 } from "./src/services/monetization";
@@ -208,9 +207,6 @@ import {
   screenshotDemoRooms,
   screenshotDemoUnreadCounts,
 } from "./src/screenshotDemo";
-
-const ANDROID_STATUS_BAR_HEIGHT =
-  Platform.OS === "android" ? RNStatusBar.currentHeight ?? 0 : 0;
 
 type Screen =
   | "main"
@@ -581,56 +577,36 @@ const PRIVACY_POLICY_URL =
 const FIXED_POINT_COLOR = "#3F9A70";
 const FIXED_POINT_SOFT = "#EFF9F5";
 
-function isSecureStoreKeyError(error: unknown) {
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : "";
-  return /SecureStore|Invalid key|Keys must/i.test(message);
-}
-
 async function readAppLockPin() {
-  if (Platform.OS === "web") return safeGetStorageItem(APP_LOCK_PIN_KEY);
+  if (Platform.OS === "web") return AsyncStorage.getItem(APP_LOCK_PIN_KEY);
 
-  let secured: string | null = null;
-  try {
-    secured = await SecureStore.getItemAsync(APP_LOCK_SECURE_PIN_KEY);
-  } catch (error) {
-    secured = null;
-  }
+  const secured = await SecureStore.getItemAsync(APP_LOCK_SECURE_PIN_KEY);
   if (secured !== null) return secured;
 
   // Migrate PINs saved by versions released before SecureStore was introduced.
-  const legacy = await safeGetStorageItem(APP_LOCK_PIN_KEY);
+  const legacy = await AsyncStorage.getItem(APP_LOCK_PIN_KEY);
   if (legacy !== null) {
-    try {
-      await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, legacy);
-      await safeRemoveStorageItems([APP_LOCK_PIN_KEY]);
-    } catch {
-      // SecureStore failure must not block app launch. Keep the AsyncStorage
-      // fallback so existing users can still unlock and continue using the app.
-    }
+    await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, legacy, {
+      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    });
+    await AsyncStorage.removeItem(APP_LOCK_PIN_KEY);
   }
   return legacy;
 }
 
 async function writeAppLockPin(pin: string) {
   if (Platform.OS === "web") {
-    await safeSetStorageItem(APP_LOCK_PIN_KEY, pin);
+    await AsyncStorage.setItem(APP_LOCK_PIN_KEY, pin);
     return;
   }
-  try {
-    await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, pin);
-    await safeRemoveStorageItems([APP_LOCK_PIN_KEY]);
-  } catch {
-    await safeSetStorageItem(APP_LOCK_PIN_KEY, pin);
-  }
+  await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, pin, {
+    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  });
+  await AsyncStorage.removeItem(APP_LOCK_PIN_KEY);
 }
 
 async function clearAppLockCredentials() {
-  await safeRemoveStorageItems([APP_LOCK_ENABLED_KEY, APP_LOCK_PIN_KEY]);
+  await AsyncStorage.multiRemove([APP_LOCK_ENABLED_KEY, APP_LOCK_PIN_KEY]);
   if (Platform.OS !== "web") {
     try {
       await SecureStore.deleteItemAsync(APP_LOCK_SECURE_PIN_KEY);
@@ -737,26 +713,11 @@ function StatusBar(_props: {
   hidden?: boolean;
 }) {
   const theme = useAppTheme();
-  const resolvedStyle = _props.style ?? (theme.id === "dark" ? "light" : "dark");
-  const androidBackgroundColor =
-    resolvedStyle === "light" ? "#222222" : "#FFFFFF";
   return (
-    <>
-      {Platform.OS === "android" ? (
-        <RNStatusBar
-          barStyle={resolvedStyle === "light" ? "light-content" : "dark-content"}
-          backgroundColor={androidBackgroundColor}
-          hidden={_props.hidden ?? false}
-          translucent
-        />
-      ) : null}
-      {Platform.OS !== "android" ? (
-        <ExpoStatusBar
-          style={resolvedStyle}
-          hidden={_props.hidden ?? false}
-        />
-      ) : null}
-    </>
+    <ExpoStatusBar
+      style={theme.id === "dark" ? "light" : "dark"}
+      hidden={_props.hidden ?? false}
+    />
   );
 }
 
@@ -789,43 +750,8 @@ const themeStorageKey = (userId?: string | null) =>
 const themeOwnershipStorageKey = (userId: string) =>
   `mute.app-theme-entitlements:${userId}`;
 
-async function safeGetStorageItem(key: string) {
-  try {
-    return await AsyncStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-async function safeSetStorageItem(key: string, value: string) {
-  try {
-    await AsyncStorage.setItem(key, value);
-  } catch {}
-}
-
-async function safeRemoveStorageItems(keys: string[]) {
-  try {
-    await AsyncStorage.multiRemove(keys);
-  } catch {
-    await Promise.all(
-      keys.map((key) => AsyncStorage.removeItem(key).catch(() => undefined)),
-    );
-  }
-}
-
-function runStartupTask(task: () => Promise<unknown> | unknown) {
-  try {
-    const result = task();
-    if (result && typeof (result as Promise<unknown>).catch === "function") {
-      void (result as Promise<unknown>).catch(() => undefined);
-    }
-  } catch {
-    // Startup-only native SDK failures must not abort the JS runtime.
-  }
-}
-
 async function readCachedThemeProductIds(userId: string) {
-  const raw = await safeGetStorageItem(themeOwnershipStorageKey(userId));
+  const raw = await AsyncStorage.getItem(themeOwnershipStorageKey(userId));
   if (!raw) return [] as string[];
   try {
     const parsed = JSON.parse(raw);
@@ -845,7 +771,7 @@ async function cacheThemeProductIds(userId: string, productIds: string[]) {
     ]),
   );
   const owned = [...new Set(productIds.filter((id) => themeProductIds.has(id)))];
-  await safeSetStorageItem(
+  await AsyncStorage.setItem(
     themeOwnershipStorageKey(userId),
     JSON.stringify(owned),
   );
@@ -856,16 +782,16 @@ function applyAppTheme(theme: AppTheme) {
 }
 function selectAppTheme(theme: AppTheme, userId?: string | null) {
   applyAppTheme(theme);
-  void safeSetStorageItem(themeStorageKey(userId), theme.id);
-  void safeSetStorageItem(SPLASH_THEME_STORAGE_KEY, theme.id);
+  void AsyncStorage.setItem(themeStorageKey(userId), theme.id);
+  void AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, theme.id);
 }
 async function loadStoredAppTheme(
   userId?: string | null,
   ownedProductIds: string[] = [],
 ) {
   const stored =
-    (await safeGetStorageItem(themeStorageKey(userId))) ??
-    (userId ? null : await safeGetStorageItem("mute.app-theme"));
+    (await AsyncStorage.getItem(themeStorageKey(userId))) ??
+    (userId ? null : await AsyncStorage.getItem("mute.app-theme"));
   const found = APP_THEMES.find((theme) => theme.id === stored);
   const allowed =
     found &&
@@ -874,11 +800,11 @@ async function loadStoredAppTheme(
       (found.legacyProductIds ?? []).some((id) => ownedProductIds.includes(id)));
   const selected = allowed ? found : APP_THEMES[0];
   applyAppTheme(selected);
-  await safeSetStorageItem(SPLASH_THEME_STORAGE_KEY, selected.id);
+  await AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, selected.id);
 }
 
 async function loadSplashTheme() {
-  const stored = await safeGetStorageItem(SPLASH_THEME_STORAGE_KEY);
+  const stored = await AsyncStorage.getItem(SPLASH_THEME_STORAGE_KEY);
   const found = APP_THEMES.find((theme) => theme.id === stored);
   applyAppTheme(found ?? APP_THEMES[0]);
 }
@@ -1015,36 +941,8 @@ function View(props: React.ComponentProps<typeof RNView>) {
 }
 
 function SafeAreaView(props: React.ComponentProps<typeof RNSafeAreaView>) {
-  const insets = useSafeAreaInsets();
-  const styled = themedStyle(props.style, "view");
-  const flattenedStyle = (StyleSheet.flatten(styled) ?? {}) as {
-    paddingTop?: number | string;
-    paddingBottom?: number | string;
-  };
-  const basePaddingTop =
-    typeof flattenedStyle.paddingTop === "number"
-      ? flattenedStyle.paddingTop
-      : 0;
-  const basePaddingBottom =
-    typeof flattenedStyle.paddingBottom === "number"
-      ? flattenedStyle.paddingBottom
-      : 0;
-  const androidTopInset = Math.max(insets.top, RNStatusBar.currentHeight ?? 0);
-  const androidPaddingTop =
-    Platform.OS === "android" ? basePaddingTop + androidTopInset : undefined;
-  const androidPaddingBottom =
-    Platform.OS === "android" && insets.bottom > 0
-      ? basePaddingBottom + insets.bottom
-      : undefined;
   return (
-    <RNSafeAreaView
-      {...props}
-      style={[
-        styled,
-        androidPaddingTop ? { paddingTop: androidPaddingTop } : null,
-        androidPaddingBottom ? { paddingBottom: androidPaddingBottom } : null,
-      ]}
-    />
+    <RNSafeAreaView {...props} style={themedStyle(props.style, "view")} />
   );
 }
 
@@ -2002,7 +1900,7 @@ function AuthHeader({ title, onBack }: { title: string; onBack?: () => void }) {
   return (
     <>
       <EdgeBackLayer onBack={onBack} />
-      <View style={[s.authHeader, s.androidHeaderInset58]}>
+      <View style={s.authHeader}>
         <Pressable disabled={!onBack} onPress={onBack} style={s.authHeaderBack}>
           {onBack ? (
             <Ionicons name="chevron-back" size={22} color={colors.textSubtle} />
@@ -2027,7 +1925,7 @@ export default function App() {
     if (demoMode || !supabase) return;
     getCurrentSession()
       .then(setSession)
-      .catch(() => setSession(null))
+      .catch((error) => Alert.alert("로그인 확인 실패", error.message))
       .finally(() => setAuthReady(true));
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
@@ -2097,17 +1995,11 @@ function AppLockGate({
   const inactiveAtRef = useRef<number | null>(null);
   useEffect(() => {
     let active = true;
-    safeGetStorageItem(APP_LOCK_ENABLED_KEY)
+    AsyncStorage.getItem(APP_LOCK_ENABLED_KEY)
       .then((value) => {
         if (active) {
           setEnabled(value === "1");
           setUnlocked(value !== "1");
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setEnabled(false);
-          setUnlocked(true);
         }
       })
       .finally(() => {
@@ -2123,7 +2015,7 @@ function AppLockGate({
         inactiveAtRef.current = Date.now();
         return;
       }
-      safeGetStorageItem(APP_LOCK_ENABLED_KEY)
+      AsyncStorage.getItem(APP_LOCK_ENABLED_KEY)
         .then((value) => {
           const nextEnabled = value === "1";
           setEnabled(nextEnabled);
@@ -2137,8 +2029,7 @@ function AppLockGate({
           inactiveAtRef.current = null;
         })
         .catch(() => {
-          setEnabled(false);
-          setUnlocked(true);
+          if (enabled) setUnlocked(false);
         });
     });
     return () => subscription.remove();
@@ -2204,19 +2095,11 @@ function AppLockScreen({
     }
     setError("PIN이 일치하지 않습니다.");
   };
-  const safeCheckPin = async (value: string) => {
-    try {
-      await checkPin(value);
-    } catch {
-      await clearAppLockCredentials();
-      onDisabled();
-    }
-  };
   const pushDigit = (digit: string) => {
     setError("");
     setPin((current) => {
       const next = (current + digit).slice(0, 4);
-      if (next.length === 4) setTimeout(() => void safeCheckPin(next), 0);
+      if (next.length === 4) setTimeout(() => void checkPin(next), 0);
       return next;
     });
   };
@@ -2574,29 +2457,19 @@ function AuthenticatedApp({
     };
   }, []);
   useEffect(() => {
-    let disposed = false;
-    let pushTimer: ReturnType<typeof setTimeout> | null = null;
     const syncPushState = () => {
-      if (disposed) return;
-      runStartupTask(async () => {
-        configureNotificationHandler();
-        await registerPushDevice();
-        schedulePendingPushDispatch();
-      });
+      registerPushDevice()
+        .then(() => schedulePendingPushDispatch())
+        .catch(() => undefined);
     };
-    const scheduleSyncPushState = (delayMs: number) => {
-      if (pushTimer) clearTimeout(pushTimer);
-      pushTimer = setTimeout(syncPushState, delayMs);
-    };
-    scheduleSyncPushState(3500);
+    syncPushState();
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") scheduleSyncPushState(1200);
+      if (state === "active") syncPushState();
     });
-    return () => {
-      disposed = true;
-      if (pushTimer) clearTimeout(pushTimer);
-      subscription.remove();
-    };
+    return () => subscription.remove();
+  }, []);
+  useEffect(() => {
+    initializeAds().catch(() => undefined);
   }, []);
   useEffect(()=>{
     if(!supabase||!isSupabaseConfigured)return;
@@ -2606,7 +2479,7 @@ function AuthenticatedApp({
   },[]);
   useEffect(() => {
     if (session?.user.id)
-      runStartupTask(() => configurePurchases(session.user.id));
+      configurePurchases(session.user.id).catch(() => undefined);
   }, [session?.user.id]);
   useEffect(() => {
     let active = true;
@@ -2616,7 +2489,7 @@ function AuthenticatedApp({
       resetPurchaseConfiguration();
       setAdFreeActive(false);
       applyAppTheme(APP_THEMES[0]);
-      void safeSetStorageItem(SPLASH_THEME_STORAGE_KEY, APP_THEMES[0].id);
+      void AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, APP_THEMES[0].id);
       return;
     }
     // Apply the last server-confirmed ownership cache before the network round
@@ -2639,7 +2512,7 @@ function AuthenticatedApp({
           : Number.NaN;
         if (Number.isFinite(expiresAt))
           entitlementExpiryTimer = setTimeout(
-            () => runStartupTask(reloadEntitlements),
+            () => void reloadEntitlements(),
             Math.max(1000, expiresAt - now + 1000),
           );
         const ownedProductIds = items.map((item) => item.productId);
@@ -2653,7 +2526,7 @@ function AuthenticatedApp({
         if (!active) return;
         await loadStoredAppTheme(userId, cached);
       } finally {
-        if (active) runStartupTask(reloadEntitlements);
+        if (active) void reloadEntitlements();
       }
     })().catch(() => undefined);
     const entitlementChannel =
@@ -2668,12 +2541,12 @@ function AuthenticatedApp({
                 table: "user_entitlements",
                 filter: `user_id=eq.${userId}`,
               },
-              () => runStartupTask(reloadEntitlements),
+              () => void reloadEntitlements(),
             )
             .subscribe()
         : null;
     const appStateSubscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") runStartupTask(reloadEntitlements);
+      if (state === "active") void reloadEntitlements();
     });
     return () => {
       active = false;
@@ -3083,33 +2956,15 @@ function AuthenticatedApp({
       );
       if (notice) void openNotification(notice);
     };
-    let subscription: { remove: () => void } | null = null;
-    const responseTimer = setTimeout(() => {
-      try {
-        subscription =
-          Notifications.addNotificationResponseReceivedListener(handleResponse);
-        if (!checkedInitialPushResponseRef.current) {
-          checkedInitialPushResponseRef.current = true;
-          try {
-            Notifications.getLastNotificationResponseAsync()
-              .then(handleResponse)
-              .catch(() => undefined);
-          } catch {
-            // Native notification modules can be unavailable during early startup.
-          }
-        }
-      } catch {
-        // Do not let notification response registration block app startup.
-      }
-    }, 2200);
-    return () => {
-      clearTimeout(responseTimer);
-      try {
-        subscription?.remove();
-      } catch {
-        // Ignore native subscription cleanup failures during shutdown.
-      }
-    };
+    const subscription =
+      Notifications.addNotificationResponseReceivedListener(handleResponse);
+    if (!checkedInitialPushResponseRef.current) {
+      checkedInitialPushResponseRef.current = true;
+      Notifications.getLastNotificationResponseAsync()
+        .then(handleResponse)
+        .catch(() => undefined);
+    }
+    return () => subscription.remove();
   }, [joinedIds, roomData, canSeeAdultRooms, isSuperAdmin]);
   const topSpaceCount = (room: Room) =>
     room.topSpaceCount + (boosts[room.id] ?? 0);
@@ -3836,9 +3691,7 @@ function SplashScreen() {
   return (
     <LinearGradient colors={theme.gradient} style={s.authSplash}>
       <StatusBar style="light" hidden />
-      <View style={s.splashLogoWrap}>
-        <MuteLogo variant="white" compact />
-      </View>
+      <MuteLogo variant="white" />
     </LinearGradient>
   );
 }
@@ -4172,7 +4025,6 @@ function PhoneAuthScreenV2({
   const [signupOtpError, setSignupOtpError] = useState("");
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [ageConfirmed, setAgeConfirmed] = useState(false);
-  const [loginTermsAccepted, setLoginTermsAccepted] = useState(false);
   const signupReveal = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -4227,7 +4079,6 @@ function PhoneAuthScreenV2({
     setSignupOtpError("");
     setPrivacyAccepted(false);
     setAgeConfirmed(false);
-    setLoginTermsAccepted(false);
     signupReveal.setValue(0);
   };
 
@@ -4241,10 +4092,6 @@ function PhoneAuthScreenV2({
 
   const login = async () => {
     if (!validLoginIdentifier || !validPassword) return;
-    if (!loginTermsAccepted) {
-      Alert.alert("동의 필요", "이용약관 및 커뮤니티 운영정책에 동의해주세요.");
-      return;
-    }
     setLoading(true);
     try {
       if (validAdminId) {
@@ -4576,61 +4423,6 @@ function PhoneAuthScreenV2({
             <Text style={s.authBody}>
               전화번호를 인증한 뒤 비밀번호를 설정해주세요.
             </Text>
-            {!signupPhoneVerified && (
-              <View style={s.signupConsentGroup}>
-                <Pressable
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: privacyAccepted }}
-                  onPress={() => setPrivacyAccepted((value) => !value)}
-                  style={s.signupConsentRow}
-                >
-                  <View
-                    style={[
-                      s.signupConsentBox,
-                      privacyAccepted && s.signupConsentBoxChecked,
-                    ]}
-                  >
-                    {privacyAccepted && (
-                      <Ionicons name="checkmark" size={14} color="#FFFFFF" />
-                    )}
-                  </View>
-                  <Text style={s.signupConsentText}>
-                    [필수] 이용약관, 개인정보 수집·이용 및 커뮤니티 운영정책에 동의합니다.
-                  </Text>
-                </Pressable>
-                <Text style={s.signupConsentNote}>
-                  유해 콘텐츠와 악성 이용자는 허용하지 않으며, 신고 접수 시 운영자가 24시간 이내 검토합니다.
-                </Text>
-                <Pressable
-                  onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
-                  style={s.signupPolicyLink}
-                >
-                  <Text style={s.signupPolicyLinkText}>
-                    개인정보 처리방침 및 커뮤니티 운영 기준 보기
-                  </Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: ageConfirmed }}
-                  onPress={() => setAgeConfirmed((value) => !value)}
-                  style={s.signupConsentRow}
-                >
-                  <View
-                    style={[
-                      s.signupConsentBox,
-                      ageConfirmed && s.signupConsentBoxChecked,
-                    ]}
-                  >
-                    {ageConfirmed && (
-                      <Ionicons name="checkmark" size={14} color="#FFFFFF" />
-                    )}
-                  </View>
-                  <Text style={s.signupConsentText}>
-                    [필수] 만 14세 이상입니다.
-                  </Text>
-                </Pressable>
-              </View>
-            )}
             <View style={s.authPhoneRow}>
               <TextInput
                 editable={!signupOtpRequested && !signupPhoneVerified}
@@ -4650,8 +4442,6 @@ function PhoneAuthScreenV2({
                 disabled={
                   loading ||
                   !validPhone ||
-                  !privacyAccepted ||
-                  !ageConfirmed ||
                   signupPhoneVerified ||
                   (signupOtpRequested && cooldown > 0)
                 }
@@ -4660,8 +4450,6 @@ function PhoneAuthScreenV2({
                   s.authVerifyButton,
                   (loading ||
                     !validPhone ||
-                    !privacyAccepted ||
-                    !ageConfirmed ||
                     signupPhoneVerified ||
                     (signupOtpRequested && cooldown > 0)) &&
                     s.authVerifyButtonDisabled,
@@ -4672,8 +4460,6 @@ function PhoneAuthScreenV2({
                     s.authVerifyText,
                     (loading ||
                       !validPhone ||
-                      !privacyAccepted ||
-                      !ageConfirmed ||
                       signupPhoneVerified ||
                       (signupOtpRequested && cooldown > 0)) &&
                       s.authVerifyTextDisabled,
@@ -4710,7 +4496,7 @@ function PhoneAuthScreenV2({
                   },
                 ]}
               >
-                <View style={[s.authPinHeader, s.androidHeaderInset58]}>
+                <View style={s.authPinHeader}>
                   <Text style={s.authPinLabel}>
                     {signupPhoneVerified
                       ? "전화번호 인증이 완료됐어요."
@@ -4840,18 +4626,15 @@ function PhoneAuthScreenV2({
                           )}
                         </View>
                         <Text style={s.signupConsentText}>
-                          [필수] 이용약관, 개인정보 수집·이용 및 커뮤니티 운영정책에 동의합니다.
+                          [필수] 개인정보 수집·이용에 동의합니다.
                         </Text>
                       </Pressable>
-                      <Text style={s.signupConsentNote}>
-                        유해 콘텐츠와 악성 이용자는 허용하지 않으며, 신고 접수 시 운영자가 24시간 이내 검토합니다.
-                      </Text>
                       <Pressable
                         onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
                         style={s.signupPolicyLink}
                       >
                         <Text style={s.signupPolicyLinkText}>
-                          개인정보 처리방침 및 커뮤니티 운영 기준 보기
+                          전화번호·인증정보 / 계정·서비스 제공 / 탈퇴 시까지 · 내용 보기
                         </Text>
                       </Pressable>
                       <Pressable
@@ -4996,7 +4779,7 @@ function PhoneAuthScreenV2({
                   },
                 ]}
               >
-                <View style={[s.authPinHeader, s.androidHeaderInset58]}>
+                <View style={s.authPinHeader}>
                   <Text style={s.authPinLabel}>
                     {signupPhoneVerified
                       ? "전화번호 인증이 완료됐어요."
@@ -5148,55 +4931,18 @@ function PhoneAuthScreenV2({
             style={s.authInput}
           />
         )}
-        {mode === "login" && (
-          <View style={s.signupConsentGroup}>
-            <Pressable
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: loginTermsAccepted }}
-              onPress={() => setLoginTermsAccepted((value) => !value)}
-              style={s.signupConsentRow}
-            >
-              <View
-                style={[
-                  s.signupConsentBox,
-                  loginTermsAccepted && s.signupConsentBoxChecked,
-                ]}
-              >
-                {loginTermsAccepted && (
-                  <Ionicons name="checkmark" size={14} color="#FFFFFF" />
-                )}
-              </View>
-              <Text style={s.signupConsentText}>
-                [필수] 이용약관 및 커뮤니티 운영정책에 동의합니다.
-              </Text>
-            </Pressable>
-            <Text style={s.signupConsentNote}>
-              유해 콘텐츠와 악성 이용자는 허용하지 않으며, 신고 접수 시 운영자가 24시간 이내 검토합니다.
-            </Text>
-            <Pressable
-              onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
-              style={s.signupPolicyLink}
-            >
-              <Text style={s.signupPolicyLinkText}>
-                개인정보 처리방침 및 커뮤니티 운영 기준 보기
-              </Text>
-            </Pressable>
-          </View>
-        )}
         <Pressable
           disabled={
             loading ||
             (mode === "login" ? !validLoginIdentifier : !validPhone) ||
-            (mode === "login" && !validPassword) ||
-            (mode === "login" && !loginTermsAccepted)
+            (mode === "login" && !validPassword)
           }
           onPress={mode === "login" ? login : requestRecovery}
           style={[
             s.primary,
             (loading ||
               (mode === "login" ? !validLoginIdentifier : !validPhone) ||
-              (mode === "login" && !validPassword) ||
-              (mode === "login" && !loginTermsAccepted)) &&
+              (mode === "login" && !validPassword)) &&
               s.disabled,
           ]}
         >
@@ -5490,7 +5236,7 @@ function MainScreen({
     <SafeAreaView style={s.safe}>
       <StatusBar style="dark" />
       {!storyDetailOpen && storySearchOpen && bottomTab === "stories" ? (
-        <View style={[s.searchHeader, s.androidHeaderInset58]}>
+        <View style={s.searchHeader}>
           <IconButton
             name="chevron-back"
             color={colors.textSubtle}
@@ -5525,7 +5271,7 @@ function MainScreen({
             colors={["#82B9C1", "#5DBB8C"]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
-            style={[s.mainHeader, s.androidHeaderInset56]}
+            style={s.mainHeader}
           >
             <View style={s.mainHeaderLogoWrap}>
               <MuteLogo symbolOnly variant="white" compact />
@@ -5845,7 +5591,7 @@ function SearchScreen({
     <SafeAreaView style={s.safe}>
       <EdgeBackLayer onBack={onBack} />
       <StatusBar style="dark" />
-      <View style={[s.searchHeader, s.androidHeaderInset58]}>
+      <View style={s.searchHeader}>
         <IconButton
           name="chevron-back"
           color={colors.textSubtle}
@@ -6772,10 +6518,7 @@ function ChatRoom({
   const olderMessagePageSize = 30;
   const appTheme = useAppTheme();
   const adsDisabled = useAdFree();
-  const safeAreaInsets = useSafeAreaInsets();
   const [chatKeyboardVisible, setChatKeyboardVisible] = useState(false);
-  const androidChatBottomInset =
-    Platform.OS === "android" && !chatKeyboardVisible ? safeAreaInsets.bottom : 0;
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
     isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
   );
@@ -8973,6 +8716,7 @@ function ChatRoom({
             opacity: chatReady ? 1 : 0,
           }}
           contentContainerStyle={s.messages}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           onLayout={(event) => {
@@ -9606,11 +9350,6 @@ function ChatRoom({
             )}
             {!readOnly && (
               <View
-                style={
-                  androidChatBottomInset
-                    ? { paddingBottom: androidChatBottomInset }
-                    : undefined
-                }
                 onLayout={() => {
                   if (!keyboardOpenedAtBottomRef.current) return;
                   requestAnimationFrame(() => scrollToLatestRef.current(false));
@@ -11008,7 +10747,7 @@ function StoryDetail({
           colors={["#82B9C1", "#5DBB8C"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
-          style={[s.storyDetailHeader, s.androidHeaderInset58]}
+          style={s.storyDetailHeader}
         >
           <Pressable onPress={onBack} style={s.storyHeaderAction}>
             <Ionicons name="chevron-back" size={22} color={foreground} />
@@ -12368,19 +12107,13 @@ function MemberProfile({
           "방장 양도하기",
           isMuted ? "채팅 금지 해제" : "채팅 금지",
           "강퇴하기",
-          "차단하기",
           "신고하기",
         ]
       : viewerRole === "cohost"
         ? member.owner || member.coHost
-          ? ["차단하기", "신고하기"]
-          : [
-              isMuted ? "채팅 금지 해제" : "채팅 금지",
-              "강퇴하기",
-              "차단하기",
-              "신고하기",
-            ]
-        : ["차단하기", "신고하기"];
+          ? ["신고하기"]
+          : [isMuted ? "채팅 금지 해제" : "채팅 금지", "강퇴하기", "신고하기"]
+        : ["신고하기"];
   const finishAction = (title: string, message: string) =>
     Alert.alert(title, message, [{ text: "확인", onPress: onBack }]);
   const applyMute = async (durationSeconds: number, labelText: string) => {
@@ -12400,41 +12133,6 @@ function MemberProfile({
   };
   const selectAction = async (label: string) => {
     setMenuOpen(false);
-    if (label === "차단하기") {
-      if (!manageableUserId) {
-        Alert.alert("차단 불가", "서버에 생성된 사용자만 차단할 수 있습니다.");
-        return;
-      }
-      Alert.alert(
-        "차단하기",
-        `${member.name}님을 차단하시겠습니까?\n차단한 사용자의 콘텐츠는 내 화면에서 숨겨지고 운영자 검토 요청이 접수됩니다.`,
-        [
-          { text: "취소", style: "cancel" },
-          {
-            text: "차단하기",
-            style: "destructive",
-            onPress: async () => {
-              try {
-                await blockUser(manageableUserId);
-                await submitReport({
-                  targetType: "user",
-                  targetId: manageableUserId,
-                  reason: "other",
-                  detail: `사용자 차단: ${member.name}`,
-                });
-                finishAction(
-                  "차단 완료",
-                  "사용자를 차단했고 운영자 검토 요청이 접수되었습니다.",
-                );
-              } catch (error) {
-                Alert.alert("차단 실패", serverErrorMessage(error));
-              }
-            },
-          },
-        ],
-      );
-      return;
-    }
     if (label === "신고하기") {
       if (!manageableUserId) {
         Alert.alert("신고 불가", "서버에 생성된 멤버만 신고할 수 있습니다.");
@@ -12877,8 +12575,12 @@ function ProfileQuickAction({
   );
 }
 
-function ProfileCaptureGuard() {
+function NativeProfileCaptureGuard() {
+  ScreenCapture.usePreventScreenCapture("mute-profile");
   return null;
+}
+function ProfileCaptureGuard() {
+  return Platform.OS === "web" ? null : <NativeProfileCaptureGuard />;
 }
 
 function RoomOverview({
@@ -15132,7 +14834,7 @@ function Settings({
     }
   };
   useEffect(() => {
-    safeGetStorageItem(APP_LOCK_ENABLED_KEY)
+    AsyncStorage.getItem(APP_LOCK_ENABLED_KEY)
       .then((value) => setAppLockEnabled(value === "1"))
       .catch(() => undefined);
   }, [lockSettingsOpen]);
@@ -15430,7 +15132,7 @@ function AppLockSettings({
   const [message, setMessage] = useState("");
   const [recovering, setRecovering] = useState(false);
   useEffect(() => {
-    safeGetStorageItem(APP_LOCK_ENABLED_KEY)
+    AsyncStorage.getItem(APP_LOCK_ENABLED_KEY)
       .then((value) => {
         const next = value === "1";
         setEnabled(next);
@@ -15439,27 +15141,7 @@ function AppLockSettings({
       })
       .catch(() => undefined);
   }, []);
-  const runAppLockStorageGuard = async <T,>(
-    action: () => Promise<T>,
-    fallback: T,
-  ) => {
-    try {
-      return await action();
-    } catch {
-      await clearAppLockCredentials();
-      setEnabled(false);
-      setDesiredEnabled(false);
-      setUnlocked(true);
-      setCurrent("");
-      setPin("");
-      setConfirm("");
-      setMessage("");
-      onChanged(false);
-      return fallback;
-    }
-  };
-  const verifyCurrent = async () =>
-    runAppLockStorageGuard(async () => {
+  const verifyCurrent = async () => {
     const stored = await readAppLockPin();
     if (current !== stored) {
       setMessage("현재 PIN이 일치하지 않습니다.");
@@ -15468,16 +15150,15 @@ function AppLockSettings({
     setMessage("");
     setUnlocked(true);
     return true;
-    }, false);
-  const save = async () =>
-    runAppLockStorageGuard(async () => {
+  };
+  const save = async () => {
     if (enabled && !unlocked && !(await verifyCurrent())) return;
     if (pin.length !== 4 || pin !== confirm) {
       setMessage("4자리 PIN이 일치하지 않습니다.");
       return;
     }
     await writeAppLockPin(pin);
-    await safeSetStorageItem(APP_LOCK_ENABLED_KEY, "1");
+    await AsyncStorage.setItem(APP_LOCK_ENABLED_KEY, "1");
     setEnabled(true);
     setDesiredEnabled(true);
     setUnlocked(true);
@@ -15487,9 +15168,8 @@ function AppLockSettings({
     setMessage("앱 잠금이 설정되었습니다.");
     onChanged(true);
     onBack();
-    }, undefined);
-  const disable = async () =>
-    runAppLockStorageGuard(async () => {
+  };
+  const disable = async () => {
     if (!(await verifyCurrent())) return;
     await clearAppLockCredentials();
     setEnabled(false);
@@ -15500,7 +15180,7 @@ function AppLockSettings({
     setConfirm("");
     setMessage("앱 잠금이 해제되었습니다.");
     onChanged(false);
-    }, undefined);
+  };
   const requestToggle = (value: boolean) => {
     setDesiredEnabled(value);
     setMessage("");
@@ -15753,8 +15433,6 @@ function BottomNav({
   docked?: boolean;
 }) {
   const theme = useAppTheme();
-  const insets = useSafeAreaInsets();
-  const androidBottomInset = Platform.OS === "android" ? insets.bottom : 0;
   const items: [BottomTab, IconName, IconName, string][] = [
     ["myRooms", "chatbubbles-outline", "chatbubbles", "내 채팅"],
     ["discover", "home-outline", "home", "홈"],
@@ -15762,18 +15440,7 @@ function BottomNav({
     ["profile", "person-outline", "person", "내 정보"],
   ];
   return (
-    <View
-      style={[
-        s.bottomNav,
-        androidBottomInset
-          ? {
-              height: 112 + androidBottomInset,
-              paddingBottom: 28 + androidBottomInset,
-            }
-          : null,
-        docked && s.bottomNavDocked,
-      ]}
-    >
+    <View style={[s.bottomNav, docked && s.bottomNavDocked]}>
       {items.map(([key, icon, active, label]) => (
         <Pressable key={key} onPress={() => onSelect(key)} style={s.navItem}>
           <Ionicons
@@ -15826,7 +15493,7 @@ function TopBar({
         colors={["#82B9C1", "#5DBB8C"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 0 }}
-        style={[s.topBar, Platform.OS === "android" && s.androidHeaderInset58]}
+        style={s.topBar}
       >
         <IconButton name="chevron-back" color={foreground} onPress={onBack} />
         <View style={s.topCenter}>
@@ -18921,13 +18588,6 @@ const s = StyleSheet.create({
     backgroundColor: colors.mint700,
   },
   signupConsentText: { flex: 1, color: colors.text, fontSize: 12 },
-  signupConsentNote: {
-    color: colors.textSubtle,
-    fontSize: 10,
-    lineHeight: 15,
-    paddingLeft: 29,
-    marginTop: -4,
-  },
   signupPolicyLink: { paddingLeft: 29, marginTop: -7 },
   signupPolicyLinkText: {
     color: colors.textSubtle,
@@ -18946,12 +18606,6 @@ const s = StyleSheet.create({
   authBackText: { color: colors.mint700, fontSize: 12, fontWeight: "700" },
   safe: { flex: 1, backgroundColor: colors.background, overflow: "hidden" },
   flex: { flex: 1, minWidth: 0 },
-  androidHeaderInset56: {
-    marginTop: ANDROID_STATUS_BAR_HEIGHT,
-  },
-  androidHeaderInset58: {
-    marginTop: ANDROID_STATUS_BAR_HEIGHT,
-  },
   mainHeader: {
     height: 56,
     paddingHorizontal: 12,
@@ -18969,7 +18623,6 @@ const s = StyleSheet.create({
   },
   muteLogo: { height: 44, flexDirection: "row", alignItems: "center", gap: 9 },
   muteLogoSymbol: { width: 38, height: 28 },
-  splashLogoWrap: { transform: [{ scale: 0.68 }] },
   muteLogoMark: { width: 50, height: 36 },
   muteName: {
     color: colors.text,

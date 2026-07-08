@@ -6,11 +6,6 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/mute-app-icon.png",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#FFFFFF"
-    },
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": false,
@@ -28,26 +23,12 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
-        "foregroundImage": "./assets/android-icon-foreground.png",
+        "foregroundImage": "./assets/mute-app-icon.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "splash": {
-        "image": "./assets/splash-icon.png",
-        "resizeMode": "contain",
-        "backgroundColor": "#FFFFFF"
-      },
       "predictiveBackGestureEnabled": false,
       "package": "app.mute.chat"
-    },
-    "androidStatusBar": {
-      "barStyle": "dark-content",
-      "backgroundColor": "#FFFFFF",
-      "translucent": true
-    },
-    "androidNavigationBar": {
-      "barStyle": "dark-content",
-      "backgroundColor": "#FFFFFF"
     },
     "web": {
       "favicon": "./assets/favicon.png"

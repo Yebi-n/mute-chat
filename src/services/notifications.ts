@@ -1,5 +1,5 @@
 import * as Device from 'expo-device';
-import * as Notifications from './expoNotifications';
+import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
@@ -14,7 +14,6 @@ export type ServerNotice = {
 };
 
 let foregroundRoomId: string | null = null;
-let notificationHandlerConfigured = false;
 
 export function setForegroundRoomId(roomId: string | null) {
   foregroundRoomId = roomId;
@@ -24,28 +23,20 @@ export function clearForegroundRoomId(roomId: string) {
   if (foregroundRoomId === roomId) foregroundRoomId = null;
 }
 
-export function configureNotificationHandler() {
-  if (notificationHandlerConfigured || Platform.OS === 'web') return;
-  try {
-    Notifications.setNotificationHandler({
-      handleNotification: async (notification) => {
-        const data = notification.request.content.data ?? {};
-        const roomId = typeof data.roomId === 'string' ? data.roomId : null;
-        const shouldSuppressRoomAlert =
-          Boolean(foregroundRoomId && roomId && foregroundRoomId === roomId);
-        return {
-          shouldPlaySound: !shouldSuppressRoomAlert,
-          shouldSetBadge: !shouldSuppressRoomAlert,
-          shouldShowBanner: !shouldSuppressRoomAlert,
-          shouldShowList: !shouldSuppressRoomAlert,
-        };
-      },
-    });
-    notificationHandlerConfigured = true;
-  } catch {
-    // Notification native modules can be unavailable during early startup.
-  }
-}
+Notifications.setNotificationHandler({
+  handleNotification: async (notification) => {
+    const data = notification.request.content.data ?? {};
+    const roomId = typeof data.roomId === 'string' ? data.roomId : null;
+    const shouldSuppressRoomAlert =
+      Boolean(foregroundRoomId && roomId && foregroundRoomId === roomId);
+    return {
+      shouldPlaySound: !shouldSuppressRoomAlert,
+      shouldSetBadge: !shouldSuppressRoomAlert,
+      shouldShowBanner: !shouldSuppressRoomAlert,
+      shouldShowList: !shouldSuppressRoomAlert,
+    };
+  },
+});
 
 export async function registerPushDevice() {
   if (!Device.isDevice || Platform.OS === 'web') return null;
