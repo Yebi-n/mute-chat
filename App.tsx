@@ -593,7 +593,7 @@ function isSecureStoreKeyError(error: unknown) {
 }
 
 async function readAppLockPin() {
-  if (Platform.OS === "web") return AsyncStorage.getItem(APP_LOCK_PIN_KEY);
+  if (Platform.OS === "web") return safeGetStorageItem(APP_LOCK_PIN_KEY);
 
   let secured: string | null = null;
   try {
@@ -604,11 +604,11 @@ async function readAppLockPin() {
   if (secured !== null) return secured;
 
   // Migrate PINs saved by versions released before SecureStore was introduced.
-  const legacy = await AsyncStorage.getItem(APP_LOCK_PIN_KEY);
+  const legacy = await safeGetStorageItem(APP_LOCK_PIN_KEY);
   if (legacy !== null) {
     try {
       await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, legacy);
-      await AsyncStorage.removeItem(APP_LOCK_PIN_KEY);
+      await safeRemoveStorageItems([APP_LOCK_PIN_KEY]);
     } catch {
       // SecureStore failure must not block app launch. Keep the AsyncStorage
       // fallback so existing users can still unlock and continue using the app.
@@ -619,19 +619,19 @@ async function readAppLockPin() {
 
 async function writeAppLockPin(pin: string) {
   if (Platform.OS === "web") {
-    await AsyncStorage.setItem(APP_LOCK_PIN_KEY, pin);
+    await safeSetStorageItem(APP_LOCK_PIN_KEY, pin);
     return;
   }
   try {
     await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, pin);
-    await AsyncStorage.removeItem(APP_LOCK_PIN_KEY);
+    await safeRemoveStorageItems([APP_LOCK_PIN_KEY]);
   } catch {
-    await AsyncStorage.setItem(APP_LOCK_PIN_KEY, pin);
+    await safeSetStorageItem(APP_LOCK_PIN_KEY, pin);
   }
 }
 
 async function clearAppLockCredentials() {
-  await AsyncStorage.multiRemove([APP_LOCK_ENABLED_KEY, APP_LOCK_PIN_KEY]);
+  await safeRemoveStorageItems([APP_LOCK_ENABLED_KEY, APP_LOCK_PIN_KEY]);
   if (Platform.OS !== "web") {
     try {
       await SecureStore.deleteItemAsync(APP_LOCK_SECURE_PIN_KEY);
@@ -790,8 +790,32 @@ const themeStorageKey = (userId?: string | null) =>
 const themeOwnershipStorageKey = (userId: string) =>
   `mute.app-theme-entitlements:${userId}`;
 
+async function safeGetStorageItem(key: string) {
+  try {
+    return await AsyncStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+async function safeSetStorageItem(key: string, value: string) {
+  try {
+    await AsyncStorage.setItem(key, value);
+  } catch {}
+}
+
+async function safeRemoveStorageItems(keys: string[]) {
+  try {
+    await AsyncStorage.multiRemove(keys);
+  } catch {
+    await Promise.all(
+      keys.map((key) => AsyncStorage.removeItem(key).catch(() => undefined)),
+    );
+  }
+}
+
 async function readCachedThemeProductIds(userId: string) {
-  const raw = await AsyncStorage.getItem(themeOwnershipStorageKey(userId));
+  const raw = await safeGetStorageItem(themeOwnershipStorageKey(userId));
   if (!raw) return [] as string[];
   try {
     const parsed = JSON.parse(raw);
@@ -811,7 +835,7 @@ async function cacheThemeProductIds(userId: string, productIds: string[]) {
     ]),
   );
   const owned = [...new Set(productIds.filter((id) => themeProductIds.has(id)))];
-  await AsyncStorage.setItem(
+  await safeSetStorageItem(
     themeOwnershipStorageKey(userId),
     JSON.stringify(owned),
   );
@@ -822,16 +846,16 @@ function applyAppTheme(theme: AppTheme) {
 }
 function selectAppTheme(theme: AppTheme, userId?: string | null) {
   applyAppTheme(theme);
-  void AsyncStorage.setItem(themeStorageKey(userId), theme.id);
-  void AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, theme.id);
+  void safeSetStorageItem(themeStorageKey(userId), theme.id);
+  void safeSetStorageItem(SPLASH_THEME_STORAGE_KEY, theme.id);
 }
 async function loadStoredAppTheme(
   userId?: string | null,
   ownedProductIds: string[] = [],
 ) {
   const stored =
-    (await AsyncStorage.getItem(themeStorageKey(userId))) ??
-    (userId ? null : await AsyncStorage.getItem("mute.app-theme"));
+    (await safeGetStorageItem(themeStorageKey(userId))) ??
+    (userId ? null : await safeGetStorageItem("mute.app-theme"));
   const found = APP_THEMES.find((theme) => theme.id === stored);
   const allowed =
     found &&
@@ -840,11 +864,11 @@ async function loadStoredAppTheme(
       (found.legacyProductIds ?? []).some((id) => ownedProductIds.includes(id)));
   const selected = allowed ? found : APP_THEMES[0];
   applyAppTheme(selected);
-  await AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, selected.id);
+  await safeSetStorageItem(SPLASH_THEME_STORAGE_KEY, selected.id);
 }
 
 async function loadSplashTheme() {
-  const stored = await AsyncStorage.getItem(SPLASH_THEME_STORAGE_KEY);
+  const stored = await safeGetStorageItem(SPLASH_THEME_STORAGE_KEY);
   const found = APP_THEMES.find((theme) => theme.id === stored);
   applyAppTheme(found ?? APP_THEMES[0]);
 }
@@ -2063,11 +2087,17 @@ function AppLockGate({
   const inactiveAtRef = useRef<number | null>(null);
   useEffect(() => {
     let active = true;
-    AsyncStorage.getItem(APP_LOCK_ENABLED_KEY)
+    safeGetStorageItem(APP_LOCK_ENABLED_KEY)
       .then((value) => {
         if (active) {
           setEnabled(value === "1");
           setUnlocked(value !== "1");
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setEnabled(false);
+          setUnlocked(true);
         }
       })
       .finally(() => {
@@ -2083,7 +2113,7 @@ function AppLockGate({
         inactiveAtRef.current = Date.now();
         return;
       }
-      AsyncStorage.getItem(APP_LOCK_ENABLED_KEY)
+      safeGetStorageItem(APP_LOCK_ENABLED_KEY)
         .then((value) => {
           const nextEnabled = value === "1";
           setEnabled(nextEnabled);
@@ -2097,7 +2127,8 @@ function AppLockGate({
           inactiveAtRef.current = null;
         })
         .catch(() => {
-          if (enabled) setUnlocked(false);
+          setEnabled(false);
+          setUnlocked(true);
         });
     });
     return () => subscription.remove();
@@ -2565,7 +2596,7 @@ function AuthenticatedApp({
       resetPurchaseConfiguration();
       setAdFreeActive(false);
       applyAppTheme(APP_THEMES[0]);
-      void AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, APP_THEMES[0].id);
+      void safeSetStorageItem(SPLASH_THEME_STORAGE_KEY, APP_THEMES[0].id);
       return;
     }
     // Apply the last server-confirmed ownership cache before the network round
@@ -15067,7 +15098,7 @@ function Settings({
     }
   };
   useEffect(() => {
-    AsyncStorage.getItem(APP_LOCK_ENABLED_KEY)
+    safeGetStorageItem(APP_LOCK_ENABLED_KEY)
       .then((value) => setAppLockEnabled(value === "1"))
       .catch(() => undefined);
   }, [lockSettingsOpen]);
@@ -15365,7 +15396,7 @@ function AppLockSettings({
   const [message, setMessage] = useState("");
   const [recovering, setRecovering] = useState(false);
   useEffect(() => {
-    AsyncStorage.getItem(APP_LOCK_ENABLED_KEY)
+    safeGetStorageItem(APP_LOCK_ENABLED_KEY)
       .then((value) => {
         const next = value === "1";
         setEnabled(next);
@@ -15382,7 +15413,6 @@ function AppLockSettings({
       return await action();
     } catch {
       await clearAppLockCredentials();
-      await AsyncStorage.removeItem(APP_LOCK_ENABLED_KEY);
       setEnabled(false);
       setDesiredEnabled(false);
       setUnlocked(true);
@@ -15413,7 +15443,7 @@ function AppLockSettings({
       return;
     }
     await writeAppLockPin(pin);
-    await AsyncStorage.setItem(APP_LOCK_ENABLED_KEY, "1");
+    await safeSetStorageItem(APP_LOCK_ENABLED_KEY, "1");
     setEnabled(true);
     setDesiredEnabled(true);
     setUnlocked(true);
