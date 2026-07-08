@@ -5,6 +5,10 @@ export async function initializeAds(): Promise<boolean> {
   return false;
 }
 
+export async function ensureTrackingPermissionRequested(): Promise<void> {
+  return undefined;
+}
+
 export async function showRewardedAd(
   _rewardType: 'attendance' | 'rewarded_ad',
 ): Promise<{ completed: boolean; rewardKey: string }> {

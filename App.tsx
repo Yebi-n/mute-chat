@@ -167,7 +167,7 @@ import {
 import {
   claimPointReward,
   getMyWallet,
-  initializeAds,
+  ensureTrackingPermissionRequested,
   listPointLedger,
   showRewardedAd,
 } from "./src/services/monetization";
@@ -2469,7 +2469,7 @@ function AuthenticatedApp({
     return () => subscription.remove();
   }, []);
   useEffect(() => {
-    initializeAds().catch(() => undefined);
+    ensureTrackingPermissionRequested().catch(() => undefined);
   }, []);
   useEffect(()=>{
     if(!supabase||!isSupabaseConfigured)return;

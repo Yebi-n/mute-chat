@@ -26,7 +26,7 @@ const IOS_REWARDED_UNIT_ID =
   process.env.EXPO_PUBLIC_ADMOB_REWARDED_IOS_ID
   || 'ca-app-pub-4013454985021474/1566965165';
 
-async function ensureTrackingPermissionRequested(): Promise<void> {
+export async function ensureTrackingPermissionRequested(): Promise<void> {
   if (Platform.OS !== 'ios') return;
   if (trackingPermissionPromise) return trackingPermissionPromise;
   trackingPermissionPromise = (async () => {
