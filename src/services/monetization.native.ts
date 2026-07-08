@@ -1,12 +1,7 @@
 import { Platform } from 'react-native';
-import {
-  getTrackingPermissionsAsync,
-  requestTrackingPermissionsAsync,
-} from 'expo-tracking-transparency';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import {
   AdEventType,
-  AdsConsent,
   MaxAdContentRating,
   RewardedAd,
   RewardedAdEventType,
@@ -21,40 +16,13 @@ export {
 } from './wallet';
 
 let adsInitializationPromise: Promise<boolean> | null = null;
-let trackingPermissionPromise: Promise<void> | null = null;
 const IOS_REWARDED_UNIT_ID =
   process.env.EXPO_PUBLIC_ADMOB_REWARDED_IOS_ID
   || 'ca-app-pub-4013454985021474/1566965165';
 
-async function ensureTrackingPermissionRequested(): Promise<void> {
-  if (Platform.OS !== 'ios') return;
-  if (trackingPermissionPromise) return trackingPermissionPromise;
-  trackingPermissionPromise = (async () => {
-    try {
-      const current = await getTrackingPermissionsAsync();
-      if (current.status === 'undetermined' && current.canAskAgain) {
-        await requestTrackingPermissionsAsync();
-      }
-    } catch {
-      // ATT failures should not block contextual ads. AdMob is still requested
-      // with non-personalized ad settings below.
-    }
-  })();
-  return trackingPermissionPromise;
-}
-
 export function initializeAds(): Promise<boolean> {
   if (adsInitializationPromise) return adsInitializationPromise;
   adsInitializationPromise = (async () => {
-    await ensureTrackingPermissionRequested();
-    try {
-      await AdsConsent.gatherConsent();
-    } catch {
-      // Previous-session consent can still permit ads when the form request
-      // temporarily fails. getConsentInfo is the final SDK gate below.
-    }
-    const consent = await AdsConsent.getConsentInfo();
-    if (!consent.canRequestAds) return false;
     await mobileAds().setRequestConfiguration({
       maxAdContentRating: MaxAdContentRating.T,
       tagForChildDirectedTreatment: false,
@@ -63,8 +31,8 @@ export function initializeAds(): Promise<boolean> {
     await mobileAds().initialize();
     return true;
   })().catch((error) => {
-    adsInitializationPromise = null;
-    throw error;
+    console.warn('[ads] initialization failed', error);
+    return false;
   });
   return adsInitializationPromise;
 }

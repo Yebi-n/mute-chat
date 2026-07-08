@@ -5,7 +5,6 @@ import {
   BannerAdSize,
   TestIds,
 } from 'react-native-google-mobile-ads';
-import { initializeAds } from '../services/monetization.native';
 
 export type BannerPlacement = 'main' | 'chat' | 'story';
 
@@ -69,17 +68,16 @@ export default function InlineBannerAd({
   );
 
   useEffect(() => {
-    if (disabled || !unitId) return;
+    if (disabled || !unitId) {
+      setSdkReady(false);
+      setLoaded(false);
+      setFailed(false);
+      return;
+    }
     let active = true;
     const timer = setTimeout(() => {
-      initializeAds()
-        .then((ready) => {
-          if (active) setSdkReady(ready);
-        })
-        .catch(() => {
-          if (active) setFailed(true);
-        });
-    }, 1500);
+      if (active) setSdkReady(true);
+    }, 800);
     return () => {
       active = false;
       clearTimeout(timer);
