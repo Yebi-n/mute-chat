@@ -149,6 +149,7 @@ import {
 import { sendUploadedImages, uploadValidatedImage } from "./src/services/media";
 import {
   acceptSignupCompliance,
+  blockUser,
   listReportedRoomIds,
   requestAccountDeletion,
   submitReport,
@@ -4074,6 +4075,7 @@ function PhoneAuthScreenV2({
   const [signupOtpError, setSignupOtpError] = useState("");
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [ageConfirmed, setAgeConfirmed] = useState(false);
+  const [loginTermsAccepted, setLoginTermsAccepted] = useState(false);
   const signupReveal = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -4128,6 +4130,7 @@ function PhoneAuthScreenV2({
     setSignupOtpError("");
     setPrivacyAccepted(false);
     setAgeConfirmed(false);
+    setLoginTermsAccepted(false);
     signupReveal.setValue(0);
   };
 
@@ -4141,6 +4144,10 @@ function PhoneAuthScreenV2({
 
   const login = async () => {
     if (!validLoginIdentifier || !validPassword) return;
+    if (!loginTermsAccepted) {
+      Alert.alert("동의 필요", "이용약관 및 커뮤니티 운영정책에 동의해주세요.");
+      return;
+    }
     setLoading(true);
     try {
       if (validAdminId) {
@@ -4472,6 +4479,61 @@ function PhoneAuthScreenV2({
             <Text style={s.authBody}>
               전화번호를 인증한 뒤 비밀번호를 설정해주세요.
             </Text>
+            {!signupPhoneVerified && (
+              <View style={s.signupConsentGroup}>
+                <Pressable
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: privacyAccepted }}
+                  onPress={() => setPrivacyAccepted((value) => !value)}
+                  style={s.signupConsentRow}
+                >
+                  <View
+                    style={[
+                      s.signupConsentBox,
+                      privacyAccepted && s.signupConsentBoxChecked,
+                    ]}
+                  >
+                    {privacyAccepted && (
+                      <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+                    )}
+                  </View>
+                  <Text style={s.signupConsentText}>
+                    [필수] 이용약관, 개인정보 수집·이용 및 커뮤니티 운영정책에 동의합니다.
+                  </Text>
+                </Pressable>
+                <Text style={s.signupConsentNote}>
+                  유해 콘텐츠와 악성 이용자는 허용하지 않으며, 신고 접수 시 운영자가 24시간 이내 검토합니다.
+                </Text>
+                <Pressable
+                  onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
+                  style={s.signupPolicyLink}
+                >
+                  <Text style={s.signupPolicyLinkText}>
+                    개인정보 처리방침 및 커뮤니티 운영 기준 보기
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: ageConfirmed }}
+                  onPress={() => setAgeConfirmed((value) => !value)}
+                  style={s.signupConsentRow}
+                >
+                  <View
+                    style={[
+                      s.signupConsentBox,
+                      ageConfirmed && s.signupConsentBoxChecked,
+                    ]}
+                  >
+                    {ageConfirmed && (
+                      <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+                    )}
+                  </View>
+                  <Text style={s.signupConsentText}>
+                    [필수] 만 14세 이상입니다.
+                  </Text>
+                </Pressable>
+              </View>
+            )}
             <View style={s.authPhoneRow}>
               <TextInput
                 editable={!signupOtpRequested && !signupPhoneVerified}
@@ -4491,6 +4553,8 @@ function PhoneAuthScreenV2({
                 disabled={
                   loading ||
                   !validPhone ||
+                  !privacyAccepted ||
+                  !ageConfirmed ||
                   signupPhoneVerified ||
                   (signupOtpRequested && cooldown > 0)
                 }
@@ -4499,6 +4563,8 @@ function PhoneAuthScreenV2({
                   s.authVerifyButton,
                   (loading ||
                     !validPhone ||
+                    !privacyAccepted ||
+                    !ageConfirmed ||
                     signupPhoneVerified ||
                     (signupOtpRequested && cooldown > 0)) &&
                     s.authVerifyButtonDisabled,
@@ -4509,6 +4575,8 @@ function PhoneAuthScreenV2({
                     s.authVerifyText,
                     (loading ||
                       !validPhone ||
+                      !privacyAccepted ||
+                      !ageConfirmed ||
                       signupPhoneVerified ||
                       (signupOtpRequested && cooldown > 0)) &&
                       s.authVerifyTextDisabled,
@@ -4675,15 +4743,18 @@ function PhoneAuthScreenV2({
                           )}
                         </View>
                         <Text style={s.signupConsentText}>
-                          [필수] 개인정보 수집·이용에 동의합니다.
+                          [필수] 이용약관, 개인정보 수집·이용 및 커뮤니티 운영정책에 동의합니다.
                         </Text>
                       </Pressable>
+                      <Text style={s.signupConsentNote}>
+                        유해 콘텐츠와 악성 이용자는 허용하지 않으며, 신고 접수 시 운영자가 24시간 이내 검토합니다.
+                      </Text>
                       <Pressable
                         onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
                         style={s.signupPolicyLink}
                       >
                         <Text style={s.signupPolicyLinkText}>
-                          전화번호·인증정보 / 계정·서비스 제공 / 탈퇴 시까지 · 내용 보기
+                          개인정보 처리방침 및 커뮤니티 운영 기준 보기
                         </Text>
                       </Pressable>
                       <Pressable
@@ -4980,18 +5051,55 @@ function PhoneAuthScreenV2({
             style={s.authInput}
           />
         )}
+        {mode === "login" && (
+          <View style={s.signupConsentGroup}>
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: loginTermsAccepted }}
+              onPress={() => setLoginTermsAccepted((value) => !value)}
+              style={s.signupConsentRow}
+            >
+              <View
+                style={[
+                  s.signupConsentBox,
+                  loginTermsAccepted && s.signupConsentBoxChecked,
+                ]}
+              >
+                {loginTermsAccepted && (
+                  <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+                )}
+              </View>
+              <Text style={s.signupConsentText}>
+                [필수] 이용약관 및 커뮤니티 운영정책에 동의합니다.
+              </Text>
+            </Pressable>
+            <Text style={s.signupConsentNote}>
+              유해 콘텐츠와 악성 이용자는 허용하지 않으며, 신고 접수 시 운영자가 24시간 이내 검토합니다.
+            </Text>
+            <Pressable
+              onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
+              style={s.signupPolicyLink}
+            >
+              <Text style={s.signupPolicyLinkText}>
+                개인정보 처리방침 및 커뮤니티 운영 기준 보기
+              </Text>
+            </Pressable>
+          </View>
+        )}
         <Pressable
           disabled={
             loading ||
             (mode === "login" ? !validLoginIdentifier : !validPhone) ||
-            (mode === "login" && !validPassword)
+            (mode === "login" && !validPassword) ||
+            (mode === "login" && !loginTermsAccepted)
           }
           onPress={mode === "login" ? login : requestRecovery}
           style={[
             s.primary,
             (loading ||
               (mode === "login" ? !validLoginIdentifier : !validPhone) ||
-              (mode === "login" && !validPassword)) &&
+              (mode === "login" && !validPassword) ||
+              (mode === "login" && !loginTermsAccepted)) &&
               s.disabled,
           ]}
         >
@@ -12163,13 +12271,19 @@ function MemberProfile({
           "방장 양도하기",
           isMuted ? "채팅 금지 해제" : "채팅 금지",
           "강퇴하기",
+          "차단하기",
           "신고하기",
         ]
       : viewerRole === "cohost"
         ? member.owner || member.coHost
-          ? ["신고하기"]
-          : [isMuted ? "채팅 금지 해제" : "채팅 금지", "강퇴하기", "신고하기"]
-        : ["신고하기"];
+          ? ["차단하기", "신고하기"]
+          : [
+              isMuted ? "채팅 금지 해제" : "채팅 금지",
+              "강퇴하기",
+              "차단하기",
+              "신고하기",
+            ]
+        : ["차단하기", "신고하기"];
   const finishAction = (title: string, message: string) =>
     Alert.alert(title, message, [{ text: "확인", onPress: onBack }]);
   const applyMute = async (durationSeconds: number, labelText: string) => {
@@ -12189,6 +12303,41 @@ function MemberProfile({
   };
   const selectAction = async (label: string) => {
     setMenuOpen(false);
+    if (label === "차단하기") {
+      if (!manageableUserId) {
+        Alert.alert("차단 불가", "서버에 생성된 사용자만 차단할 수 있습니다.");
+        return;
+      }
+      Alert.alert(
+        "차단하기",
+        `${member.name}님을 차단하시겠습니까?\n차단한 사용자의 콘텐츠는 내 화면에서 숨겨지고 운영자 검토 요청이 접수됩니다.`,
+        [
+          { text: "취소", style: "cancel" },
+          {
+            text: "차단하기",
+            style: "destructive",
+            onPress: async () => {
+              try {
+                await blockUser(manageableUserId);
+                await submitReport({
+                  targetType: "user",
+                  targetId: manageableUserId,
+                  reason: "other",
+                  detail: `사용자 차단: ${member.name}`,
+                });
+                finishAction(
+                  "차단 완료",
+                  "사용자를 차단했고 운영자 검토 요청이 접수되었습니다.",
+                );
+              } catch (error) {
+                Alert.alert("차단 실패", serverErrorMessage(error));
+              }
+            },
+          },
+        ],
+      );
+      return;
+    }
     if (label === "신고하기") {
       if (!manageableUserId) {
         Alert.alert("신고 불가", "서버에 생성된 멤버만 신고할 수 있습니다.");
@@ -18657,6 +18806,13 @@ const s = StyleSheet.create({
     backgroundColor: colors.mint700,
   },
   signupConsentText: { flex: 1, color: colors.text, fontSize: 12 },
+  signupConsentNote: {
+    color: colors.textSubtle,
+    fontSize: 10,
+    lineHeight: 15,
+    paddingLeft: 29,
+    marginTop: -4,
+  },
   signupPolicyLink: { paddingLeft: 29, marginTop: -7 },
   signupPolicyLinkText: {
     color: colors.textSubtle,
