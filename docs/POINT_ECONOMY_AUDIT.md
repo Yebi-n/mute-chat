@@ -1,5 +1,7 @@
 # Mute point economy audit
 
+> 최신 기준(2026-07-07): 포인트/상품/광고 보상 정책은 `MONETIZATION_SETUP.md`가 기준입니다. 이 문서는 과거 가격 검토 기록으로만 봅니다.
+
 Checked: 2026-06-22
 
 ## Top Space

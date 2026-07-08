@@ -1,5 +1,7 @@
 # Requests 15-32 Implementation Status
 
+> 최신 기준(2026-07-07): 이 문서는 2026-06 당시 구현 상태 기록입니다. 현재 작업 기준은 `DOCS_INDEX.md`, `HANDOFF_CODEX.md`, `ACTION_PLAN.md`, `PRODUCT_SPEC.md`, `STORE_COMPLIANCE.md`, `MONETIZATION_SETUP.md`, `ADULT_WEB_FLOW_SETUP.md`를 우선합니다.
+
 Updated: 2026-06-22
 
 ## Implemented

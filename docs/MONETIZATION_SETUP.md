@@ -1,114 +1,100 @@
-# Mute monetization setup
+# 결제/포인트/아이템 설정
 
-## Store products
+최종 업데이트: 2026-07-07
 
-- Point packages are App Store / Play Store consumables.
-- App themes are non-consumables.
-- `mute_ad_free_monthly`: auto-renewing subscription, KRW 5,900/month.
+## 결제 원칙
 
-Chat bubble, text color, and custom background items are point purchases inside the app. They are not separate App Store products.
+- iOS는 StoreKit + Supabase 자체 영수증 검증을 사용한다.
+- RevenueCat은 현재 사용하지 않는다.
+- Apple IAP 상품 ID는 App Store Connect에 등록된 값과 정확히 일치해야 한다.
+- 코드에 임시 suffix(`_unlock_v2` 등)가 남으면 `STORE_PRODUCT_NOT_FOUND` 또는 검증 실패가 난다.
+- 사용자가 여러 앱 계정으로 로그인/로그아웃할 수 있으므로, 구매 트랜잭션과 앱 계정 매핑을 명확히 처리해야 한다.
 
-The app uses `expo-iap` to open the native purchase sheet. Supabase `verify-store-purchase` verifies purchases directly against Apple App Store Server API before crediting points or entitlements.
+## Supabase
 
-## AdMob
+- 구매 검증 함수: `verify-store-purchase`
+- Apple IAP private key, key id, issuer id, bundle id는 Supabase secrets에 저장한다.
+- 클라이언트는 구매 후 receipt/transaction 정보를 서버로 보내고, 서버가 검증 후 entitlement/point ledger를 갱신한다.
 
-광고 형식과 화면별 배치 기준은
-`docs/ADMOB_AD_FORMAT_AND_PLACEMENT.md`를 따른다.
+## 상품 유형
 
-Development builds use Google's official test ad units unless production IDs
-are explicitly enabled.
+| 유형 | 정책 |
+| --- | --- |
+| 포인트 충전 | Consumable |
+| 앱 테마 | Non-consumable |
+| 광고 없는 계정 | Monthly subscription |
+| 색연필/말풍선/커스텀 색상 | 포인트 구매형 7일 entitlement |
+| 탑스페이스/프로모션 | 포인트 사용 |
 
-Rewarded ads and adaptive banner ads are enabled. Interstitial ads are
-intentionally excluded to keep chat and story navigation uninterrupted.
+## 앱 테마
 
-### AdMob console setup
+노출 순서:
 
-1. In AdMob, add the iOS app with bundle ID `app.mute.chat`.
-2. Add an Android app later with package name `app.mute.chat`.
-3. Create one **Rewarded** ad unit for each platform.
-4. Create adaptive **Banner** units for main, chat, and story placements. Until
-   separate units are ready, the app falls back to the shared iOS banner unit.
-5. In each rewarded unit's server-side verification settings, enter the SSV
-   callback URL below.
-6. In Privacy & messaging, publish the consent message required for the regions
-   where the app will be distributed.
+1. 기본테마
+2. 오션
+3. 라벤더
+4. 선셋
+5. 모노
+6. 화이트
+7. 다크
 
-AdMob provides two different identifiers:
+가격:
 
-- App ID: `ca-app-pub-...~...` - goes in the `react-native-google-mobile-ads`
-  plugin configuration in `app.json`.
-- Rewarded ad unit ID: `ca-app-pub-.../...` - goes in the EAS environment
-  variables below and in the Supabase allowlist secret.
-- Banner ad unit ID: `ca-app-pub-.../...` - goes in the EAS environment
-  variables below for each placement.
+- 오션/라벤더/선셋/모노: 4,900원
+- 화이트/다크: 3,900원
 
-Set these EAS environment variables before production:
+UX:
 
-- `EXPO_PUBLIC_ADMOB_REWARDED_IOS_ID` (currently `ca-app-pub-4013454985021474/1566965165`)
-- `EXPO_PUBLIC_ADMOB_REWARDED_ANDROID_ID`
-- `EXPO_PUBLIC_ADMOB_USE_TEST_ADS=false`
-- `EXPO_PUBLIC_ADMOB_BANNER_MAIN_IOS_ID` (currently `ca-app-pub-4013454985021474/9051959127`)
-- `EXPO_PUBLIC_ADMOB_BANNER_CHAT_IOS_ID` (optional placement override)
-- `EXPO_PUBLIC_ADMOB_BANNER_STORY_IOS_ID` (optional placement override)
+- 보유하지 않은 테마: `구매하기`
+- 이미 보유한 테마: `적용하기`
+- 로그아웃 후 다른 계정으로 로그인하면 이전 계정의 테마가 남으면 안 된다.
+- 앱 시작 스플래시도 현재 적용 테마에 맞춰 보여야 한다.
 
-Use separate production ad units for main, chat, and story placements. Until the
-two additional units are created, chat and story fall back to the main inline
-banner unit. See `docs/ADMOB_AD_FORMAT_AND_PLACEMENT.md` for the placement and
-policy rules.
+## 광고 없는 계정
 
-Use official Google test IDs until all production identifiers are configured.
-The repository defaults to test ads even in TestFlight. Set
-`EXPO_PUBLIC_ADMOB_USE_TEST_ADS=false` only for App Store release builds or
-after registering every tester device as an AdMob test device.
+- 월 5,900원
+- 적용 중이면 `이용 중` 표시
+- 적용 중에는 `구매 복원` 버튼을 숨긴다.
+- 미구매 상태에서는 `구매하기`와 `구매 복원`을 모두 제공한다.
+- 적용 중이면 모든 광고 배너와 배너 예약 여백, 광고 때문에 올라간 FAB offset을 제거한다.
 
-Reward rules:
+## 색연필/말풍선
 
-- Attendance reward: 20 P, once every 1 hour
-- Optional rewarded ad: 10 P, once every 1 hour
+- 모두 포인트 구매다.
+- 유효기간은 7일이다.
+- 구매한 아이템은 모든 방에서 사용할 수 있다.
+- 특정 방에서 선택한 색상은 로그아웃/앱 재시작 후에도 유지되어야 한다.
+- 탈퇴/로그아웃 후 다른 계정에는 이전 계정 아이템이 보이면 안 된다.
 
-Development builds use Google's official test IDs. Production must use AdMob
-server-side verification (SSV) before crediting points; the client
-`EARNED_REWARD` event alone is not sufficient proof.
+## 커스텀 색상
 
-Production setup requires:
+- 최대 10개 활성 슬롯
+- UI에는 점선 + 버튼 하나만 보인다.
+- 구매할 때 비어 있는 슬롯의 상품 ID를 사용한다.
+- 활성 커스텀 색상이 10개면 + 버튼을 숨긴다.
+- 유효기간 만료 또는 삭제 시 해당 슬롯이 다시 비어야 한다.
+- 커스텀 색상 삭제는 서버상 만료 처리로 간주한다.
+- 표시 이름: `커스텀 색상(R: 000, G: 000, B: 000)`
 
-- iOS and Android AdMob app IDs
-- one rewarded ad unit ID per platform
-- SSV callback URL configured on both rewarded ad units
-- EAS environment variables for the rewarded ad unit IDs
-- Supabase SSV signature verification and transaction-id idempotency
+## 포인트 정책
 
-SSV callback URL:
+- 출석 체크: 1시간마다 20P
+- 광고 보고 포인트 더 받기: 출석 체크가 비활성화된 1시간 구간 동안 1회
+- 광고 보상: 10P
+- 출석 체크가 다시 활성화되면 광고 보상 가능 상태도 다음 사이클로 갱신
 
-`https://oxanqrmkvyniocxwreia.supabase.co/functions/v1/admob-reward-ssv`
+## 탑스페이스
 
-Deploy after setting the production rewarded unit IDs:
+- 포인트 사용 전 확인 팝업을 띄운다.
+- 결제/사용 후 채팅방 공지선에 횟수 기준으로 표시한다.
+- 명예의 전당/랭킹도 포인트가 아니라 횟수 기준으로 계산한다.
 
-```powershell
-npx.cmd supabase secrets set ADMOB_REWARDED_AD_UNIT_IDS="<ios-unit-id>,<android-unit-id>"
-npx.cmd supabase db push
-npx.cmd supabase functions deploy admob-reward-ssv --no-verify-jwt
-```
+## 장애 점검
 
-Do not replace the Google sample app IDs in `app.json` until the real AdMob
-app IDs and rewarded unit IDs have been created. TestFlight production testing
-must use a test device configured in AdMob; never click live ads for testing.
-
-## StoreKit direct verification
-
-Current iOS secrets:
-
-- `APP_STORE_IAP_KEY_ID`
-- `APP_STORE_ISSUER_ID`
-- `APP_STORE_BUNDLE_ID`
-- `APP_STORE_IAP_PRIVATE_KEY`
-
-See `docs/STOREKIT_REVENUECAT_SETUP.md` for exact product IDs and deployment steps. The filename is kept for continuity, but the current decision is no RevenueCat.
-
-## Adult verification
-
-The `start-adult-verification` Edge Function expects:
-
-- `ADULT_VERIFICATION_START_URL`
-
-This URL must point to the contracted identity provider integration. Its signed callback must set `users.adult_verified_at` only after confirming the user is at least 19. Do not store resident registration numbers.
+| 증상 | 우선 확인 |
+| --- | --- |
+| `STORE_PRODUCT_NOT_FOUND` | App Store Connect 상품 ID와 코드 상품 ID 일치 여부 |
+| `STORE_VERIFICATION_FAILED` | Supabase secrets, Apple key id/issuer/bundle id, transaction ownership |
+| `TRANSACTION_OWNED_BY_ANOTHER_ACCOUNT` | 로그아웃 시 로컬 구매/계정 캐시 정리 여부 |
+| 구매했는데 `구매하기` 표시 | entitlement 조회/캐시 무효화 |
+| 광고 제거인데 여백 남음 | ad-free entitlement와 ad reserved layout 분기 |

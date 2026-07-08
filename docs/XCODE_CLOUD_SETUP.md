@@ -1,136 +1,70 @@
-# Xcode Cloud Setup
+# Xcode Cloud 빌드 설정
 
-## Current Status
+최종 업데이트: 2026-07-07
 
-EAS iOS free build quota is exhausted until 2026-07-01. Mute should move iOS native builds to Xcode Cloud to use Apple Developer Program included compute time.
+## 현재 기준
 
-Status as of 2026-06-23:
-
-- GitHub repository: `https://github.com/Yebi-n/mute-chat`
-- Branch: `main`
-- GitHub Actions workflow `Generate iOS project` ran successfully.
-- `ios/` was generated and committed by GitHub Actions commit `cc9b826`.
-- Generated native project: `ios/app.xcodeproj`
-- Generated scheme: `app`
+- iOS 기본 빌드 경로는 Xcode Cloud다.
+- EAS iOS는 무료 빌드 한도 때문에 백업 경로로만 둔다.
+- GitHub 저장소: `https://github.com/Yebi-n/mute-chat`
+- 기본 브랜치: `main`
 - Bundle ID: `app.mute.chat`
+- App Store Connect 앱 ID: `6781187934`
 
-## Important Limitation
-
-App Store Connect currently shows this Xcode Cloud instruction:
-
-```text
-시작하려면 Xcode에서 워크플로를 생성하십시오.
-```
-
-That means the first Xcode Cloud workflow cannot be completed from the App Store Connect web page on Windows. The repository and `ios/` project can be prepared from Windows, but the first Xcode Cloud workflow must be created once from Xcode on macOS.
-
-After the first workflow exists, future runs and edits can be managed from App Store Connect.
-
-## Why This Order
-
-The current Windows machine cannot generate the iOS native project with `expo prebuild --platform ios`; Expo requires macOS or Linux for that step. Therefore:
-
-1. Push this repository to GitHub.
-2. Run the GitHub Actions workflow `Generate iOS project` once.
-3. The workflow generates and commits the `ios/` folder from Linux.
-4. Open the generated project once from macOS Xcode.
-5. Create the first Xcode Cloud workflow from Xcode.
-6. Use Xcode Cloud for future iOS native builds and TestFlight distribution.
-
-This avoids consuming EAS build quota for normal native iOS builds.
-
-## Required Local Checks
-
-Before pushing native or build-pipeline changes:
-
-```powershell
-cd C:\Users\trudy\mute-chat
-npm.cmd run typecheck
-npx.cmd expo config --type public
-```
-
-## GitHub Repository
-
-Remote:
-
-```text
-origin  https://github.com/Yebi-n/mute-chat.git
-```
-
-Useful commands:
+## 일반 빌드 흐름
 
 ```powershell
 cd C:\Users\trudy\mute-chat
 git status --short
-git log --oneline --decorate -5
+npm.cmd run typecheck
+git add <changed-files>
+git commit -m "..."
+git pull --rebase origin main
 git push origin main
 ```
 
-## Generate iOS Project
+`main`에 push하면 Xcode Cloud 워크플로가 실행된다.
 
-This is already done once. To regenerate after native config changes:
+## 스크린샷 데모 모드
 
-1. Open `https://github.com/Yebi-n/mute-chat`.
-2. Go to `Actions`.
-3. Select `Generate iOS project`.
-4. Run workflow on branch `main`.
-5. Confirm the workflow commits the updated `ios/` directory.
-6. Pull the result locally:
+- 스크린샷 캡처 전용: `EXPO_PUBLIC_SCREENSHOT_DEMO=1`
+- 심사용/실사용 빌드: 제거하거나 `0`
+- 데모 모드가 켜져 있으면 Supabase 대신 로컬 샘플 데이터가 보인다.
 
-```powershell
-cd C:\Users\trudy\mute-chat
-git pull --ff-only origin main
+## ci_post_clone 주의
+
+Xcode Cloud 기본 이미지에는 Node가 없을 수 있다. `ios/ci_scripts/ci_post_clone.sh`에서 Node 설치 또는 경로 설정을 처리한다.
+
+빌드 실패 예시:
+
+```text
+error: Node.js was not found in Xcode Cloud image.
+Running ci_post_clone.sh script failed (exited with code 1)
 ```
 
-The workflow is intentionally manual, not automatic, to avoid unnecessary GitHub Actions usage.
+이 경우 `ci_post_clone.sh`의 Node 설치 로직을 먼저 확인한다.
 
-## First Xcode Cloud Setup
+## 빌드 번호
 
-Requires macOS Xcode:
+App Store Connect 업로드는 이전 빌드보다 높은 build number가 필요하다.
 
-1. On a Mac, clone `https://github.com/Yebi-n/mute-chat`.
-2. Run `npm ci`.
-3. Open `ios/app.xcodeproj` in Xcode. If CocoaPods creates a workspace locally, open the workspace instead.
-4. Sign in to Xcode with the Apple Developer account that owns `app.mute.chat`.
-5. Use Product > Xcode Cloud > Create Workflow.
-6. Select repository `Yebi-n/mute-chat`, branch `main`, scheme `app`.
-7. Set workflow action to Archive.
-8. Set signing to Apple managed signing for bundle ID `app.mute.chat`.
-9. Set distribution to TestFlight.
-10. Save and run the workflow.
+오류 예시:
 
-The repo includes `.ci_scripts/ci_post_clone.sh`; Xcode Cloud runs it after checkout. It installs npm dependencies and runs `pod install`.
+```text
+The bundle version must be higher than the previously uploaded version.
+```
 
-## If No Mac Is Available
+해결:
 
-Use one of these fallbacks:
+- Xcode Cloud 빌드 번호 자동 증가 설정 확인
+- 또는 native/app config의 build number를 올린 뒤 재빌드
 
-1. Wait for EAS free quota reset on 2026-07-01.
-2. Temporarily upgrade EAS for urgent TestFlight binaries.
-3. Use a short-lived rented or borrowed Mac only for the first Xcode Cloud workflow creation.
-4. Build through GitHub Actions macOS runners with App Store Connect API key, Apple distribution certificate, and provisioning profile secrets.
+## iPad 지원
 
-GitHub Actions macOS is a fallback, not the preferred primary path, because it is more setup work and normally costs more than Xcode Cloud included hours.
+앱은 현재 iPhone 중심이다. App Store Connect에서 iPad 스크린샷을 요구하면 다음 중 하나를 선택한다.
 
-## Secrets
+- iPad 지원을 끄고 iPhone only로 설정 후 재빌드
+- iPad 스크린샷 13형 디스플레이 요구사항을 충족해 업로드
 
-Do not commit:
+현재 목표는 iPhone only다.
 
-- `.env`
-- Apple `.p8`
-- certificates
-- provisioning profiles
-- keystores
-- service-role keys
-
-Supabase Apple IAP secrets are configured in Supabase, not in the repository.
-
-## When To Use EAS Again
-
-Use EAS only as fallback:
-
-- Xcode Cloud is unavailable.
-- urgent build is needed.
-- Xcode Cloud workflow is blocked and cannot be fixed quickly.
-
-For JavaScript-only fixes after a binary with `expo-updates` is introduced, use OTA updates instead of native builds.

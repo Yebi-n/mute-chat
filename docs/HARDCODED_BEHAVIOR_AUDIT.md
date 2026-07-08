@@ -1,5 +1,7 @@
 # Hardcoded Behavior Audit
 
+> 최신 기준(2026-07-07): 현재 하드코딩/더미데이터 운영 기준은 `HANDOFF_CODEX.md`, `SCREENSHOT_DEMO_MODE.md`, `ACTION_PLAN.md`를 우선합니다. 이 문서는 과거 감사 기록입니다.
+
 Updated: 2026-06-21
 
 This document tracks hardcoded/demo behavior that can make TestFlight QA pass

@@ -1,472 +1,176 @@
-# Mute Handoff
+# Mute 인수인계
 
-Updated: 2026-06-19
+최종 업데이트: 2026-07-07
 
-This document is for handing the project to another Codex/operator so they can continue immediately without reconstructing context.
+## 목적
 
-## 1. Project identity
+이 문서만 읽어도 새 Codex 또는 개발자가 `C:\Users\trudy\mute-chat`에서 바로 이어서 작업할 수 있도록 현재 구조, 배포 방식, 서버, 심사 상태, 주의점을 정리한다.
 
-- App name: `뮤트`
-- English name: `Mute`
-- Local workspace: `C:\Users\trudy\mute-chat`
-- Current app version: `0.1.0`
-- Frontend stack:
-  - Expo `~56.0.11`
-  - React `19.2.3`
-  - React Native `0.85.3`
-  - TypeScript `~6.0.3`
-- Backend stack:
-  - Supabase
-  - Supabase Auth
-  - Supabase Realtime / Postgres-backed room, story, chat features
-- Monetization libraries already installed:
-  - `react-native-google-mobile-ads`
-  - `expo-iap`
+## 로컬/원격
 
-## 2. Current architecture reality
+- 로컬 폴더: `C:\Users\trudy\mute-chat`
+- GitHub: `Yebi-n/mute-chat`
+- 기본 브랜치: `main`
+- iOS Bundle ID: `app.mute.chat`
+- App Store Connect 앱 ID: `6781187934`
+- Supabase project ref: `oxanqrmkvyniocxwreia`
 
-The app is still heavily concentrated in one file.
+## 현재 배포 전략
 
-- Main UI file: `App.tsx`
-- Theme file: `src/theme.ts`
-- Mock room/story seed data: `src/mockData.ts`
-- Service layer: `src/services/*`
-- Supabase client: `src/lib/supabase`
+### iOS
 
-Practical notes:
+- 기본 빌드 경로는 Xcode Cloud다.
+- GitHub `main`에 푸시하면 Xcode Cloud가 빌드한다.
+- EAS iOS는 무료 빌드 한도 때문에 백업 경로로만 사용한다.
+- Xcode Cloud 빌드 실패 시 먼저 `ios/ci_scripts/ci_post_clone.sh`와 Node 설치 로그를 확인한다.
+- 빌드 번호 오류가 나면 이전 업로드 빌드보다 높은 build number가 필요하다.
 
-- A large amount of UI state, navigation state, and dummy behavior still lives in `App.tsx`.
-- Before major refactors, stabilize behavior first.
-- This repo is still in feature-integration mode, not cleanup mode.
-
-## 3. Local run commands
-
-From `C:\Users\trudy\mute-chat`:
-
-```bash
-npm install
-npm run start
-npm run web
-npm run android
-npm run ios
-npm run typecheck
-```
-
-Preview commands already defined:
-
-```bash
-npm run preview:android
-npm run preview:ios
-```
-
-Those scripts map to EAS preview builds, but `preview` is currently `internal` distribution, not TestFlight distribution.
-
-## 4. Mobile testing reality
-
-### 4.1 Web / tunnel preview
-
-The project has been tested through Expo web tunnel links such as `https://*.exp.direct`.
-
-Important constraints:
-
-- those links are temporary
-- old links die and can show `ERR_NGROK_3200`
-- if the page is white, first suspect:
-  - stale tunnel link
-  - stale browser cache
-  - a web-only runtime crash in `App.tsx`
-
-Practical workflow:
-
-1. start Expo again
-2. use a fresh tunnel link
-3. close the old browser tab fully
-4. reopen the new link
-
-### 4.2 iPhone testing
-
-Expo Go has already failed once because the project required a newer Expo Go version.
-
-Implication:
-
-- do not assume Expo Go is stable enough for iPhone QA
-- web tunnel is the fastest fallback
-- TestFlight is the real QA path for device testing
-
-### 4.3 Current iOS distribution reality
-
-Apple Developer is active and TestFlight delivery is already being used.
-
-Important distinction:
-
-- `build` creates an iOS binary on EAS
-- `submit` uploads that binary to App Store Connect / TestFlight
-
-Current commands:
+일반 작업 순서:
 
 ```powershell
-npx eas-cli@latest build --platform ios --profile production
-npx eas-cli@latest submit --platform ios --latest
+cd C:\Users\trudy\mute-chat
+git status --short
+npm.cmd run typecheck
+git add <changed-files>
+git commit -m "..."
+git pull --rebase origin main
+git push origin main
 ```
 
-Why `production` matters:
+### Android
 
-- `eas.json` has `preview.distribution = internal`
-- that is why `preview` triggers device-registration flow
-- for TestFlight, use `production` unless `eas.json` is changed
+- Android는 iOS와 병렬로 준비한다.
+- iOS 설정을 건드리지 않는 것을 원칙으로 한다.
+- Google Play Console 수동 처리와 기기 인증 확인은 사용자가 진행했다.
+- 초기 Android 빌드는 EAS Android 또는 추후 GitHub Actions/Gradle 중 비용이 낮은 쪽을 선택한다.
 
-## 5. Backend environment
+## 데모 모드
 
-### 5.1 Supabase
+앱스토어 스크린샷 캡처용 데모 모드가 있다.
 
-Supabase project is already linked.
+- 환경변수: `EXPO_PUBLIC_SCREENSHOT_DEMO=1`
+- Supabase에 저장하지 않는 로컬 전용 데이터
+- 심사용/실사용 빌드에서는 반드시 제거하거나 `0`으로 설정
 
-- Project ref: `oxanqrmkvyniocxwreia`
-- Base URL pattern: `https://oxanqrmkvyniocxwreia.supabase.co`
+검수 체크:
 
-Previously completed:
-
-```bash
-npx supabase link --project-ref oxanqrmkvyniocxwreia
+```powershell
+Select-String -Path ios/.xcode.env -Pattern "EXPO_PUBLIC_SCREENSHOT_DEMO"
 ```
 
-If schema changes need to be pushed:
+## Supabase
 
-```bash
-npx supabase db push
+기본 명령:
+
+```powershell
+cd C:\Users\trudy\mute-chat
+npx.cmd supabase login
+npx.cmd supabase link --project-ref oxanqrmkvyniocxwreia
+npx.cmd supabase db push
 ```
 
-### 5.2 Environment handling
+Edge Function 배포:
 
-Do not expose secrets in code or docs.
+```powershell
+npx.cmd supabase functions deploy <function-name> --no-verify-jwt
+```
 
-Expected model:
+주의:
 
-- publishable key in app env
-- secret/service-role only in server-side or dashboard-side configuration
+- `schema_migrations_pkey` 중복 에러는 해당 마이그레이션이 이미 원격 DB에 적용됐다는 뜻일 수 있다.
+- 이 경우 실패로 단정하지 말고 함수/컬럼이 실제 존재하는지 SQL로 확인한다.
+- `supabase/.temp/*` 파일은 로컬 상태 파일이므로 커밋하지 않는다.
 
-### 5.3 SMS authentication
+## 주요 서버 기능
 
-Phone auth is implemented with:
+- 전화번호 회원가입/로그인
+- 방 생성/수정/삭제
+- 방 멤버/권한/가입신청
+- 채팅/사진/쪽지/하트/포인트 전송
+- 스토리/댓글
+- 신고/차단
+- 포인트/아이템/테마 구매 검증
+- AdMob 리워드 SSV
+- 운영자 신고 확인 웹
 
-- phone number + password login/signup UX in app
-- SMS OTP delivery
+## 결제/광고
 
-There was active work using Solapi for SMS delivery.
+자세한 값은 `MONETIZATION_SETUP.md`와 `ADMOB_AD_FORMAT_AND_PLACEMENT.md`를 기준으로 한다.
 
-Operational facts:
+핵심 기준:
 
-- Solapi credit balance matters
-- sender-number registration matters
-- OTP can appear to fail if credits are exhausted or provider-side delivery is blocked
-- Supabase Auth hook configuration is part of this path
+- StoreKit은 RevenueCat 없이 자체 검증한다.
+- 검증 함수: `verify-store-purchase`
+- Apple IAP 상품 ID는 App Store Connect의 ID와 정확히 일치해야 한다.
+- 앱 코드에 `_unlock_v2` 같은 임시 suffix가 남아 있으면 구매 검증이 실패한다.
+- 광고 제거 구매 계정은 배너와 배너 예약 여백까지 모두 사라져야 한다.
 
-### 5.4 Auth hook / provider setup
+## 성인 기능
 
-There was a manual setup step involving:
+- iOS 심사 빌드에서는 성인 탭과 성인인증 진입점을 노출하지 않는다.
+- 방 생성/편집에서 성인 항목은 비활성화 상태로 표시한다.
+- iOS 문구: `인증 필요`, `iOS에서 이용할 수 없는 기능입니다.`
+- Android는 성인인증 완료 계정에만 성인 탭을 노출하는 방향으로 별도 진행한다.
+- 외부 성인인증 공급자 계약은 아직 확정 전이다.
+- PortOne/KG이니시스 통합인증 계약 진행 상황과 제출 서류는 `ADULT_PROVIDER_PLAN.md`를 기준으로 본다.
+- 계약서 날인, 인감증명서, 보증보험, PG/본인확인 최종 승인처럼 법적/금융 책임이 있는 단계는 사용자가 직접 승인한다.
 
-- Solapi API key
-- Solapi API secret
-- registered sender number
-- Supabase Auth hook secret (`whsec_...`)
+## Apple 심사 대응
 
-A new operator should verify:
+최근 Apple 피드백:
 
-1. Supabase Auth hooks are still configured
-2. Solapi sender number is still registered
-3. SMS balance is available
-4. OTP requests still reach Korean numbers in E.164 format
+- ATT 권한 요청이 보이지 않음
+- Age Rating에서 Parental Controls/Age Assurance 선택이 잘못됨
+- UGC 신고/차단/필터링/24시간 조치 설명 필요
 
-## 6. Authentication status
+현재 대응 방향:
 
-Current auth direction is:
+- 앱이 추적을 하지 않는다면 App Privacy에서 tracking 선언을 제거한다.
+- 앱이 AdMob 추적을 한다면 ATT 요청을 광고/추적 데이터 수집 전에 띄우고 실기기 녹화본을 첨부한다.
+- Age Rating에서 Parental Controls와 Age Assurance는 `None`으로 수정한다.
+- 신고/차단/운영자 검토 위치를 심사 메모에 명시한다.
 
-- login: phone number + password
-- signup: phone verification first, then password creation
-- password recovery: low-cost SMS OTP based reset flow
+## 현재 알려진 주의점
 
-If auth breaks again, inspect:
+- 신고한 방은 방 목록/프로모션/탑스페이스/스토리에서 숨겨진다.
+- 사용자가 이미 참여 중인 방은 신고하지 못하게 해야 한다.
+- 방이 안 보이면 먼저 `room_reports` 또는 신고 필터를 확인한다.
+- 방 삭제는 `delete_room_as_owner(uuid)` RPC와 RLS/권한 함수를 함께 확인한다.
+- 방 편집 충돌은 TestFlight crash log와 `update_room_details` RPC를 같이 봐야 한다.
+- 채팅 검색 이동은 레이아웃 계산 완료 전 화살표를 비활성화해야 한다.
+- 오래된 메시지 pagination은 스크롤 위치 보존이 중요하다.
 
-- `src/services/auth`
-- `src/services/verification.ts`
-- Supabase auth logs
-- Solapi balance and delivery state
+## 빌드 전 체크
 
-## 7. Adult content / age-gate status
+```powershell
+cd C:\Users\trudy\mute-chat
+git status --short
+npm.cmd run typecheck
+```
 
-This is now an App Review and operations issue, not just a UI issue.
+빌드 전 확인 항목:
 
-Current working rule:
+- `EXPO_PUBLIC_SCREENSHOT_DEMO`가 꺼져 있는지
+- iOS 심사용 빌드에서 성인 진입점이 노출되지 않는지
+- App Store Connect 상품 ID와 코드 상품 ID가 일치하는지
+- `supabase/.temp/*`, crash log, 로컬 캡처 산출물이 커밋되지 않았는지
+- Google/Apple/PG 관련 개인키나 토큰이 문서에 남지 않았는지
 
-- do not expose an explicit adult tab on iOS
-- do not expose in-app adult verification on iOS
-- do not expose in-app instructions that tell users how to bypass iOS restrictions
-- if adult access exists, it should be web-controlled and hidden by default for iOS users
-- Android release plan is intentionally separate:
-  - before adult verification, keep the adult tab hidden
-  - after adult verification, the adult tab may be shown on Android only
-  - in room creation, keep the adult category visible but disabled until verification completes
-- on both iOS and Android:
-  - adult rooms must never appear in the `프로모션` tab
-  - adult rooms must not expose the free `프로모션` action in the chat-room plus menu
+## 수동 처리 항목
 
-Why:
+사용자가 직접 해야 하는 항목:
 
-- Apple App Review Guidelines `1.1.4` prohibit pornographic or overtly sexual content/apps
-- Apple App Review Guidelines `1.2` require objectionable-content filtering, reporting, blocking, and contactability for UGC apps
-- Apple also warns that apps used primarily for anonymous chat, Chatroulette-style experiences, or pornographic content may be removed
-- Apple allows incidental mature NSFW from a web-based service only when it is hidden by default and enabled on the web
+- App Store Connect 메타데이터 수정
+- Google Play Console 계정/앱/기기 인증 관련 웹 콘솔 처리
+- Apple/Google 결제 상품 생성 및 심사 제출
+- 성인인증/본인확인 공급자 계약
+- 실기기 권한 팝업 녹화
 
-Implementation direction that should be preserved:
+Codex가 할 수 있는 항목:
 
-- remove explicit adult-area discovery UI from iOS-facing app surfaces
-- treat adult access as a server-side capability flag, not a client-only toggle
-- gate iOS adult visibility with backend fields for web opt-in style control
-- keep reporting, blocking, moderation filtering, and operator review flows mandatory for store safety
-
-What still needs explicit product/legal confirmation:
-
-- exact external web verification flow
-- exact wording for iOS blocked-access messaging
-- moderation SLA and operator workflow
-- whether Android and web will have different discovery behavior than iOS
-
-Related docs:
-
-- `docs/ADULT_VERIFICATION_PLATFORM_POLICY.md`
-- `docs/ADULT_WEB_FLOW_SETUP.md`
-- `docs/STORE_COMPLIANCE.md`
-- `docs/AUTH_PHONE_PASSWORD.md`
-- `docs/BUILD_DISTRIBUTION_COST.md`: iOS/Android build, OTA update, and CI cost strategy
-
-## 8. Current product state
-
-The app already contains substantial UI and partial backend integration for:
-
-- phone auth
-- room discovery
-- room detail
-- room create
-- room-specific profiles
-- chat UI
-- story UI
-- story comments
-- join request flows
-- blocked member list
-- room moderation entry points
-- top space / ranking concepts
-- points / wallet screens
-- notification drawer
-
-But not all behaviors are production-hard yet. Some are still dummy-data backed.
-
-## 9. Known implementation pattern
-
-A lot of screens switch by local state instead of a formal navigation library.
-
-Examples:
-
-- `screen`
-- `bottomTab`
-- `panel`
-- `selectedRoom`
-- `selected` story state
-
-This is workable for now, but easy to break with nested back behavior.
-
-Rule for future edits:
-
-- when adding a new screen path, check the full back-stack manually
-- chat -> drawer -> overview -> story list -> story detail is especially easy to regress
-
-## 10. Current high-risk areas
-
-These areas should be treated as fragile:
-
-1. `App.tsx` story navigation and nested back behavior
-2. Expo web behavior vs native behavior
-3. image upload / crop / optimization paths
-4. OTP timing and resend state
-5. dummy data mixed with live Supabase behavior
-6. chat-specific system messages and visual variants
-7. keyboard-avoidance and safe-area handling on iPhone
-
-## 11. Recent UX decisions that should not be silently reverted
-
-- joined rooms from `내 채팅` should enter chat directly, not room detail
-- story chat preview `바로가기` should open that story detail, not the story list first
-- in chat-side story flow, back behavior should be:
-  - story detail -> story list
-  - story list -> chat
-- room detail in chat-side entry should expose profile/story tabs
-- some panels are intentionally read-only for super-admin observation
-- default room visuals should stay calm and low-noise
-- chat long-message collapse rule is documented separately:
-  - see `docs/CHAT_MESSAGE_RULES.md`
-
-## 12. Existing docs worth reading first
-
-Start with these:
-
-- `docs/ACTION_PLAN.md`
-- `docs/ARCHITECTURE.md`
-- `docs/PRODUCT_SPEC.md`
-- `docs/IMPLEMENTATION_AUDIT.md`
-- `docs/CHAT_MESSAGE_RULES.md`
-- `docs/STORE_COMPLIANCE.md`
-- `docs/MONETIZATION_SETUP.md`
-- `docs/PUSH_OPERATIONS.md`
-- `docs/AUTH_PHONE_PASSWORD.md`
-
-Recommended reading order for a new operator:
-
-1. this handoff
-2. `ARCHITECTURE`
-3. `PRODUCT_SPEC`
-4. `IMPLEMENTATION_AUDIT`
-5. `AUTH_PHONE_PASSWORD`
-6. `STORE_COMPLIANCE`
-
-## 13. Strategic decisions already made
-
-These are not open questions anymore unless the owner changes them explicitly:
-
-- product name is `뮤트 / Mute`
-- visual direction is simple, light, white-based, soft corners, mint/green accents
-- phone number + password is the auth direction
-- server cost minimization matters
-- iOS and Android both matter
-- adult-area handling must be compliance-safe and store-review-safe
-- monetization should combine points, ads, and paid cosmetic/features
-
-## 14. Monetization direction
-
-Already discussed and partially scaffolded:
-
-- top space boosting
-- paid bubble/text colors
-- custom color purchase
-- ad-free monthly account
-- attendance rewards
-- rewarded ads for extra points
-
-Installed libraries suggest intended direction:
-
-- `expo-iap` with Supabase direct StoreKit verification
-- Google mobile ads
-
-Do not assume store products are fully configured in dashboard just because client code exists.
-
-## 15. Deployment / release reality
-
-Current release mode is still stabilization-first.
-
-Practical deployment stages:
-
-1. local Expo start / web test
-2. Android preview build via EAS
-3. iOS TestFlight via EAS production build + submit
-4. store submission only after adult-content policy, moderation, auth, and payment compliance are verified
-
-## 16. What another Codex should do first
-
-If a new Codex session takes over, first actions should be:
-
-1. open `C:\Users\trudy\mute-chat`
-2. read this file
-3. read `docs/ARCHITECTURE.md`, `docs/IMPLEMENTATION_AUDIT.md`, `docs/AUTH_PHONE_PASSWORD.md`
-4. inspect `App.tsx`
-5. run `npm run typecheck`
-6. start Expo with a fresh tunnel if live QA is needed
-7. verify Supabase project link still points to `oxanqrmkvyniocxwreia`
-
-## 17. If live QA breaks
-
-Use this triage order:
-
-1. is the tunnel link dead?
-2. is the browser using an old cached bundle?
-3. did `App.tsx` introduce a runtime crash?
-4. is Supabase unavailable?
-5. is Solapi balance / OTP delivery failing?
-
-## 18. Missing confirmations the next operator should verify explicitly
-
-These are important enough to re-check, not assume:
-
-- Apple Developer / App Store Connect access state
-- EAS login/build readiness
-- App Store Connect product / StoreKit key state
-- Google Mobile Ads app/unit setup
-- Solapi sender-number validity
-- Supabase auth hook health
-- adult-content provider / web flow / policy status
-
-## 19. Additional docs that should be written next
-
-These do not all need to exist immediately, but they should exist before release:
-
-- `docs/APP_REVIEW_NOTES.md`
-  - reviewer-facing explanation of auth, reporting, blocking, moderation, and hidden adult-content handling
-- `docs/ADULT_CONTENT_POLICY.md`
-  - exact iOS/Android/web behavior split, hidden-by-default rule, and blocked-access copy
-- `docs/MODERATION_POLICY.md`
-  - report triage, banned-content policy, escalation path, evidence retention, and response targets
-- `docs/OPERATIONS_RUNBOOK.md`
-  - Supabase, SMS, ads, purchases, push, and incident recovery checklist
-- `docs/PRIVACY_DATA_MAP.md`
-  - what user data is stored, where, why, retention period, and deletion flow
-- `docs/APP_STORE_METADATA_CHECKLIST.md`
-  - screenshots, privacy labels, review notes, test accounts, and release gating checklist
-
-## 20. Additional release considerations
-
-Before store submission, another operator should also verify:
-
-- report flow works for room, member, story, image, and message surfaces
-- block flow actually suppresses future interaction where intended
-- banned-word / moderation filter behavior is server-enforced, not only client-enforced
-- private-room PIN flow is enforced server-side
-- super-admin powers are isolated and not visible to ordinary members
-- TestFlight build uses `production` profile, not `preview`
-- iOS content-policy behavior is tested separately from Android/web behavior
-
-## 21. Current working rule for edits
-
-- prefer targeted patches, not repo-wide refactors
-- use existing component and state patterns in `App.tsx`
-- verify nested navigation after every story/chat/detail change
-- treat user-facing wording changes as product decisions, not cosmetic churn
-
-## 22. Current live app state as of 2026-06-19
-
-Recently implemented in `App.tsx`:
-
-- room detail page title / hashtag spacing adjusted
-- main header logo size reduced and left spacing adjusted
-- create-room cover selector changed to centered circular 1:1 button
-- private-room join now requires 6-digit PIN entry
-- chat `+` menu includes owner-only promotion entry
-- promotion has 15-minute cooldown per room
-- discover/promotion list sorts by latest promotion timestamp first
-- adult rooms are hidden from promotion list for non-verified users
-- adult rooms in discover/promotion list are blurred until opened
-- story time formatting suppresses raw ISO `T...Z` leakage and falls back to `방금` on invalid values
-- story detail can open its linked room directly
-- duplicate internal story headers were reduced in one path and still require device regression testing
-- join-request approve button uses gradient styling
-- chat composer `+` and brush buttons dismiss keyboard/drawer/search before opening menus
-- my own avatar in chat renders on the right side with my message
-- profile save button and create-room primary action use gradient treatment
-- `npm run typecheck` was green after these updates
-
-## 23. Summary
-
-This repo is not a fresh scaffold. It is an already-iterated product prototype with:
-
-- real Supabase linkage
-- real SMS auth work
-- substantial UI surface
-- mixed production and demo behaviors
-
-A new Codex should continue from `C:\Users\trudy\mute-chat`, preserve the current direction, and stabilize behavior before attempting broad architecture cleanup.
+- 코드 수정
+- 문서 갱신
+- Supabase migration/function 작성
+- SQL 점검 쿼리 작성
+- 커밋/푸시 준비
+- 심사 답변 초안 작성

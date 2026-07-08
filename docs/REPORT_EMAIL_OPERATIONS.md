@@ -1,28 +1,34 @@
-# Report Email Operations
+# 신고 메일 운영
 
-## Current flow
+최종 업데이트: 2026-07-07
 
-1. `submit_report` stores the report in `public.reports`.
-2. The client invokes the deployed `send-report-email` Edge Function.
-3. Email delivery state is recorded in `reports.email_sent_at` or `reports.email_failure_reason`.
-4. Email failure never rolls back or loses the server report.
+## 목적
 
-## Required production secrets
+앱 신고가 들어올 때 운영자가 이메일과 내부 페이지에서 확인할 수 있게 한다.
 
-Configure these with `supabase secrets set`:
+## 수신 메일
 
-- `RESEND_API_KEY`
-- `REPORT_EMAIL_FROM`: a sender on a domain verified in Resend
-- `REPORT_EMAIL_TO`: optional; defaults to `muteappcontact@gmail.com`
+```text
+muteappcontact@gmail.com
+```
 
-The default `onboarding@resend.dev` sender is only suitable for limited provider testing.
+## 처리 경로
 
-## Before launch
+1. 앱에서 신고 접수
+2. Supabase에 신고 레코드 저장
+3. 신고 메일 발송
+4. 운영자가 `admin-reports` 페이지에서 상세 확인
+5. 24시간 이내 조치 또는 기각 처리
 
-- Submit one test report and confirm both the database row and email delivery.
-- Monitor `email_failure_reason`.
-- Add a scheduled retry worker so a report is retried if the client closes before invoking the function.
+## 신고 완료 UX
 
-## Push notification media
+- 방 신고: `신고 접수 완료 - 방 신고가 접수되었습니다`
+- 멤버 신고: `신고 접수 완료 - 멤버 신고가 접수되었습니다`
+- 스토리/댓글 신고도 같은 문구 체계를 사용한다.
 
-Push payloads now distinguish text, image, story, and room notices and carry sender/room asset paths. Standard Expo/APNs notifications still show the app icon on iOS. A dynamic sender avatar requires an iOS Notification Service Extension in a later native build.
+## 앱 제한
+
+- 내가 참여 중인 방은 신고하지 못하게 막는다.
+- 이미 신고한 방은 목록, 프로모션, 탑스페이스, 스토리에서 숨긴다.
+- 강퇴 후 차단된 사용자는 해당 방을 방 목록, 프로모션, 탑스페이스, 스토리에서 볼 수 없다.
+

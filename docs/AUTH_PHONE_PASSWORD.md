@@ -1,47 +1,58 @@
-# Mute 전화번호 인증 운영안
+# 전화번호 인증 및 비밀번호 운영
 
-## 인증 흐름
+최종 업데이트: 2026-07-07
 
-- 가입: 전화번호와 비밀번호 입력 후 SMS OTP 1회 인증
-- 로그인: 전화번호와 비밀번호만 사용하며 SMS를 보내지 않음
-- 비밀번호 찾기: SMS OTP로 전화번호 소유를 확인한 뒤 새 비밀번호 설정
-- 로그인 사용자는 설정에서 기존 세션을 이용해 비밀번호 변경 가능
+## 현재 인증 구조
 
-## 비용 및 보안
+- 회원가입은 전화번호 SMS 인증 후 비밀번호를 설정한다.
+- 로그인은 전화번호와 비밀번호를 사용한다.
+- 이미 가입된 번호는 회원가입 SMS를 보내지 않고 `이미 가입된 번호입니다`를 표시해야 한다.
+- 비밀번호 찾기는 가입된 전화번호인지 먼저 확인한 뒤 SMS 인증을 보낸다.
+- 관리자 테스트 계정처럼 이메일형 ID를 쓰는 계정은 전화번호가 없을 수 있으므로 비밀번호 변경 로직에서 예외 처리한다.
 
-- OTP는 가입과 실제 비밀번호 분실 때만 사용한다.
-- OTP 재전송은 최소 60초로 제한한다.
-- Supabase Auth SMS rate limit과 CAPTCHA를 운영 전에 활성화한다.
-- 로그인과 복구 오류로 계정 존재 여부를 노출하지 않는다.
-- 개발 UI 검증에는 mock data를 사용해 SMS 비용을 소비하지 않는다.
-- API Key와 Secret은 앱 코드, `.env`, Git 저장소에 넣지 않는다.
+## SMS 전송
 
-## SMS 공급자
+- Supabase Send SMS Hook과 `send-auth-sms` Edge Function을 사용한다.
+- Hook URL:
 
-- Supabase Send SMS Hook과 Solapi를 사용한다.
-- Solapi 국내 SMS는 공식 가격표 기준 건당 18원이며 VAT 별도다.
-- Send SMS Hook은 Supabase Free와 Pro 플랜에서 사용할 수 있다.
+```text
+https://oxanqrmkvyniocxwreia.supabase.co/functions/v1/send-auth-sms
+```
 
-## 배포 및 연결
+- Solapi를 SMS 공급자로 사용한다.
+- 한국 E.164 번호만 지원한다. 입력값은 하이픈 등 문자를 제거한 뒤 정규화한다.
 
-1. `send-auth-sms` Edge Function을 `--no-verify-jwt`로 배포한다.
-2. Supabase Dashboard의 `Authentication > Hooks`에서 Send SMS Hook을 HTTP로 생성한다.
-3. Hook URL은 아래 주소를 사용한다.
+## 비밀번호 변경
 
-   `https://oxanqrmkvyniocxwreia.supabase.co/functions/v1/send-auth-sms`
+- 설정 > 인증 전화번호 아래에 `비밀번호 변경` 진입점을 둔다.
+- 일반 전화번호 계정:
+  - 현재 비밀번호
+  - 새 비밀번호
+  - 새 비밀번호 확인
+  - 변경 전 확인 팝업
+- 전화번호 없는 관리자/테스트 계정:
+  - 현재 세션과 현재 비밀번호 검증으로 처리한다.
+  - `인증 전화번호를 확인할 수 없습니다`로 막히면 안 된다.
 
-4. Hooks 화면에서 발급된 `whsec_` Secret을 복사한다.
-5. 프로젝트 폴더에서 `.\scripts\configure-solapi-secrets.ps1`을 실행한다.
-6. 터미널 프롬프트에 API Key, API Secret, 등록된 발신번호, Hook Secret을 입력한다.
-7. `Authentication > Providers`에서 Phone을 활성화한다.
+## 앱 잠금
 
-Edge Function은 Standard Webhooks 서명을 검증하고, `+82` 한국 전화번호와 6자리 OTP만 허용한다.
+- 앱 잠금은 계정별/기기별 보안 설정이다.
+- 로그아웃 시 앱 잠금 PIN은 초기화한다.
+- 앱 잠금 PIN은 SecureStore 키 규칙을 지켜 저장한다. 빈 문자열이나 잘못된 문자를 키로 쓰면 안 된다.
+- PIN을 잊은 경우 전화번호 인증으로 재설정한다.
 
-## 운영 전 필수 설정
+## 탈퇴 및 재가입
 
-1. `Authentication > Rate Limits`에서 SMS 제한을 보수적으로 설정한다.
-2. 가입과 비밀번호 복구 요청에 CAPTCHA를 적용한다.
-3. 실제 기기에서 가입, 재전송, 로그인, 비밀번호 복구를 각각 시험한다.
-4. Solapi 잔액 부족과 발송 실패 시 사용자에게 일반 오류만 노출되는지 확인한다.
+- 과거에는 탈퇴 후 3일 재가입 제한이 있었으나, 테스트 및 운영 편의를 위해 현재는 즉시 재가입을 허용하는 기준으로 운용한다.
+- 탈퇴 시:
+  - 방장이 아닌 방에서는 자동 퇴장
+  - 방장인 방은 부방장 또는 다른 멤버에게 위임
+  - 혼자 있는 방은 삭제
+  - 기존 채팅에는 당시 방 프로필 이름/사진을 보존
 
-비밀번호는 앱 데이터베이스에 저장하지 않고 Supabase Auth가 해시와 검증을 담당한다.
+## 운영 체크리스트
+
+- 가입/비밀번호 찾기 SMS는 가입 여부를 먼저 확인한다.
+- SMS 실패는 `[object Object]`가 아니라 사용자용 문구로 표시한다.
+- 로그아웃 실패 메시지는 SecureStore 키 오류가 노출되지 않도록 방어한다.
+- Supabase Auth, users, room_profiles 간 phone/email null 케이스를 항상 허용한다.

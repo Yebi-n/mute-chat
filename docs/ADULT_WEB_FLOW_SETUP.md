@@ -1,178 +1,51 @@
-# Adult Web Flow Setup
+﻿# ?몃? ?깆씤?몄쬆 ???뚮줈??
+理쒖쥌 ?낅뜲?댄듃: 2026-07-07
 
-Updated: 2026-06-19
+> 계약/비용/서류의 최신 확정 내용은 `ADULT_VERIFICATION_CONTRACT_STATUS_20260707.md`를 우선한다.
 
-## Goal
+## 紐⑹쟻
 
-- Current implementation priority is iOS.
-- Android adult-tab behavior is documented for later implementation, not part of the current iOS pass.
-- Adult tabs must not appear before adult verification on either platform.
-- Adult rooms must never appear in the `프로모션` tab.
-- Adult rooms must not be eligible for the free `프로모션` action from the chat-room plus menu.
+iOS ???ъ궗 ?뺤콉???쇳븯湲??꾪빐 ???덉뿉???깆씤 移댄뀒怨좊━ 吏꾩엯?먯쓣 ?몄텧?섏? ?딄퀬, ?몃? ?뱀뿉?쒕쭔 ?깆씤?몄쬆 ?곹깭瑜?愿由ы븳??
 
-See the platform-specific source of truth:
+## iOS ?먯튃
 
-- `docs/ADULT_VERIFICATION_PLATFORM_POLICY.md`
+- iOS ?깆뿉???깆씤 ??쓣 ?몄텧?섏? ?딅뒗??
+- iOS ?깆쓽 諛??앹꽦/?몄쭛 ?붾㈃?먯꽌???깆씤 移댄뀒怨좊━瑜?鍮꾪솢?깊솕?쒕떎.
+- 鍮꾪솢??臾멸뎄??`?몄쬆 ?꾩슂`, `iOS?먯꽌 ?댁슜?????녿뒗 湲곕뒫?낅땲??`瑜??ъ슜?쒕떎.
+- ???덉뿉???몃? ?깆씤?몄쬆 留곹겕???고쉶 諛⑸쾿???덈궡?섏? ?딅뒗??
+- App Store ?ъ궗??鍮뚮뱶?먮뒗 ?깆씤 移댄뀒怨좊━ ?묎렐 寃쎈줈媛 ?놁뼱???쒕떎.
 
-## Added pieces
+## ???섏씠吏 ?먯튃
 
-- Static web page: `web/operations-policy/index.html`
-  - phone + password login only
-  - shows verification status
-  - starts adult verification
-  - enables iOS adult access after verification
-  - should be deployed to a real static host such as Vercel / Cloudflare Pages / Netlify
+- ???섏씠吏?먯꽌???뚯썝媛?낆쓣 ?쒓났?섏? ?딅뒗??
+- ?깃낵 媛숈? 濡쒓렇???뺣낫濡?濡쒓렇?몃쭔 ?쒕떎.
+- 濡쒓렇???꾩뿉???깆씤 移댄뀒怨좊━ ?묎렐 ?뱀뀡???④릿??
+- 濡쒓렇???깃났 ??怨꾩젙 ?곹깭???곕씪 `?깆씤?몄쬆 ?꾩슂` ?먮뒗 `?깆씤?몄쬆 ?????쒖떆?쒕떎.
+- ?깆씤?몄쬆 ?ъ뾽??怨꾩빟???꾨즺?섎㈃ `?깆씤?몄쬆 ?쒖옉` 踰꾪듉???ㅼ젣 ?몄쬆 URL濡??곌껐?쒕떎.
 
-- Edge function: `operations-policy`
-  - redirects to `OPERATIONS_POLICY_PORTAL_URL` when that secret is set
-  - keep as fallback/debug artifact only
-  - not recommended as the production portal host
+## ?꾩옱 怨꾩빟 ?곹깭
 
-- Edge function: `adult-verification-callback`
-  - trusted callback endpoint
-  - marks user as verified
-  - enables iOS adult-content access
-  - redirects back to the policy portal
+- ?ъ뾽?먮챸? `裕ㅽ듃`濡??뺣━?덈떎.
+- ?듭떊?먮ℓ???좉퀬踰덊샇: `2026-?몄쿇?⑤룞援?0159??
+- ?ы듃??KG?대땲?쒖뒪 ?듯빀?몄쬆 怨꾩빟 ?좎껌 ?먮쫫??寃??以묒씠??
+- 蹂댁쬆蹂댄뿕, 援щ퉬?쒕쪟, ?ъ궗 ?뱀씤 ?щ????곕씪 ?ㅼ젣 API ?곕룞??媛?ν빐吏꾨떎.
 
-- Migration: `202606190002_verification_status_v2.sql`
-  - extends `get_my_verification_status()` to include:
-    - `adult_content_web_opted_in`
-    - `ios_adult_content_enabled`
+## ?쒕쾭 ?꾨뱶
 
-## Required secrets
+`public.users` 湲곗?:
 
-Set these in Supabase Edge Functions secrets:
+- `identity_verified_at`
+- `adult_verified_at`
+- `identity_provider`
+- `ci_hash`
+- `adult_content_web_opt_in_at`
+- `ios_adult_content_enabled`
+- `age_confirmed_at`
 
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `ADULT_VERIFICATION_START_URL`
-- `ADULT_VERIFICATION_CALLBACK_SECRET`
-- `ADULT_VERIFICATION_CI_SALT` (recommended)
-- `OPERATIONS_POLICY_PORTAL_URL`
-  - required if anyone opens the Supabase `operations-policy` function URL
-  - should point to the static web portal root
-- `ADULT_VERIFICATION_TEST_MODE` (optional staging-only fallback)
+## ?댁쁺 二쇱쓽
 
-Optional app env:
+- iOS ?ъ궗 以묒뿉?????덉쓽 ?댁쁺?뺤콉 ??쓣 ?깆씤?몄쬆 留곹겕濡??곌껐?섏? ?딅뒗??
+- Android??蹂꾨룄 ?뺤콉 臾몄꽌 湲곗??쇰줈 ?몄쬆 ?꾨즺 ?ъ슜?먯뿉寃뚮쭔 ?깆씤 ??쓣 ?몄텧?쒕떎.
+- ?깆씤諛⑹? ?꾨줈紐⑥뀡/?묒뒪?섏씠?ㅼ뿉 ?몄텧?섏? ?딅뒗??
+- ?깆씤諛??ㅽ넗由щ뒗 諛?硫ㅻ쾭 怨듦컻留??덉슜?쒕떎.
 
-- `EXPO_PUBLIC_OPERATIONS_POLICY_URL`
-  - required for the real web portal host
-  - do not rely on the Supabase `operations-policy` Edge Function as the production page host
-
-## Provider integration reality
-
-This repo now has the web portal and trusted callback shape, but the final provider contract still matters.
-
-The provider must be able to send, directly or through your own broker:
-
-- `user_id`
-- adult-verification success state
-- optional `ci`
-- shared secret or equivalent trusted signature
-
-Current callback expects:
-
-- query or form field `token`
-- matching `ADULT_VERIFICATION_CALLBACK_SECRET`
-
-and success via one of:
-
-- `adult_verified=1`
-- `verified=1`
-- `adult=1`
-
-If your provider uses a different callback/signature format, `adult-verification-callback` must be adapted before production release.
-
-## Staging without provider contract
-
-To keep cost low and still test the full browser-to-app loop before the real provider contract is ready, this repo now supports a staging fallback.
-
-Required for that fallback:
-
-- `ADULT_VERIFICATION_TEST_MODE=true`
-- `ADULT_VERIFICATION_CALLBACK_SECRET=<same callback secret>`
-- `OPERATIONS_POLICY_PORTAL_URL=https://<your-static-domain>/`
-
-When enabled and `ADULT_VERIFICATION_START_URL` is empty:
-
-- `start-adult-verification` returns a mock success URL
-- the browser is redirected into `adult-verification-callback`
-- the callback marks:
-  - `adult_verified_at`
-  - `identity_verified_at`
-  - `adult_content_web_opt_in_at`
-  - `ios_adult_content_enabled = true`
-
-Use this only for staging and QA. Production must use a real provider.
-
-## Deploy sequence
-
-1. push migration
-
-```bash
-npx supabase db push
-```
-
-2. deploy edge functions
-
-```bash
-npx supabase functions deploy adult-verification-callback
-npx supabase functions deploy start-adult-verification
-```
-
-3. deploy the static portal
-
-Recommended:
-
-- Vercel
-- Cloudflare Pages
-- Netlify
-
-Required runtime values in the static page:
-
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
-
-4. verify `get_my_verification_status()` returns 5 fields
-
-5. open the deployed static portal URL
-
-Example:
-
-`https://<your-static-domain>/`
-
-6. log in with phone + password
-
-7. verify callback updates:
-
-- `users.identity_verified_at`
-- `users.adult_verified_at`
-- `users.identity_provider`
-- `users.adult_content_web_opt_in_at`
-- `users.ios_adult_content_enabled`
-
-## Review risk
-
-Showing an explicit adult tab on iOS, even after web verification, still increases App Review risk.
-
-Safer variant:
-
-- keep the iOS adult tab hidden entirely
-- allow direct adult-room access only after web opt-in
-- do not expose in-app bypass guidance
-
-Current implementation follows the product request, not the lowest-risk App Review posture.
-
-## Current platform split to preserve
-
-- iOS build: current implementation target.
-- Android build: defer code changes until the Android pass.
-- Shared discovery restriction: promotion surfaces must exclude adult rooms entirely.
-
-## Important note about Supabase Edge Functions
-
-In this project, the Edge Function route returned the HTML body but the gateway still served it with `Content-Type: text/plain`. Because of that, browsers displayed raw HTML source instead of rendering the page. For this reason, the production portal should be hosted as a static site, and Supabase Edge Functions should be used only for:
-
-- starting adult verification
-- receiving trusted provider callbacks

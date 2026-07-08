@@ -1,61 +1,87 @@
-# Adult Verification Provider Request Template
+# 성인인증/본인확인 공급자 문의 템플릿
 
-Updated: 2026-06-19
+Updated: 2026-07-07
 
-## Recommended first target
+## 목적
 
-- PortOne 본인인증
+PortOne/KG이니시스 또는 대체 본인확인 공급자에게 보낼 문의 템플릿이다. 비용 최소화와 빠른 운영 전환을 기준으로, 계약 조건과 API 연동 정보를 한 번에 확인하는 것이 목표다.
 
-## What to ask for
+## 메일 제목 예시
 
-Send a request that asks for:
+```text
+[뮤트] 앱 기반 본인확인/성인인증 연동 및 계약 조건 문의
+```
 
-1. test account / sandbox access
-2. production onboarding requirements
-3. browser-based mobile verification flow
-4. callback URL registration method
-5. callback payload schema
-6. success/failure field names
-7. adult/age verification result field names
-8. CI availability
-9. signature or callback verification method
-10. fee structure for identity/adult verification
+## 문의 본문
 
-## Korean request draft
-
+```text
 안녕하세요.
 
-반익명 커뮤니티/채팅 서비스 앱을 준비 중이며, 웹 기반 성인 본인인증 연동을 검토하고 있습니다.
+반익명 커뮤니티/채팅 서비스 “뮤트”를 운영 준비 중입니다.
+외부 웹페이지에서 로그인 후 본인확인 및 성인 여부 확인을 진행하고,
+인증 완료 상태를 서버에 저장하는 방식으로 연동하려고 합니다.
 
-현재 필요한 사항은 아래와 같습니다.
+서비스 개요는 아래와 같습니다.
 
-1. 테스트 환경 연동 정보
-2. 모바일 웹 기반 본인인증 시작 방식
-3. 콜백 URL 등록 방식
-4. 콜백 시 전달되는 파라미터 목록
-5. 성인 여부/생년월일/내외국인 여부/CI 제공 가능 여부
-6. 콜백 위변조 검증 방식
-7. 운영 전환 절차
-8. 건별 과금 구조 및 최소 비용 조건
+- 서비스명: 뮤트
+- 서비스 형태: 전화번호 기반 커뮤니티/채팅 앱
+- 인증 사용 목적: 본인확인, 성인 여부 확인, 중복 계정 방지
+- 앱 정책: iOS 앱 내부에서는 성인 콘텐츠 접근 링크나 우회 안내를 노출하지 않고, 외부 웹에서 인증 상태만 관리합니다.
+- 서버 저장 방식: 원본 CI는 저장하지 않고 해시 처리한 값과 인증 완료 시각만 저장할 예정입니다.
 
-저희 쪽 구현 구조는 아래와 같습니다.
+아래 항목 확인 부탁드립니다.
 
-- 앱에서는 웹 운영정책 페이지로 이동
-- 웹에서 전화번호+비밀번호 로그인 후 본인인증 시작
-- 인증 완료 후 서버 콜백 수신
-- 서버에서 성인인증 완료 상태 저장 후 iOS 앱 접근 권한 활성화
+1. 개인사업자 기준 계약 가능 여부
+2. 현재 업종/서비스 카테고리에서 본인확인 및 성인인증 이용 가능 여부
+3. 초기비, 월 고정비, 건당 비용, 최소 이용료
+4. 테스트 환경 또는 샌드박스 제공 여부
+5. 운영 채널 발급까지 예상 소요 기간
+6. 모바일 웹 기반 인증 시작 방식
+7. 콜백 URL 등록 방법
+8. 콜백 파라미터 목록과 검증 방식
+9. 성인 여부, 생년월일, 내외국인 여부, CI 제공 가능 여부
+10. 기존 계약 또는 기존 보증보험 재사용 가능 여부
+11. 계약에 필요한 서류 목록
 
-가능하시다면 테스트 연동 문서와 샘플 콜백 예시도 함께 부탁드립니다.
+현재 예상 연동 구조는 아래와 같습니다.
+
+1. 사용자가 외부 웹에서 뮤트 계정으로 로그인합니다.
+2. 웹에서 본인확인/성인인증을 시작합니다.
+3. 인증 완료 후 서버 콜백을 수신합니다.
+4. 서버에서 인증 결과를 검증하고 계정 상태를 갱신합니다.
+5. 앱은 서버의 인증 상태를 조회하여 접근 가능 여부를 판단합니다.
+
+가능하다면 최신 연동 문서, 샘플 콜백, 테스트 계정, 계약 절차 안내를 전달 부탁드립니다.
 
 감사합니다.
+```
 
-## What we will map after credentials arrive
+## 반드시 확인할 것
 
-Into `adult-verification-callback`:
+- 개인사업자 계약 가능 여부
+- 서비스 카테고리 추가 심사 또는 입점 제한 여부
+- 성인 여부를 Boolean으로 명확히 받을 수 있는지
+- CI 제공 여부
+- CI 해시 저장에 제한이 있는지
+- 콜백 검증 방식
+- 운영 전 테스트 가능 여부
+- 보증보험 필수 여부
+- 기존 보증보험 연결 또는 변경 사용 가능 여부
+- 해지 시 보증보험 환급 가능 여부
 
-- user identifier handoff
-- verification success flag
-- adult eligibility flag
-- provider name
-- CI hashing
-- redirect back to the policy portal
+## 공급자 승인 후 필요한 값
+
+```text
+PORTONE_STORE_ID
+PORTONE_IDENTITY_CHANNEL_KEY
+PORTONE_API_SECRET
+```
+
+직접 공급자 연동 시:
+
+```text
+IDENTITY_PROVIDER_CLIENT_ID
+IDENTITY_PROVIDER_CLIENT_SECRET
+IDENTITY_PROVIDER_CHANNEL_ID
+IDENTITY_PROVIDER_WEBHOOK_SECRET
+```

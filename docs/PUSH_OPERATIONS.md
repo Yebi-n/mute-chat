@@ -1,72 +1,36 @@
-# Mute Push Operations
+# 푸시 알림 운영
 
-## Current flow
+최종 업데이트: 2026-07-07
 
-1. Database triggers insert a row into `public.push_outbox`.
-2. The `send-push-outbox` Edge Function reads unsent rows.
-3. The function sends notifications through the Expo Push API.
-4. Each outbox row is marked as sent or failed.
+## 알림 대상
 
-The Edge Function accepts an authenticated app session for immediate delivery and
-the Supabase service-role bearer token for scheduled recovery runs. Never place
-the service-role token in the app, repository, public environment variables, or
-EAS client configuration.
+- 채팅 메시지
+- 사진 메시지
+- 스토리 작성
+- 내 스토리 댓글
+- 가입신청
+- 강퇴/차단 등 운영성 알림
 
-The app-side notification UI is the native OS notification: the app icon appears
-on the left, chat notifications use the sender's room profile name as the title,
-and the body is the chat preview. Join requests use the room name as the title
-and `{requested_name}님이 가입 신청을 보냈습니다.` as the body.
+## 기본 규칙
 
-Important: push rows are not delivered merely because they exist in
-`push_outbox`. The Edge Function must be called by Supabase Cron or another
-trusted scheduler.
+- 내가 발생시킨 이벤트는 나에게 푸시하지 않는다.
+- 사용자가 현재 보고 있는 채팅방의 새 메시지는 푸시하지 않는다.
+- 로그아웃한 계정에는 푸시 토큰을 제거하거나 비활성화해 알림을 보내지 않는다.
+- 가입신청은 방장/부방장에게 빠르게 전달한다.
+- 스토리 알림을 누르면 채팅방이 아니라 해당 스토리 상세로 이동한다.
+- 가입신청 알림을 누르면 해당 방의 가입신청 목록으로 이동한다.
 
-## Schedule in Supabase
+## 표시 문구
 
-Configure the schedule in the Supabase Dashboard after the production project is
-ready:
+- 텍스트: `프로필 이름 / 메시지 내용`
+- 사진: `프로필 이름 / 사진을 보냈습니다.`
+- 스토리: `프로필 이름 / 스토리를 올렸습니다.`
+- 공지성 이벤트: `방 이름 / 공지 텍스트`
 
-1. Open **Integrations > Cron**.
-2. Store the service-role key in Supabase Vault.
-3. Create a job that calls:
-   `https://oxanqrmkvyniocxwreia.supabase.co/functions/v1/send-push-outbox`
-4. Use `POST` and set `Authorization: Bearer <vault service-role secret>`.
-5. Run every minute initially. Reduce frequency only if delayed notifications are
-   acceptable.
+## 운영 점검
 
-Do not place the service-role key directly in migration SQL. Vault keeps the
-credential out of migration history.
+- APNs 키가 Xcode Cloud/TestFlight 빌드에 포함되어 있는지 확인한다.
+- Supabase Edge Function에서 푸시 호출 실패 로그를 확인한다.
+- 알림 지연이 발생하면 Edge Function 실행 시간, 네트워크 실패, 토큰 만료, iOS 알림 권한 상태를 순서대로 본다.
+- 메인 알림함은 모든 푸시와 동일하지 않다. 현재 앱 내 알림함은 가입신청, 강퇴, 스토리 관련 알림 중심으로 운영한다.
 
-## Cost controls
-
-- The worker processes at most 100 outbox rows per run.
-- Failed jobs are not retried indefinitely.
-- Devices without an active token fail immediately with `NO_ACTIVE_DEVICE`.
-- Expo ticket responses disable tokens reported as `DeviceNotRegistered`.
-- Add Expo receipt processing before production launch to catch failures that are
-  reported after a ticket was initially accepted.
-- Keep chat message bodies short in push payloads and load full content in-app.
-
-## Release checks
-
-- Test one chat notification on a physical iOS device.
-- Test one chat notification on a physical Android device.
-- Test join-request and join-result deep links.
-- Confirm the scheduler has executed `send-push-outbox` at least once and
-  `push_outbox.sent_at` is being filled.
-- Verify notification permission denial does not block app use.
-- Verify the app badge and in-app unread count remain consistent.
-- Confirm no service-role value exists in the client bundle.
-
-## Realtime verification
-
-- On 2026-06-22, two authenticated test accounts confirmed message persistence,
-  Realtime `messages` INSERT delivery, notification-inbox creation,
-  push-outbox creation, and room notification OFF filtering.
-- The earlier false failure came from the test script retaining only one event
-  ID while the room emitted multiple INSERT events. The test now accumulates all
-  received IDs and verifies that the target message ID is included.
-- No polling fallback is enabled. Visible chat updates use Supabase Realtime to
-  avoid repeated database reads.
-- Push jobs for test accounts correctly reached `NO_ACTIVE_DEVICE` because those
-  accounts had no registered physical-device token.

@@ -1,5 +1,7 @@
 # Read Receipts
 
+> 최신 기준(2026-07-07): 이 문서는 읽음선 설계 메모입니다. 현재 구현/운영 기준은 `CHAT_MESSAGE_RULES.md`, `PUSH_OPERATIONS.md`, `SCALING_RUNBOOK.md`, `ACTION_PLAN.md`를 우선합니다.
+
 Updated: 2026-06-21
 
 ## Current Behavior

@@ -1,85 +1,90 @@
-# App Review Reply - 2026-07-06
+# Apple 심사 답변 초안
 
-## 1. ATT 안내
+최종 업데이트: 2026-07-07
 
-이번 빌드에서 광고 SDK 초기화 전에 App Tracking Transparency 권한 요청이 먼저 실행되도록 수정했습니다.
+## Guideline 2.1 - ATT
 
-검수 메모에 첨부할 내용:
+상황에 따라 둘 중 하나로 대응한다.
 
-```text
-We updated the app so the App Tracking Transparency prompt is requested before initializing the Google Mobile Ads SDK or requesting ads.
+### 앱이 tracking을 하지 않는 것으로 정리할 경우
 
-To verify:
-1. Install the app fresh, or reset tracking permissions in iOS Settings.
-2. Launch the app.
-3. The ATT permission prompt appears before ad initialization.
-4. After the user responds, the app continues to the main flow and ads are requested with non-personalized ad settings.
+```
+Hello,
+
+Thank you for the review.
+
+We do not track users across apps or websites owned by other companies. We have updated the App Privacy information in App Store Connect so that tracking is not declared.
+
+The app may display ads, but we do not use AppTrackingTransparency-gated tracking data for the reviewed build.
+
+Thank you.
 ```
 
-필요 작업:
+### ATT를 유지할 경우
 
-- 실제 기기에서 앱 삭제 후 재설치 또는 설정에서 추적 권한 초기화
-- 첫 실행부터 ATT 팝업이 뜨는 화면 녹화
-- App Review Information의 Notes에 녹화 첨부
+```
+Hello,
 
-## 2. Age Rating 수정
+Thank you for the review.
 
-현재 iOS 심사용 앱에는 별도 보호자 통제나 앱 내 연령 보증 UI를 노출하지 않습니다.
+We have updated the app so that the App Tracking Transparency permission request appears before any tracking-related advertising data is collected.
 
-App Store Connect에서 다음처럼 수정:
+We attached a screen recording showing:
+1. Launching the app after a fresh install/reset tracking permissions
+2. The ATT permission prompt appearing
+3. The user flow after the prompt
 
-- Parental Controls: None
-- Age Assurance: None
-
-## 3. UGC 안전장치 답변
-
-App Review 답변 초안:
-
-```text
-Mute includes user-generated chat rooms, messages, stories, comments, profile content, and images. The app provides the following moderation precautions:
-
-1. Filtering objectionable content
-   - The service is phone-authenticated.
-   - Adult-category access is hidden on iOS for review builds.
-   - Reported rooms or blocked rooms are hidden from room lists, story lists, promotion lists, and top-space lists for the reporting or blocked user.
-   - We operate keyword filtering and manual operator review for illegal, abusive, or objectionable content.
-
-2. Flagging objectionable content
-   - Users can report rooms, users, stories, comments, chat messages, and images from the relevant more/profile/report menus.
-   - Reports are stored on the server with reporter user ID, target type, target ID, room/story/message context, reason, and creation time.
-   - Operators can review reports from the admin report page.
-
-3. Blocking abusive users
-   - Room owners and moderators can mute, kick, and block members.
-   - Blocked members cannot re-enter the room and cannot see the room in room lists, promotions, top-space lists, or story surfaces.
-   - Users can also report abusive accounts.
-
-4. 24-hour moderation
-   - We review objectionable content reports within 24 hours.
-   - If a report is valid, we remove or restrict the content and eject, block, or suspend the offending user as appropriate.
+Thank you.
 ```
 
-심사자가 앱 안에서 찾을 위치:
+## Guideline 2.3.6 - Age Rating
 
-```text
-- Room report: Home > select a room > room detail > more menu > Report
-- User report/block: Chat room > member profile or member management > more/actions
-- Story report: Public Story or room story > story detail > more menu > Report
-- Comment/report handling: story detail and admin report page
+```
+Hello,
+
+Thank you for pointing this out.
+
+The app does not include Parental Controls or Age Assurance mechanisms in the reviewed iOS build. We updated the Age Rating selections to "None" for both Parental Controls and Age Assurance in App Store Connect.
+
+Thank you.
 ```
 
-## 4. Permission Prompt Test Notes
+## Guideline 2.1 - User Generated Content
 
-Use these notes when recording or replying to App Review:
+```
+Hello,
 
-```text
-Permission prompts are intentionally shown at the point where the related feature is used.
+Mute includes user-generated chat rooms, messages, profiles, and stories. The following safety mechanisms are available in the app:
 
-- App Tracking Transparency: shown on a fresh launch before Google Mobile Ads SDK initialization.
-- Push notifications: shown after login when the app registers the device for room/story/join-request notifications.
-- Camera: shown when the user chooses Camera from profile, room image, story, or chat image upload.
-- Photos: shown when the user chooses Gallery from profile, room image, story, or chat image upload.
-- Photo library save permission: shown when the user opens a chat image and taps Save.
+1. Reporting objectionable content
+- Users can report rooms, profiles, stories, and related content from the "more" menus in each area.
+- Reported items are sent to the server and are available to the operator for review.
 
-For ATT testing, the device must have Settings > Privacy & Security > Tracking > Allow Apps to Request to Track enabled. If the prompt was already answered, reinstall the app or reset tracking permissions before recording.
+2. Blocking and moderation
+- Room owners/co-hosts can remove users, block users from rooms, and restrict chat.
+- Users who are blocked or removed can no longer access the relevant room.
+
+3. Filtering and review
+- Reports are collected on the server with target type, target ID, reporter ID, room/user context, and timestamp.
+- The operator reviews submitted reports and can hide, remove, or restrict content/users.
+
+4. 24-hour action
+- We review objectionable content reports within 24 hours.
+- If a violation is confirmed, we remove or hide the content and restrict/eject the user who provided the offending content.
+
+For review, please log in with the provided test account. Reporting and moderation actions can be found from the more menus in rooms, profiles, and stories.
+
+Thank you.
+```
+
+## App Review Notes 추천 문구
+
+```
+심사용 계정으로 로그인 후 주요 기능을 확인할 수 있습니다.
+
+앱 내 구입은 포인트 충전, 앱 테마, 채팅 꾸미기 아이템 및 광고 제거 기능에 사용됩니다.
+
+신고 및 차단 기능은 각 방, 프로필, 스토리의 더보기 메뉴에서 확인할 수 있습니다. 운영자는 접수된 신고를 24시간 이내 검토하고, 필요한 경우 콘텐츠 비노출/삭제 및 사용자 제한 조치를 수행합니다.
+
+성인 카테고리 및 성인인증 기능은 iOS 심사 빌드에서 제공되지 않습니다.
 ```
