@@ -14,6 +14,7 @@ export type ServerNotice = {
 };
 
 let foregroundRoomId: string | null = null;
+let notificationHandlerConfigured = false;
 
 export function setForegroundRoomId(roomId: string | null) {
   foregroundRoomId = roomId;
@@ -23,22 +24,31 @@ export function clearForegroundRoomId(roomId: string) {
   if (foregroundRoomId === roomId) foregroundRoomId = null;
 }
 
-Notifications.setNotificationHandler({
-  handleNotification: async (notification) => {
-    const data = notification.request.content.data ?? {};
-    const roomId = typeof data.roomId === 'string' ? data.roomId : null;
-    const shouldSuppressRoomAlert =
-      Boolean(foregroundRoomId && roomId && foregroundRoomId === roomId);
-    return {
-      shouldPlaySound: !shouldSuppressRoomAlert,
-      shouldSetBadge: !shouldSuppressRoomAlert,
-      shouldShowBanner: !shouldSuppressRoomAlert,
-      shouldShowList: !shouldSuppressRoomAlert,
-    };
-  },
-});
+export function configureNotificationHandler() {
+  if (notificationHandlerConfigured || Platform.OS === 'web') return;
+  try {
+    Notifications.setNotificationHandler({
+      handleNotification: async (notification) => {
+        const data = notification.request.content.data ?? {};
+        const roomId = typeof data.roomId === 'string' ? data.roomId : null;
+        const shouldSuppressRoomAlert =
+          Boolean(foregroundRoomId && roomId && foregroundRoomId === roomId);
+        return {
+          shouldPlaySound: !shouldSuppressRoomAlert,
+          shouldSetBadge: !shouldSuppressRoomAlert,
+          shouldShowBanner: !shouldSuppressRoomAlert,
+          shouldShowList: !shouldSuppressRoomAlert,
+        };
+      },
+    });
+    notificationHandlerConfigured = true;
+  } catch {
+    // Notification native modules can be unavailable during early startup.
+  }
+}
 
 export async function registerPushDevice() {
+  configureNotificationHandler();
   if (!Device.isDevice || Platform.OS === 'web') return null;
   const current = await Notifications.getPermissionsAsync();
   const permission = current.status === 'granted'

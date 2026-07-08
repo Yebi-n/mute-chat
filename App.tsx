@@ -12,7 +12,6 @@ import * as ImagePicker from "expo-image-picker";
 import { Image as ExpoImage } from "expo-image";
 import { LinearGradient as ExpoLinearGradient } from "expo-linear-gradient";
 import * as Notifications from "expo-notifications";
-import * as ScreenCapture from "expo-screen-capture";
 import * as SecureStore from "expo-secure-store";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -3071,15 +3070,29 @@ function AuthenticatedApp({
       );
       if (notice) void openNotification(notice);
     };
-    const subscription =
-      Notifications.addNotificationResponseReceivedListener(handleResponse);
-    if (!checkedInitialPushResponseRef.current) {
-      checkedInitialPushResponseRef.current = true;
-      Notifications.getLastNotificationResponseAsync()
-        .then(handleResponse)
-        .catch(() => undefined);
+    let subscription: { remove: () => void } | null = null;
+    try {
+      subscription = Notifications.addNotificationResponseReceivedListener(handleResponse);
+      if (!checkedInitialPushResponseRef.current) {
+        checkedInitialPushResponseRef.current = true;
+        try {
+          Notifications.getLastNotificationResponseAsync()
+            .then(handleResponse)
+            .catch(() => undefined);
+        } catch {
+          // Native notification modules can be unavailable during early startup.
+        }
+      }
+    } catch {
+      // Do not let notification response registration block app startup.
     }
-    return () => subscription.remove();
+    return () => {
+      try {
+        subscription?.remove();
+      } catch {
+        // Ignore native subscription cleanup failures during shutdown.
+      }
+    };
   }, [joinedIds, roomData, canSeeAdultRooms, isSuperAdmin]);
   const topSpaceCount = (room: Room) =>
     room.topSpaceCount + (boosts[room.id] ?? 0);
@@ -12847,12 +12860,8 @@ function ProfileQuickAction({
   );
 }
 
-function NativeProfileCaptureGuard() {
-  ScreenCapture.usePreventScreenCapture("mute-profile");
-  return null;
-}
 function ProfileCaptureGuard() {
-  return Platform.OS === "web" ? null : <NativeProfileCaptureGuard />;
+  return null;
 }
 
 function RoomOverview({

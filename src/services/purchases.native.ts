@@ -1,22 +1,21 @@
 import { Platform } from 'react-native';
-import {
-  fetchProducts,
-  finishTransaction,
-  getAvailablePurchases,
-  initConnection,
-  purchaseErrorListener,
-  purchaseUpdatedListener,
-  requestPurchase,
-  restorePurchases,
-  syncIOS,
-  type ProductQueryType,
-  type Purchase,
-} from 'expo-iap';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 export { STORE_PRODUCTS } from './storeProducts';
 
+type ProductQueryType = import('expo-iap').ProductQueryType;
+type Purchase = import('expo-iap').Purchase;
+type ExpoIapModule = typeof import('expo-iap');
+
 let connected = false;
 let configuredUserId: string | null = null;
+let iapModulePromise: Promise<ExpoIapModule> | null = null;
+
+function loadIapModule() {
+  if (!iapModulePromise) {
+    iapModulePromise = import('expo-iap');
+  }
+  return iapModulePromise;
+}
 
 const consumableProductIds = new Set([
   'mute_points_5000',
@@ -48,6 +47,7 @@ function requireSupabase() {
 
 async function ensureConnection() {
   if (!connected) {
+    const { initConnection, syncIOS } = await loadIapModule();
     await initConnection();
     if (Platform.OS === 'ios') {
       await syncIOS().catch(() => undefined);
@@ -88,6 +88,7 @@ function getStoreProductId(product: unknown) {
 }
 
 async function fetchStoreProducts(productId: string, productType: ProductQueryType) {
+  const { fetchProducts } = await loadIapModule();
   const allKnownProductIds = Array.from(storeProductIds);
   const primary = await fetchProducts({ skus: [productId], type: productType });
   if (primary?.some((product) => getStoreProductId(product) === productId)) {
@@ -105,6 +106,7 @@ async function fetchStoreProducts(productId: string, productType: ProductQueryTy
 }
 
 async function waitForPurchase(productId: string, startPurchase: () => Promise<unknown>) {
+  const { purchaseErrorListener, purchaseUpdatedListener } = await loadIapModule();
   return await new Promise<Purchase>((resolve, reject) => {
     let settled = false;
     const cleanup = () => {
@@ -202,6 +204,7 @@ function purchaseBelongsToConfiguredUser(purchase: Purchase) {
 }
 
 async function verifyStorePurchase(productId: string, purchase: Purchase) {
+  const { finishTransaction } = await loadIapModule();
   const transactionId = getVerifiedTransactionId(purchase);
   if (!transactionId) {
     throw new Error('구매 거래 ID를 확인할 수 없습니다.');
@@ -239,6 +242,7 @@ async function verifyStorePurchase(productId: string, purchase: Purchase) {
 
 export async function purchaseStoreProduct(productId: string) {
   await ensureConnection();
+  const { requestPurchase } = await loadIapModule();
   const productType: ProductQueryType = productId === 'mute_ad_free_monthly' ? 'subs' : 'in-app';
   const products = await fetchStoreProducts(productId, productType);
   if (!products?.some((product) => getStoreProductId(product) === productId)) {
@@ -270,6 +274,7 @@ export async function purchaseStoreProduct(productId: string) {
 
 export async function restoreStorePurchases() {
   await ensureConnection();
+  const { getAvailablePurchases, restorePurchases } = await loadIapModule();
   await restorePurchases();
   const purchases = await getAvailablePurchases({
     alsoPublishToEventListenerIOS: false,
