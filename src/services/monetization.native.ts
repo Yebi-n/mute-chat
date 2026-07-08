@@ -1,13 +1,5 @@
 import { Platform } from 'react-native';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import {
-  AdEventType,
-  MaxAdContentRating,
-  RewardedAd,
-  RewardedAdEventType,
-  TestIds,
-  default as mobileAds,
-} from 'react-native-google-mobile-ads';
 export {
   claimPointReward,
   getMyWallet,
@@ -20,9 +12,20 @@ const IOS_REWARDED_UNIT_ID =
   process.env.EXPO_PUBLIC_ADMOB_REWARDED_IOS_ID
   || 'ca-app-pub-4013454985021474/1566965165';
 
+type GoogleMobileAdsModule = typeof import('react-native-google-mobile-ads');
+
+function loadGoogleMobileAds(): GoogleMobileAdsModule {
+  // Keep AdMob out of the startup module graph. Recent TestFlight builds crash
+  // in the native bridge shortly after launch; lazy-loading isolates the SDK to
+  // the explicit rewarded-ad path.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  return require('react-native-google-mobile-ads') as GoogleMobileAdsModule;
+}
+
 export function initializeAds(): Promise<boolean> {
   if (adsInitializationPromise) return adsInitializationPromise;
   adsInitializationPromise = (async () => {
+    const { MaxAdContentRating, default: mobileAds } = loadGoogleMobileAds();
     await mobileAds().setRequestConfiguration({
       maxAdContentRating: MaxAdContentRating.T,
       tagForChildDirectedTreatment: false,
@@ -42,6 +45,12 @@ export async function showRewardedAd(
 ): Promise<{ completed: boolean; rewardKey: string }> {
   const initialized = await initializeAds();
   if (!initialized) throw new Error('ADS_CONSENT_REQUIRED');
+  const {
+    AdEventType,
+    RewardedAd,
+    RewardedAdEventType,
+    TestIds,
+  } = loadGoogleMobileAds();
   const configuredUnitId = Platform.OS === 'ios'
     ? IOS_REWARDED_UNIT_ID
     : process.env.EXPO_PUBLIC_ADMOB_REWARDED_ANDROID_ID;
