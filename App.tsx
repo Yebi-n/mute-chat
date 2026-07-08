@@ -11,7 +11,7 @@ import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { Image as ExpoImage } from "expo-image";
 import { LinearGradient as ExpoLinearGradient } from "expo-linear-gradient";
-import * as Notifications from "expo-notifications";
+import * as Notifications from "./src/services/expoNotifications";
 import * as SecureStore from "expo-secure-store";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
