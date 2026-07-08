@@ -814,6 +814,17 @@ async function safeRemoveStorageItems(keys: string[]) {
   }
 }
 
+function runStartupTask(task: () => Promise<unknown> | unknown) {
+  try {
+    const result = task();
+    if (result && typeof (result as Promise<unknown>).catch === "function") {
+      void (result as Promise<unknown>).catch(() => undefined);
+    }
+  } catch {
+    // Startup-only native SDK failures must not abort the JS runtime.
+  }
+}
+
 async function readCachedThemeProductIds(userId: string) {
   const raw = await safeGetStorageItem(themeOwnershipStorageKey(userId));
   if (!raw) return [] as string[];
@@ -2017,7 +2028,7 @@ export default function App() {
     if (demoMode || !supabase) return;
     getCurrentSession()
       .then(setSession)
-      .catch((error) => Alert.alert("로그인 확인 실패", error.message))
+      .catch(() => setSession(null))
       .finally(() => setAuthReady(true));
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
@@ -2565,9 +2576,10 @@ function AuthenticatedApp({
   }, []);
   useEffect(() => {
     const syncPushState = () => {
-      registerPushDevice()
-        .then(() => schedulePendingPushDispatch())
-        .catch(() => undefined);
+      runStartupTask(async () => {
+        await registerPushDevice();
+        schedulePendingPushDispatch();
+      });
     };
     syncPushState();
     const subscription = AppState.addEventListener("change", (state) => {
@@ -2576,7 +2588,7 @@ function AuthenticatedApp({
     return () => subscription.remove();
   }, []);
   useEffect(() => {
-    initializeAds().catch(() => undefined);
+    runStartupTask(() => initializeAds());
   }, []);
   useEffect(()=>{
     if(!supabase||!isSupabaseConfigured)return;
@@ -2586,7 +2598,7 @@ function AuthenticatedApp({
   },[]);
   useEffect(() => {
     if (session?.user.id)
-      configurePurchases(session.user.id).catch(() => undefined);
+      runStartupTask(() => configurePurchases(session.user.id));
   }, [session?.user.id]);
   useEffect(() => {
     let active = true;
@@ -2619,7 +2631,7 @@ function AuthenticatedApp({
           : Number.NaN;
         if (Number.isFinite(expiresAt))
           entitlementExpiryTimer = setTimeout(
-            () => void reloadEntitlements(),
+            () => runStartupTask(reloadEntitlements),
             Math.max(1000, expiresAt - now + 1000),
           );
         const ownedProductIds = items.map((item) => item.productId);
@@ -2633,7 +2645,7 @@ function AuthenticatedApp({
         if (!active) return;
         await loadStoredAppTheme(userId, cached);
       } finally {
-        if (active) void reloadEntitlements();
+        if (active) runStartupTask(reloadEntitlements);
       }
     })().catch(() => undefined);
     const entitlementChannel =
@@ -2648,12 +2660,12 @@ function AuthenticatedApp({
                 table: "user_entitlements",
                 filter: `user_id=eq.${userId}`,
               },
-              () => void reloadEntitlements(),
+              () => runStartupTask(reloadEntitlements),
             )
             .subscribe()
         : null;
     const appStateSubscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") void reloadEntitlements();
+      if (state === "active") runStartupTask(reloadEntitlements);
     });
     return () => {
       active = false;
