@@ -599,7 +599,7 @@ async function readAppLockPin() {
   try {
     secured = await SecureStore.getItemAsync(APP_LOCK_SECURE_PIN_KEY);
   } catch (error) {
-    if (!isSecureStoreKeyError(error)) throw error;
+    secured = null;
   }
   if (secured !== null) return secured;
 
@@ -607,12 +607,11 @@ async function readAppLockPin() {
   const legacy = await AsyncStorage.getItem(APP_LOCK_PIN_KEY);
   if (legacy !== null) {
     try {
-      await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, legacy, {
-        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-      });
+      await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, legacy);
       await AsyncStorage.removeItem(APP_LOCK_PIN_KEY);
-    } catch (error) {
-      if (!isSecureStoreKeyError(error)) throw error;
+    } catch {
+      // SecureStore failure must not block app launch. Keep the AsyncStorage
+      // fallback so existing users can still unlock and continue using the app.
     }
   }
   return legacy;
@@ -624,12 +623,9 @@ async function writeAppLockPin(pin: string) {
     return;
   }
   try {
-    await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, pin, {
-      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-    });
+    await SecureStore.setItemAsync(APP_LOCK_SECURE_PIN_KEY, pin);
     await AsyncStorage.removeItem(APP_LOCK_PIN_KEY);
-  } catch (error) {
-    if (!isSecureStoreKeyError(error)) throw error;
+  } catch {
     await AsyncStorage.setItem(APP_LOCK_PIN_KEY, pin);
   }
 }
@@ -2167,11 +2163,19 @@ function AppLockScreen({
     }
     setError("PIN이 일치하지 않습니다.");
   };
+  const safeCheckPin = async (value: string) => {
+    try {
+      await checkPin(value);
+    } catch {
+      await clearAppLockCredentials();
+      onDisabled();
+    }
+  };
   const pushDigit = (digit: string) => {
     setError("");
     setPin((current) => {
       const next = (current + digit).slice(0, 4);
-      if (next.length === 4) setTimeout(() => void checkPin(next), 0);
+      if (next.length === 4) setTimeout(() => void safeCheckPin(next), 0);
       return next;
     });
   };
@@ -15370,7 +15374,28 @@ function AppLockSettings({
       })
       .catch(() => undefined);
   }, []);
-  const verifyCurrent = async () => {
+  const runAppLockStorageGuard = async <T,>(
+    action: () => Promise<T>,
+    fallback: T,
+  ) => {
+    try {
+      return await action();
+    } catch {
+      await clearAppLockCredentials();
+      await AsyncStorage.removeItem(APP_LOCK_ENABLED_KEY);
+      setEnabled(false);
+      setDesiredEnabled(false);
+      setUnlocked(true);
+      setCurrent("");
+      setPin("");
+      setConfirm("");
+      setMessage("");
+      onChanged(false);
+      return fallback;
+    }
+  };
+  const verifyCurrent = async () =>
+    runAppLockStorageGuard(async () => {
     const stored = await readAppLockPin();
     if (current !== stored) {
       setMessage("현재 PIN이 일치하지 않습니다.");
@@ -15379,8 +15404,9 @@ function AppLockSettings({
     setMessage("");
     setUnlocked(true);
     return true;
-  };
-  const save = async () => {
+    }, false);
+  const save = async () =>
+    runAppLockStorageGuard(async () => {
     if (enabled && !unlocked && !(await verifyCurrent())) return;
     if (pin.length !== 4 || pin !== confirm) {
       setMessage("4자리 PIN이 일치하지 않습니다.");
@@ -15397,8 +15423,9 @@ function AppLockSettings({
     setMessage("앱 잠금이 설정되었습니다.");
     onChanged(true);
     onBack();
-  };
-  const disable = async () => {
+    }, undefined);
+  const disable = async () =>
+    runAppLockStorageGuard(async () => {
     if (!(await verifyCurrent())) return;
     await clearAppLockCredentials();
     setEnabled(false);
@@ -15409,7 +15436,7 @@ function AppLockSettings({
     setConfirm("");
     setMessage("앱 잠금이 해제되었습니다.");
     onChanged(false);
-  };
+    }, undefined);
   const requestToggle = (value: boolean) => {
     setDesiredEnabled(value);
     setMessage("");
