@@ -107,6 +107,7 @@ import {
   markNotificationRead,
   markRoomJoinRequestNotificationsRead,
   registerPushDevice,
+  configureNotificationHandler,
   clearForegroundRoomId,
   ServerNotice,
   setForegroundRoomId,
@@ -2573,17 +2574,29 @@ function AuthenticatedApp({
     };
   }, []);
   useEffect(() => {
+    let disposed = false;
+    let pushTimer: ReturnType<typeof setTimeout> | null = null;
     const syncPushState = () => {
+      if (disposed) return;
       runStartupTask(async () => {
+        configureNotificationHandler();
         await registerPushDevice();
         schedulePendingPushDispatch();
       });
     };
-    syncPushState();
+    const scheduleSyncPushState = (delayMs: number) => {
+      if (pushTimer) clearTimeout(pushTimer);
+      pushTimer = setTimeout(syncPushState, delayMs);
+    };
+    scheduleSyncPushState(3500);
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") syncPushState();
+      if (state === "active") scheduleSyncPushState(1200);
     });
-    return () => subscription.remove();
+    return () => {
+      disposed = true;
+      if (pushTimer) clearTimeout(pushTimer);
+      subscription.remove();
+    };
   }, []);
   useEffect(()=>{
     if(!supabase||!isSupabaseConfigured)return;
@@ -3071,22 +3084,26 @@ function AuthenticatedApp({
       if (notice) void openNotification(notice);
     };
     let subscription: { remove: () => void } | null = null;
-    try {
-      subscription = Notifications.addNotificationResponseReceivedListener(handleResponse);
-      if (!checkedInitialPushResponseRef.current) {
-        checkedInitialPushResponseRef.current = true;
-        try {
-          Notifications.getLastNotificationResponseAsync()
-            .then(handleResponse)
-            .catch(() => undefined);
-        } catch {
-          // Native notification modules can be unavailable during early startup.
+    const responseTimer = setTimeout(() => {
+      try {
+        subscription =
+          Notifications.addNotificationResponseReceivedListener(handleResponse);
+        if (!checkedInitialPushResponseRef.current) {
+          checkedInitialPushResponseRef.current = true;
+          try {
+            Notifications.getLastNotificationResponseAsync()
+              .then(handleResponse)
+              .catch(() => undefined);
+          } catch {
+            // Native notification modules can be unavailable during early startup.
+          }
         }
+      } catch {
+        // Do not let notification response registration block app startup.
       }
-    } catch {
-      // Do not let notification response registration block app startup.
-    }
+    }, 2200);
     return () => {
+      clearTimeout(responseTimer);
       try {
         subscription?.remove();
       } catch {

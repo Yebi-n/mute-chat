@@ -48,7 +48,6 @@ export function configureNotificationHandler() {
 }
 
 export async function registerPushDevice() {
-  configureNotificationHandler();
   if (!Device.isDevice || Platform.OS === 'web') return null;
   const current = await Notifications.getPermissionsAsync();
   const permission = current.status === 'granted'
