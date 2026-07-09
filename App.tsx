@@ -3553,14 +3553,19 @@ function serverErrorMessage(error: unknown) {
     );
     if (!message || message === "[object Object]") {
       try {
-        message = JSON.stringify(error);
+        const json = JSON.stringify(error);
+        message = json && json !== "{}" ? json : "UNKNOWN_ERROR";
       } catch {
-        message = "알 수 없는 오류가 발생했습니다.";
+        message = "UNKNOWN_ERROR";
       }
     }
   }
-  if (!message || message === "[object Object]")
-    message = "알 수 없는 오류가 발생했습니다.";
+  if (!message || message === "[object Object]" || message === "{}")
+    message = "UNKNOWN_ERROR";
+  if (message.includes("AUTH_SESSION_MISSING"))
+    return "로그인 세션을 확인할 수 없습니다. 다시 로그인한 뒤 시도해주세요.";
+  if (message.includes("UNKNOWN_ERROR"))
+    return "알 수 없는 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
   if (message.includes("MESSAGE_RATE_LIMIT"))
     return "메시지를 너무 빠르게 보내고 있어요. 잠시 후 다시 시도해주세요.";
   if (message.includes("RATE_LIMITED")) return "잠시 후 다시 시도해주세요.";
@@ -4268,8 +4273,8 @@ function PhoneAuthScreenV2({
       return;
     setLoading(true);
     try {
-      await acceptSignupCompliance();
       await updateCurrentUserPassword(password);
+      await acceptSignupCompliance();
       await signOut();
       resetFlow("login");
       Alert.alert(
@@ -4413,7 +4418,7 @@ function PhoneAuthScreenV2({
         <AuthHeader title="회원가입" onBack={exitSignup} />
         <ScrollView
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={s.authScroll}
+          contentContainerStyle={[s.authScroll, s.authSignupScroll]}
         >
           <KeyboardAvoidingView
             behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -4491,7 +4496,7 @@ function PhoneAuthScreenV2({
                     opacity: signupReveal,
                     maxHeight: signupReveal.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [0, 340],
+                      outputRange: [0, 760],
                     }),
                   },
                 ]}
@@ -4774,7 +4779,7 @@ function PhoneAuthScreenV2({
                     opacity: signupReveal,
                     maxHeight: signupReveal.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [0, 310],
+                      outputRange: [0, 760],
                     }),
                   },
                 ]}
@@ -18496,6 +18501,9 @@ const s = StyleSheet.create({
     justifyContent: "flex-start",
     paddingTop: 12,
     paddingBottom: 160,
+  },
+  authSignupScroll: {
+    paddingBottom: Platform.OS === "ios" ? 280 : 160,
   },
   authPhoneRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   authPhoneInput: { flex: 1, minWidth: 0 },

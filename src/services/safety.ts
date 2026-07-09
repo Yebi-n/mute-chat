@@ -21,6 +21,61 @@ function requireClient() {
   return supabase;
 }
 
+function functionErrorMessage(value: unknown) {
+  if (typeof value === 'string') return value;
+  if (value instanceof Error && value.message) return value.message;
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const parts = ['message', 'error_description', 'error', 'code', 'details', 'hint']
+      .map((key) => record[key])
+      .filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+    if (parts.length > 0) return parts.join(' / ');
+    try {
+      const json = JSON.stringify(record);
+      if (json && json !== '{}') return json;
+    } catch {
+      // Fall through to the stable fallback below.
+    }
+    return '알 수 없는 오류가 발생했습니다.';
+  }
+  return value == null ? '알 수 없는 오류가 발생했습니다.' : String(value);
+}
+
+async function functionInvokeErrorMessage(error: unknown) {
+  const context =
+    error && typeof error === 'object'
+      ? (error as { context?: unknown }).context
+      : undefined;
+  if (context && typeof context === 'object') {
+    const response = context as {
+      clone?: () => {
+        json?: () => Promise<unknown>;
+        text?: () => Promise<string>;
+      };
+      json?: () => Promise<unknown>;
+      text?: () => Promise<string>;
+    };
+    const clone = typeof response.clone === 'function' ? response.clone.bind(response) : null;
+    try {
+      const body = clone ? await clone().json?.() : await response.json?.();
+      if (body != null) {
+        const record = body as Record<string, unknown>;
+        const message = functionErrorMessage(record.error ?? record.message ?? body);
+        if (message && message !== '{}') return message;
+      }
+    } catch {
+      // The response may not be JSON. Try text below.
+    }
+    try {
+      const text = clone ? await clone().text?.() : await response.text?.();
+      if (typeof text === 'string' && text.trim().length > 0) return text.trim();
+    } catch {
+      // Fall through to the generic error serializer.
+    }
+  }
+  return functionErrorMessage(error);
+}
+
 export async function blockUser(userId: string) {
   const { error } = await requireClient().rpc('block_user', {
     p_blocked_user_id: userId,
@@ -70,11 +125,19 @@ export async function acceptSignupCompliance() {
 }
 
 export async function requestAccountDeletion() {
-  const { data, error } = await requireClient().functions.invoke('delete-account', {
+  const client = requireClient();
+  const {
+    data: { session },
+  } = await client.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error('AUTH_SESSION_MISSING');
+  }
+
+  const { data, error } = await client.functions.invoke('delete-account', {
     method: 'POST',
   });
-  if (error) throw error;
-  if (data?.error) throw new Error(data.error);
+  if (error) throw new Error(await functionInvokeErrorMessage(error));
+  if (data?.error) throw new Error(functionErrorMessage(data.error));
   return data?.blockedUntil as string;
 }
 

@@ -5,11 +5,42 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+const jsonHeaders = {
+  ...corsHeaders,
+  'Content-Type': 'application/json; charset=utf-8',
+};
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: jsonHeaders,
+  });
+}
+
 type OwnedUpload = {
   bucket_id: 'room-covers' | 'chat-media' | 'profile-avatars';
   object_path: string;
   status: 'pending' | 'validated' | 'rejected' | 'deleted';
 };
+
+function describeError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const record = error as Record<string, unknown>;
+    const parts = ['message', 'code', 'details', 'hint', 'name']
+      .map((key) => record[key])
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+    if (parts.length > 0) return parts.join(' / ');
+    try {
+      const json = JSON.stringify(record);
+      if (json && json !== '{}') return json;
+    } catch {
+      // Fall through to the stable fallback below.
+    }
+  }
+  return 'ACCOUNT_DELETION_FAILED';
+}
 
 async function removePrivateAccountUploads(
   adminClient: ReturnType<typeof createClient>,
@@ -60,17 +91,22 @@ Deno.serve(async (request) => {
     if (userError || !userData.user) throw userError ?? new Error('AUTH_REQUIRED');
 
     const adminClient = createClient(url, serviceRoleKey, { auth: { persistSession: false } });
-    await removePrivateAccountUploads(adminClient, userData.user.id);
+    try {
+      await removePrivateAccountUploads(adminClient, userData.user.id);
+    } catch (cleanupError) {
+      console.warn('delete-account upload cleanup skipped', describeError(cleanupError), cleanupError);
+    }
 
-    const { data: blockedUntil, error: prepareError } = await userClient.rpc('prepare_account_deletion');
-    if (prepareError) throw prepareError;
-
-    const { error: deleteError } = await adminClient.auth.admin.deleteUser(userData.user.id);
+    const { data: blockedUntil, error: deleteError } = await adminClient.rpc(
+      'delete_my_account_admin',
+      { p_user_id: userData.user.id },
+    );
     if (deleteError) throw deleteError;
 
-    return Response.json({ blockedUntil }, { headers: corsHeaders });
+    return jsonResponse({ ok: true, blockedUntil });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return Response.json({ error: message }, { status: 400, headers: corsHeaders });
+    const message = describeError(error);
+    console.error('delete-account failed', message, error);
+    return jsonResponse({ ok: false, error: message, message, code: 'ACCOUNT_DELETION_FAILED' });
   }
 });
