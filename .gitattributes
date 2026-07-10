@@ -1,2 +1,3 @@
 *.sh text eol=lf
 .ci_scripts/*.sh text eol=lf
+ios/.xcode.env text eol=lf
