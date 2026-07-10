@@ -7222,6 +7222,7 @@ function ChatRoom({
         .eq("room_id", room.id)
         .eq("user_id", userData.user.id)
         .eq("status", "active")
+        .is("left_at", null)
         .maybeSingle()
         .then(({ data }) => {
           if (
@@ -10153,6 +10154,7 @@ function StoryPanel({
           .eq("room_id", room.id)
           .eq("user_id", userId)
           .eq("status", "active")
+          .is("left_at", null)
           .maybeSingle();
       })
       .then((result) => {

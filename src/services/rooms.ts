@@ -139,7 +139,8 @@ export async function listRoomMembers(roomId: string) {
       .from('room_memberships')
       .select('user_id,role')
       .eq('room_id', roomId)
-      .eq('status', 'active'),
+      .eq('status', 'active')
+      .is('left_at', null),
     client
       .from('room_profiles')
       .select('user_id,display_name,introduction,avatar_asset_path')
@@ -234,7 +235,8 @@ export async function listMyActiveRoomIds() {
     .from('room_memberships')
     .select('room_id')
     .eq('user_id', authData.user.id)
-    .eq('status', 'active');
+    .eq('status', 'active')
+    .is('left_at', null);
   if (error) throw error;
   return (data ?? []).map((item) => item.room_id as string);
 }
@@ -249,7 +251,8 @@ export async function listMyOwnedRoomIds() {
     .select('room_id')
     .eq('user_id', authData.user.id)
     .eq('status', 'active')
-    .eq('role', 'owner');
+    .eq('role', 'owner')
+    .is('left_at', null);
   if (error) throw error;
   return (data ?? []).map((item) => item.room_id as string);
 }
