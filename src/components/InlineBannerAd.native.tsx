@@ -5,7 +5,10 @@ import {
   BannerAdSize,
   TestIds,
 } from 'react-native-google-mobile-ads';
-import { initializeAds } from '../services/monetization.native';
+import {
+  initializeAds,
+  shouldUseReviewTestAds,
+} from '../services/monetization.native';
 
 export type BannerPlacement = 'main' | 'chat' | 'story';
 
@@ -49,7 +52,12 @@ export default function InlineBannerAd({
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
-  const useTestAds = __DEV__ || process.env.EXPO_PUBLIC_ADMOB_USE_TEST_ADS === 'true';
+  const [reviewTestMode, setReviewTestMode] = useState(false);
+  const [reviewModeResolved, setReviewModeResolved] = useState(false);
+  const useTestAds =
+    __DEV__
+    || process.env.EXPO_PUBLIC_ADMOB_USE_TEST_ADS === 'true'
+    || reviewTestMode;
   const configured = configuredUnitId(placement);
   const unitId = useTestAds ? TestIds.ADAPTIVE_BANNER : configured;
   const size = placement === 'story'
@@ -68,6 +76,22 @@ export default function InlineBannerAd({
     ],
     [dark, loaded, placement],
   );
+
+  useEffect(() => {
+    let active = true;
+    shouldUseReviewTestAds()
+      .then((enabled) => {
+        if (!active) return;
+        setReviewTestMode(enabled);
+        setReviewModeResolved(true);
+      })
+      .catch(() => {
+        if (active) setReviewModeResolved(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (disabled || !unitId) return;
@@ -96,7 +120,7 @@ export default function InlineBannerAd({
     return () => clearTimeout(timer);
   }, [disabled, failed, unitId]);
 
-  if (disabled || !unitId || failed) {
+  if (disabled || !reviewModeResolved || !unitId || failed) {
     return reserveSpace ? <View pointerEvents="none" style={containerStyle} /> : null;
   }
   if (!sdkReady) {

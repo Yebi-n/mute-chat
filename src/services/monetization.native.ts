@@ -25,6 +25,19 @@ let trackingPermissionPromise: Promise<void> | null = null;
 const IOS_REWARDED_UNIT_ID =
   process.env.EXPO_PUBLIC_ADMOB_REWARDED_IOS_ID
   || 'ca-app-pub-4013454985021474/1566965165';
+const REVIEW_AD_TEST_EMAILS = new Set([
+  'test-alpha@user.mute.app',
+  'test-bravo@user.mute.app',
+  'test-charlie@user.mute.app',
+]);
+
+export async function shouldUseReviewTestAds(): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) return false;
+  const { data, error } = await supabase.auth.getUser();
+  if (error) return false;
+  const email = data.user?.email?.trim().toLowerCase();
+  return Boolean(email && REVIEW_AD_TEST_EMAILS.has(email));
+}
 
 export async function ensureTrackingPermissionRequested(): Promise<void> {
   if (Platform.OS !== 'ios') return;
@@ -80,7 +93,10 @@ export async function showRewardedAd(
   const configuredUnitId = Platform.OS === 'ios'
     ? IOS_REWARDED_UNIT_ID
     : process.env.EXPO_PUBLIC_ADMOB_REWARDED_ANDROID_ID;
-  const useTestAds = __DEV__ || process.env.EXPO_PUBLIC_ADMOB_USE_TEST_ADS === 'true';
+  const useTestAds =
+    __DEV__
+    || process.env.EXPO_PUBLIC_ADMOB_USE_TEST_ADS === 'true'
+    || await shouldUseReviewTestAds();
   const productionUnitId = useTestAds ? undefined : configuredUnitId;
   const unitId = productionUnitId || TestIds.REWARDED;
   let rewardKey = `admob-test-${Date.now()}`;
