@@ -53,6 +53,28 @@ fi
 
 echo "Using CocoaPods: $(pod --version)"
 
+if ! command -v cmake >/dev/null 2>&1; then
+  echo "cmake was not found; installing cmake."
+  if command -v brew >/dev/null 2>&1; then
+    brew list cmake >/dev/null 2>&1 || brew install cmake
+    HOMEBREW_PREFIX="$(brew --prefix 2>/dev/null || true)"
+    CMAKE_PREFIX="$(brew --prefix cmake 2>/dev/null || true)"
+    [ -n "$HOMEBREW_PREFIX" ] && export PATH="$HOMEBREW_PREFIX/bin:$PATH"
+    [ -n "$CMAKE_PREFIX" ] && export PATH="$CMAKE_PREFIX/bin:$PATH"
+    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+  else
+    echo "error: Homebrew is required to install cmake in Xcode Cloud." >&2
+    exit 1
+  fi
+fi
+
+if ! command -v cmake >/dev/null 2>&1; then
+  echo "error: cmake is still unavailable after install." >&2
+  exit 1
+fi
+
+echo "Using cmake: $(cmake --version | head -n 1)"
+
 cd "$REPOSITORY_PATH"
 echo "Installing JavaScript dependencies."
 npm ci

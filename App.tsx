@@ -2492,6 +2492,7 @@ function AuthenticatedApp({
       void AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, APP_THEMES[0].id);
       return;
     }
+    setAdFreeActive(false);
     // Apply the last server-confirmed ownership cache before the network round
     // trip so app resume does not flash or reset a purchased theme.
     const reloadEntitlements = () => listStoreEntitlements()
@@ -2501,7 +2502,9 @@ function AuthenticatedApp({
         const activeAdFree = items.find(
           (item) =>
             item.type === "ad_free" &&
-            (!item.expiresAt || Date.parse(item.expiresAt) > now),
+            item.productId === STORE_PRODUCTS.adFreeMonthly &&
+            typeof item.expiresAt === "string" &&
+            Date.parse(item.expiresAt) > now,
         );
         setAdFreeActive(
           Boolean(activeAdFree),

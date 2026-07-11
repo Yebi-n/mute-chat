@@ -13,6 +13,14 @@ export type ServerNotice = {
   createdAt: string;
 };
 
+const ROOM_SCOPED_INBOX_EVENT_TYPES = new Set([
+  'join_request',
+  'join_approved',
+  'join_rejected',
+  'story',
+  'story_comment',
+]);
+
 let foregroundRoomId: string | null = null;
 
 export function setForegroundRoomId(roomId: string | null) {
@@ -179,7 +187,7 @@ export async function listNotificationInbox(limit = 50): Promise<ServerNotice[]>
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;
-  return (data ?? []).map((row) => ({
+  const notices = (data ?? []).map((row) => ({
     id: String(row.id),
     eventType: row.event_type as string,
     title: row.title as string,
@@ -188,6 +196,53 @@ export async function listNotificationInbox(limit = 50): Promise<ServerNotice[]>
     readAt: row.read_at as string | null,
     createdAt: row.created_at as string,
   }));
+  return filterRoomScopedNoticesForActiveMembership(notices);
+}
+
+function getNoticeRoomId(data: Record<string, unknown>) {
+  const directValues = [data.roomId, data.room_id];
+  for (const value of directValues) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  const room = data.room;
+  if (room && typeof room === 'object') {
+    const roomId = (room as { id?: unknown }).id;
+    if (typeof roomId === 'string' && roomId.trim()) return roomId.trim();
+  }
+  return null;
+}
+
+async function filterRoomScopedNoticesForActiveMembership(notices: ServerNotice[]) {
+  if (!isSupabaseConfigured || !supabase || !notices.length) return notices;
+  const roomIds = [
+    ...new Set(
+      notices
+        .filter((notice) => ROOM_SCOPED_INBOX_EVENT_TYPES.has(notice.eventType))
+        .map((notice) => getNoticeRoomId(notice.data))
+        .filter((roomId): roomId is string => Boolean(roomId)),
+    ),
+  ];
+  if (!roomIds.length) return notices;
+
+  const { data: authData } = await supabase.auth.getUser();
+  const userId = authData.user?.id;
+  if (!userId) return notices;
+
+  const { data, error } = await supabase
+    .from('room_memberships')
+    .select('room_id')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .is('left_at', null)
+    .in('room_id', roomIds);
+  if (error) return notices;
+
+  const activeRoomIds = new Set((data ?? []).map((row) => String(row.room_id)));
+  return notices.filter((notice) => {
+    if (!ROOM_SCOPED_INBOX_EVENT_TYPES.has(notice.eventType)) return true;
+    const roomId = getNoticeRoomId(notice.data);
+    return !roomId || activeRoomIds.has(roomId);
+  });
 }
 
 export async function markNotificationRead(notificationId: string) {

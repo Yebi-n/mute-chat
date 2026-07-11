@@ -11,6 +11,16 @@ function cacheKey(bucket: string, path: string) {
   return `${bucket}:${path}`;
 }
 
+function normalizeAssetPath(path: string | null | undefined) {
+  if (typeof path !== 'string') return null;
+  const trimmed = path.trim();
+  return trimmed.length ? trimmed : null;
+}
+
+function isRemoteAssetUrl(path: string) {
+  return /^https?:\/\//i.test(path);
+}
+
 function pruneCache(now: number) {
   for (const [key, entry] of signedUrlCache) {
     if (entry.expiresAt <= now) signedUrlCache.delete(key);
@@ -27,7 +37,10 @@ export async function getCachedSignedUrls(
   paths: Array<string | null | undefined>,
 ) {
   if (!isSupabaseConfigured || !supabase) return new Map<string, string>();
-  const uniquePaths = [...new Set(paths.filter((path): path is string => Boolean(path)))];
+  const normalizedPairs = paths
+    .map((original) => ({ original, normalized: normalizeAssetPath(original) }))
+    .filter((entry): entry is { original: string | null | undefined; normalized: string } => Boolean(entry.normalized));
+  const uniquePaths = [...new Set(normalizedPairs.map((entry) => entry.normalized))];
   if (!uniquePaths.length) return new Map<string, string>();
 
   const now = Date.now();
@@ -35,6 +48,10 @@ export async function getCachedSignedUrls(
   const result = new Map<string, string>();
   const missing: string[] = [];
   uniquePaths.forEach((path) => {
+    if (isRemoteAssetUrl(path)) {
+      result.set(path, path);
+      return;
+    }
     const cached = signedUrlCache.get(cacheKey(bucket, path));
     if (cached && cached.expiresAt > now) result.set(path, cached.url);
     else missing.push(path);
@@ -55,6 +72,13 @@ export async function getCachedSignedUrls(
       });
     });
   }
+
+  for (const { original, normalized } of normalizedPairs) {
+    if (typeof original !== 'string') continue;
+    const resolved = result.get(normalized);
+    if (resolved) result.set(original, resolved);
+  }
+
   return result;
 }
 

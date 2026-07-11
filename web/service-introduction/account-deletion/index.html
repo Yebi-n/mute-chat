@@ -3,62 +3,133 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="description" content="뮤트 계정 및 개인정보 삭제 안내" />
+    <meta name="description" content="뮤트 계정 및 데이터 삭제 요청 안내" />
     <title>계정 삭제 안내 | 뮤트</title>
     <link rel="icon" href="../mute-logo-color.png" />
     <style>
-      :root { color-scheme:light; --text:#1c1c1c; --sub:#66706b; --line:#e8ecea; --soft:#f6f8f7; --point:#399f72; }
-      * { box-sizing:border-box; }
-      body { margin:0; color:var(--text); background:#fff; font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif; line-height:1.7; }
-      header { border-bottom:1px solid var(--line); }
-      .inner { width:min(680px,calc(100% - 40px)); margin:0 auto; }
-      .brand { height:64px; display:flex; align-items:center; gap:10px; color:var(--text); font-weight:700; text-decoration:none; }
-      .brand img { width:32px; height:32px; object-fit:contain; }
-      main { padding:52px 0 76px; }
-      h1 { margin:0; font-size:clamp(30px,7vw,42px); letter-spacing:-.04em; }
-      h2 { margin:42px 0 14px; font-size:20px; }
-      p,li { font-size:14px; }
-      .lead { color:var(--sub); margin-top:16px; }
-      .card { margin-top:32px; padding:22px; border:1px solid var(--line); border-radius:18px; background:var(--soft); }
-      .button { display:flex; min-height:52px; margin-top:20px; align-items:center; justify-content:center; border-radius:14px; color:#fff; background:var(--point); font-weight:700; text-decoration:none; }
-      .note { color:var(--sub); font-size:12px; }
-      footer { padding:24px 0 40px; border-top:1px solid var(--line); color:var(--sub); font-size:12px; }
+      :root {
+        color-scheme: light;
+        --text: #1c1c1c;
+        --sub: #666;
+        --line: #e7e7e7;
+        --soft: #f7f7f7;
+        --point: #555;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        color: var(--text);
+        background: #fff;
+        font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+        line-height: 1.72;
+        word-break: keep-all;
+      }
+      a { color: var(--point); text-underline-offset: 3px; }
+      .wrap { width: min(720px, calc(100% - 40px)); margin: 0 auto; }
+      header { border-bottom: 1px solid var(--line); }
+      .brand {
+        height: 64px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--text);
+        font-weight: 700;
+        text-decoration: none;
+      }
+      .brand img { width: 30px; height: 30px; object-fit: contain; }
+      main { padding: 48px 0 76px; }
+      h1 { margin: 0; font-size: clamp(30px, 7vw, 42px); line-height: 1.18; letter-spacing: -.045em; }
+      h2 { margin: 42px 0 14px; font-size: 21px; letter-spacing: -.025em; }
+      p, li { font-size: 14px; }
+      ul, ol { padding-left: 21px; }
+      li + li { margin-top: 6px; }
+      .lead { margin-top: 16px; color: var(--sub); font-size: 15px; }
+      .card {
+        margin-top: 28px;
+        padding: 20px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--soft);
+      }
+      .button {
+        display: flex;
+        min-height: 52px;
+        margin-top: 18px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 14px;
+        color: #fff;
+        background: #555;
+        font-weight: 700;
+        text-decoration: none;
+      }
+      .note { color: var(--sub); font-size: 12px; }
+      footer {
+        padding: 24px 0 40px;
+        border-top: 1px solid var(--line);
+        color: var(--sub);
+        font-size: 12px;
+      }
     </style>
   </head>
   <body>
-    <header><div class="inner"><a class="brand" href="../"><img src="../mute-logo-color.png" alt="" />뮤트</a></div></header>
-    <main class="inner">
+    <header>
+      <div class="wrap">
+        <a class="brand" href="../"><img src="../mute-logo-color.png" alt="" />뮤트</a>
+      </div>
+    </header>
+
+    <main class="wrap">
       <h1>계정 삭제 안내</h1>
-      <p class="lead">뮤트(Mute) 계정과 관련 개인정보의 삭제를 요청하는 방법입니다.</p>
+      <p class="lead">
+        뮤트(Mute) 계정과 관련 데이터의 삭제를 요청하는 방법입니다. 계정 삭제는 앱 안에서 직접 진행하거나,
+        앱 이용이 어려운 경우 이메일로 요청할 수 있습니다.
+      </p>
 
       <section class="card">
-        <strong>앱에서 바로 삭제</strong>
-        <p>뮤트 앱에서 <b>내 정보 → 설정 → 계정 탈퇴</b>를 선택하면 본인 확인 후 계정을 삭제할 수 있습니다.</p>
+        <strong>앱에서 직접 삭제</strong>
+        <p>
+          뮤트 앱에서 <b>내 정보 &gt; 설정 &gt; 계정 탈퇴</b>를 선택하면 본인 확인 후 계정 삭제를 진행할 수 있습니다.
+        </p>
       </section>
 
       <h2>앱을 이용할 수 없는 경우</h2>
       <p>
-        아래 이메일로 제목을 <b>뮤트 계정 삭제 요청</b>으로 작성하고, 가입한 휴대전화번호의 끝 4자리만 보내주세요.
-        담당자가 전체 전화번호를 이메일로 요구하지 않고 별도의 본인 확인 절차를 안내합니다.
+        아래 이메일로 제목을 <b>뮤트 계정 삭제 요청</b>으로 작성해 보내주세요. 가입한 전화번호의 마지막 4자리,
+        앱에서 사용한 닉네임 등 계정 확인에 필요한 최소 정보만 요청합니다. 전체 전화번호나 신분증 사본을 이메일로 보내지 마세요.
       </p>
-      <a class="button" href="mailto:muteappcontact@gmail.com?subject=%EB%AE%A4%ED%8A%B8%20%EA%B3%84%EC%A0%95%20%EC%82%AD%EC%A0%9C%20%EC%9A%94%EC%B2%AD">계정 삭제 요청하기</a>
+      <a
+        class="button"
+        href="mailto:muteappcontact@gmail.com?subject=%EB%AE%A4%ED%8A%B8%20%EA%B3%84%EC%A0%95%20%EC%82%AD%EC%A0%9C%20%EC%9A%94%EC%B2%AD"
+      >계정 삭제 요청하기</a>
 
-      <h2>삭제되는 정보</h2>
+      <h2>삭제되는 데이터</h2>
       <ul>
-        <li>계정, 방별 멤버 자격과 프로필</li>
-        <li>푸시 토큰과 개인 설정</li>
-        <li>본인·성인 인증 상태와 서비스 접근 권한</li>
-        <li>프로필 이미지 및 완료되지 않은 개인 업로드</li>
+        <li>계정 식별 정보, 인증 전화번호, 프로필 정보</li>
+        <li>방 멤버십, 알림 토큰, 앱 잠금 등 개인 설정</li>
+        <li>본인 인증 및 성인 인증 상태와 서비스 접근 권한</li>
+        <li>완료되지 않은 개인 업로드 또는 임시 데이터</li>
       </ul>
 
-      <h2>일부 보관될 수 있는 정보</h2>
+      <h2>일부 보관될 수 있는 데이터</h2>
       <ul>
-        <li>법령상 보존해야 하는 구매·결제와 분쟁 처리 기록</li>
-        <li>다른 이용자와 공유된 대화의 맥락, 신고 증거 또는 법적 의무에 필요한 비식별 콘텐츠</li>
-        <li>탈퇴 후 재가입 제한을 위한 휴대전화번호 해시값: 3일</li>
+        <li>전자상거래, 결제, 환불, 정산 및 분쟁 대응을 위해 법령상 보관이 필요한 기록</li>
+        <li>다른 이용자와 함께 생성한 채팅, 스토리, 댓글, 신고 증거 등 서비스 안전과 기록 보존을 위해 필요한 콘텐츠</li>
+        <li>신고 처리, 악용 방지, 보안 감사에 필요한 최소 로그</li>
       </ul>
-      <p class="note">계정 삭제는 되돌릴 수 없습니다. 자세한 내용은 <a href="../privacy/">개인정보 처리방침</a>에서 확인할 수 있습니다.</p>
+      <p class="note">
+        보관되는 데이터는 가능한 범위에서 계정과 분리하거나 비식별 처리합니다. 자세한 내용은
+        <a href="../privacy/">개인정보 처리방침</a>에서 확인할 수 있습니다.
+      </p>
+
+      <h2>처리 기간</h2>
+      <p>
+        이메일 요청은 계정 확인 후 원칙적으로 7일 이내 처리합니다. 법령상 보관 의무가 있는 정보는 해당 기간 동안 보관 후 삭제됩니다.
+      </p>
     </main>
-    <footer><div class="inner">상호명 뮤트 · 문의 muteappcontact@gmail.com</div></footer>
+
+    <footer>
+      <div class="wrap">상호명: 뮤트 · 문의: muteappcontact@gmail.com</div>
+    </footer>
   </body>
 </html>
