@@ -151,6 +151,7 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
     .eq('room_id', roomId)
     .eq('user_id', user?.id ?? '00000000-0000-0000-0000-000000000000')
     .eq('status', 'active')
+    .is('left_at', null)
     .maybeSingle();
   let messageQuery = client
     .from('messages')
@@ -194,7 +195,7 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
       ? client.from('story_blocks').select('story_id,block_type,text_content,storage_path,position').in('story_id', storyIds).order('position')
       : Promise.resolve({ data: [], error: null }),
     client.rpc('get_room_chat_styles',{p_room_id:roomId}),
-    client.from('room_memberships').select('user_id').eq('room_id', roomId).eq('status', 'active').in('user_id', userIds.length ? userIds : ['00000000-0000-0000-0000-000000000000']),
+    client.from('room_memberships').select('user_id').eq('room_id', roomId).eq('status', 'active').is('left_at', null).in('user_id', userIds.length ? userIds : ['00000000-0000-0000-0000-000000000000']),
   ]);
   // Messages are the primary content. Auxiliary profile/style/preview failures
   // must not make the entire room appear empty or unavailable.

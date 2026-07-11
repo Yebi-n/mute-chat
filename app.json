@@ -9,7 +9,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#FFFFFF"
+      "backgroundColor": "#6FC3AD"
     },
     "userInterfaceStyle": "light",
     "ios": {
@@ -29,20 +29,19 @@
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundImage": "./assets/android-icon-background.png"
       },
       "splash": {
         "image": "./assets/splash-icon.png",
         "resizeMode": "contain",
-        "backgroundColor": "#FFFFFF"
+        "backgroundColor": "#6FC3AD"
       },
       "predictiveBackGestureEnabled": false,
       "package": "app.mute.chat"
     },
     "androidStatusBar": {
       "barStyle": "dark-content",
-      "backgroundColor": "#FFFFFF",
+      "backgroundColor": "#82B9C1",
       "translucent": false
     },
     "androidNavigationBar": {
@@ -85,7 +84,8 @@
       ],
       "expo-iap",
       "expo-secure-store",
-      "expo-tracking-transparency"
+      "expo-tracking-transparency",
+      "./plugins/withAndroidMuteTheme"
     ],
     "extra": {
       "brand": {

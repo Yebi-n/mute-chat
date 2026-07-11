@@ -32,7 +32,10 @@ import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
 } from "react-native-reanimated";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import {
   ActivityIndicator as RNActivityIndicator,
   Alert,
@@ -42,6 +45,7 @@ import {
   Image,
   KeyboardAvoidingView as RNKeyboardAvoidingView,
   Linking,
+  NativeModules,
   Platform,
   Pressable as RNPressable,
   RefreshControl,
@@ -719,7 +723,11 @@ function StatusBar(_props: {
   const theme = useAppTheme();
   const resolvedStyle = _props.style ?? (theme.id === "dark" ? "light" : "dark");
   const androidBackgroundColor =
-    resolvedStyle === "light" ? "#222222" : "#FFFFFF";
+    theme.id === "dark"
+      ? "#222222"
+      : theme.id === "white"
+        ? "#FFFFFF"
+        : theme.gradient[0];
   return (
     <>
       {Platform.OS === "android" ? (
@@ -799,8 +807,17 @@ function applyAppTheme(theme: AppTheme) {
   activeAppTheme = theme;
   appThemeListeners.forEach((listener) => listener(theme));
 }
+function syncNativeSplashTheme(theme: AppTheme) {
+  if (Platform.OS !== "android") return;
+  try {
+    NativeModules.MuteThemePreference?.setTheme(theme.id);
+  } catch {
+    // The JavaScript theme remains authoritative if the native cache is unavailable.
+  }
+}
 function selectAppTheme(theme: AppTheme, userId?: string | null) {
   applyAppTheme(theme);
+  syncNativeSplashTheme(theme);
   void AsyncStorage.setItem(themeStorageKey(userId), theme.id);
   void AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, theme.id);
 }
@@ -819,13 +836,16 @@ async function loadStoredAppTheme(
       (found.legacyProductIds ?? []).some((id) => ownedProductIds.includes(id)));
   const selected = allowed ? found : APP_THEMES[0];
   applyAppTheme(selected);
+  syncNativeSplashTheme(selected);
   await AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, selected.id);
 }
 
 async function loadSplashTheme() {
   const stored = await AsyncStorage.getItem(SPLASH_THEME_STORAGE_KEY);
   const found = APP_THEMES.find((theme) => theme.id === stored);
-  applyAppTheme(found ?? APP_THEMES[0]);
+  const selected = found ?? APP_THEMES[0];
+  applyAppTheme(selected);
+  syncNativeSplashTheme(selected);
 }
 function themeForeground(theme: AppTheme) {
   return theme.id === "white" ? "#222222" : "#FFF";
@@ -963,19 +983,12 @@ function SafeAreaView(props: React.ComponentProps<typeof RNSafeAreaView>) {
   const insets = useSafeAreaInsets();
   const styled = themedStyle(props.style, "view");
   const flattenedStyle = (StyleSheet.flatten(styled) ?? {}) as {
-    paddingTop?: number | string;
     paddingBottom?: number | string;
   };
-  const basePaddingTop =
-    typeof flattenedStyle.paddingTop === "number"
-      ? flattenedStyle.paddingTop
-      : 0;
   const basePaddingBottom =
     typeof flattenedStyle.paddingBottom === "number"
       ? flattenedStyle.paddingBottom
       : 0;
-  const androidPaddingTop =
-    Platform.OS === "android" ? basePaddingTop : undefined;
   const androidPaddingBottom =
     Platform.OS === "android" && insets.bottom > 0
       ? basePaddingBottom + insets.bottom
@@ -985,7 +998,6 @@ function SafeAreaView(props: React.ComponentProps<typeof RNSafeAreaView>) {
       {...props}
       style={[
         styled,
-        androidPaddingTop ? { paddingTop: androidPaddingTop } : null,
         androidPaddingBottom ? { paddingBottom: androidPaddingBottom } : null,
       ]}
     />
@@ -998,6 +1010,10 @@ function KeyboardAvoidingView(
   return (
     <RNKeyboardAvoidingView
       {...props}
+      behavior={
+        props.behavior ?? (Platform.OS === "android" ? "height" : undefined)
+      }
+      keyboardVerticalOffset={props.keyboardVerticalOffset ?? 0}
       style={themedStyle(props.style, "view")}
     />
   );
@@ -1932,7 +1948,7 @@ function EdgeBackLayer({ onBack }: { onBack?: () => void }) {
           }),
     [onBack],
   );
-  if (!onBack || !responder) return null;
+  if (Platform.OS !== "ios" || !onBack || !responder) return null;
   return (
     <View
       {...responder.panHandlers}
@@ -1964,8 +1980,11 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [passwordRecoveryActive, setPasswordRecoveryActive] = useState(false);
   const [authReady, setAuthReady] = useState(demoMode || !isSupabaseConfigured);
+  const [splashThemeReady, setSplashThemeReady] = useState(false);
   useEffect(() => {
-    void loadSplashTheme().catch(() => applyAppTheme(APP_THEMES[0]));
+    void loadSplashTheme()
+      .catch(() => applyAppTheme(APP_THEMES[0]))
+      .finally(() => setSplashThemeReady(true));
   }, []);
   useEffect(() => {
     if (demoMode || !supabase) return;
@@ -1980,7 +1999,9 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, [demoMode]);
   let content: React.ReactNode;
-  if (!authReady) {
+  if (!splashThemeReady) {
+    content = <NativeSplashBridge />;
+  } else if (!authReady) {
     content = (
       <>
         <SplashScreen />
@@ -2023,7 +2044,9 @@ export default function App() {
   }
   return (
     <GestureHandlerRootView style={s.flex}>
-      <NavigationContainer ref={appNavigationRef}>{content}</NavigationContainer>
+      <SafeAreaProvider>
+        <NavigationContainer ref={appNavigationRef}>{content}</NavigationContainer>
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
@@ -2384,6 +2407,7 @@ function AuthenticatedApp({
     null,
   );
   const [chatInitialUnreadFocus, setChatInitialUnreadFocus] = useState(false);
+  const [chatInitialPanelSignal, setChatInitialPanelSignal] = useState(0);
   const [returnToNotifications, setReturnToNotifications] = useState(false);
   const [notificationDrawerSignal, setNotificationDrawerSignal] = useState(0);
   const handledPushResponseIdsRef = useRef<Set<string>>(new Set());
@@ -2935,14 +2959,17 @@ function AuthenticatedApp({
     }
     setSelectedRoom(room);
     setAdminReadOnly(Boolean(isSuperAdmin && !joinedIds.includes(room.id)));
-    setReturnToNotifications(notice.destination === "applications");
-    setChatInitialPanel(
+    const nextInitialPanel: ChatPanel =
       notice.destination === "applications"
         ? "applications"
         : notice.destination === "stories"
           ? "stories"
-          : null,
-    );
+          : null;
+    setReturnToNotifications(nextInitialPanel === "applications");
+    setChatInitialPanel(nextInitialPanel);
+    if (nextInitialPanel) {
+      setChatInitialPanelSignal((value) => value + 1);
+    }
     setChatInitialStoryId(
       notice.destination === "stories" ? notice.storyId ?? null : null,
     );
@@ -3269,14 +3296,17 @@ function AuthenticatedApp({
             }
             setSelectedRoom(room);
             setAdminReadOnly(Boolean(isSuperAdmin && !joinedIds.includes(room.id)));
-            setReturnToNotifications(notice.destination === "applications");
-            setChatInitialPanel(
+            const nextInitialPanel: ChatPanel =
               notice.destination === "applications"
                 ? "applications"
                 : notice.destination === "stories"
                   ? "stories"
-                  : null,
-            );
+                  : null;
+            setReturnToNotifications(nextInitialPanel === "applications");
+            setChatInitialPanel(nextInitialPanel);
+            if (nextInitialPanel) {
+              setChatInitialPanelSignal((value) => value + 1);
+            }
             setChatInitialStoryId(
               notice.destination === "stories"
                 ? notice.storyId ?? null
@@ -3418,6 +3448,7 @@ function AuthenticatedApp({
             onAdminReportUser={(id, label) => adminReport("user", id, label)}
             onEditRoom={() => navigation.navigate("EditRoom")}
             initialPanel={chatInitialPanel}
+            initialPanelSignal={chatInitialPanelSignal}
             initialStoryId={chatInitialStoryId}
             initialFocusUnread={chatInitialUnreadFocus}
             onApplicationsBack={
@@ -3734,11 +3765,37 @@ function serverErrorMessage(error: unknown) {
 
 function SplashScreen() {
   const theme = useAppTheme();
+  const splashLogo = require("./assets/mute-logo-white.png");
+  const splashLogoStyle =
+    theme.id === "white" ? s.splashLogoImageDark : s.splashLogoImageLight;
   return (
     <LinearGradient colors={theme.gradient} style={s.authSplash}>
       <StatusBar style="light" hidden />
       <View style={s.splashLogoWrap}>
-        <MuteLogo variant="white" compact />
+        <Image
+          source={splashLogo}
+          style={[s.splashLogoImage, splashLogoStyle]}
+          resizeMode="contain"
+        />
+      </View>
+    </LinearGradient>
+  );
+}
+
+function NativeSplashBridge() {
+  const theme = useAppTheme();
+  const splashLogo = require("./assets/mute-logo-white.png");
+  const splashLogoStyle =
+    theme.id === "white" ? s.splashLogoImageDark : s.splashLogoImageLight;
+  return (
+    <LinearGradient colors={theme.gradient} style={s.nativeSplashBridge}>
+      <StatusBar style="light" hidden />
+      <View style={s.splashLogoWrap}>
+        <Image
+          source={splashLogo}
+          style={[s.splashLogoImage, splashLogoStyle]}
+          resizeMode="contain"
+        />
       </View>
     </LinearGradient>
   );
@@ -4316,8 +4373,8 @@ function PhoneAuthScreenV2({
       return;
     setLoading(true);
     try {
-      await acceptSignupCompliance();
       await updateCurrentUserPassword(password);
+      await acceptSignupCompliance();
       await signOut();
       resetFlow("login");
       Alert.alert(
@@ -4459,14 +4516,17 @@ function PhoneAuthScreenV2({
       <SafeAreaView style={s.authScreen}>
         <StatusBar style="dark" />
         <AuthHeader title="회원가입" onBack={exitSignup} />
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={s.authScroll}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={s.authKeyboard}
         >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={s.authCard}
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={[s.authScroll, s.authSignupScroll]}
           >
+            <View style={s.authCard}>
             <Text style={s.authTitle}>전화번호로 가입</Text>
             <Text style={s.authBody}>
               전화번호를 인증한 뒤 비밀번호를 설정해주세요.
@@ -4539,12 +4599,12 @@ function PhoneAuthScreenV2({
                     opacity: signupReveal,
                     maxHeight: signupReveal.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [0, 340],
+                      outputRange: [0, Platform.OS === "android" ? 720 : 340],
                     }),
                   },
                 ]}
               >
-                <View style={[s.authPinHeader, s.androidHeaderInset58]}>
+                <View style={s.authPinHeader}>
                   <Text style={s.authPinLabel}>
                     {signupPhoneVerified
                       ? "전화번호 인증이 완료됐어요."
@@ -4740,8 +4800,9 @@ function PhoneAuthScreenV2({
                 )}
               </Animated.View>
             )}
-          </KeyboardAvoidingView>
-        </ScrollView>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     );
   }
@@ -4822,12 +4883,12 @@ function PhoneAuthScreenV2({
                     opacity: signupReveal,
                     maxHeight: signupReveal.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [0, 310],
+                      outputRange: [0, Platform.OS === "android" ? 560 : 310],
                     }),
                   },
                 ]}
               >
-                <View style={[s.authPinHeader, s.androidHeaderInset58]}>
+                <View style={s.authPinHeader}>
                   <Text style={s.authPinLabel}>
                     {signupPhoneVerified
                       ? "전화번호 인증이 완료됐어요."
@@ -6524,6 +6585,7 @@ function ChatRoom({
   onAdminReportUser,
   onEditRoom,
   initialPanel = null,
+  initialPanelSignal = 0,
   initialStoryId = null,
   initialFocusUnread = false,
   points,
@@ -6546,6 +6608,7 @@ function ChatRoom({
   onAdminReportUser: (id: string, label: string) => void;
   onEditRoom: () => void;
   initialPanel?: ChatPanel;
+  initialPanelSignal?: number;
   initialStoryId?: string | null;
   initialFocusUnread?: boolean;
   points: number;
@@ -6744,7 +6807,7 @@ function ChatRoom({
       setStoryPanelInitialId(null);
       setStoryPanelInitialWrite(false);
     }
-  }, [initialPanel, initialStoryId, room.id]);
+  }, [initialPanel, initialPanelSignal, initialStoryId, room.id]);
   const [photoViewer, setPhotoViewer] = useState<{
     uris:string[];
     index:number;
@@ -7268,6 +7331,7 @@ function ChatRoom({
         .eq("room_id", room.id)
         .eq("user_id", userData.user.id)
         .eq("status", "active")
+        .is("left_at", null)
         .maybeSingle()
         .then(({ data }) => {
           if (
@@ -10203,6 +10267,7 @@ function StoryPanel({
           .eq("room_id", room.id)
           .eq("user_id", userId)
           .eq("status", "active")
+          .is("left_at", null)
           .maybeSingle();
       })
       .then((result) => {
@@ -14139,12 +14204,12 @@ function EditRoom({
                    ["member", "Member", false, undefined],
                    ["concept", "콘셉트", false, undefined],
                    ["region", "지역별", false, undefined],
-                   [
-                      "adult",
-                      Platform.OS === "ios" ? "인증 필요" : "성인",
-                      Platform.OS === "ios",
-                      "현재 iOS에서 지원되지 않는 기능입니다.",
-                   ],
+                  [
+                    "adult",
+                    "인증 필요",
+                    true,
+                    "성인 인증이 필요합니다.",
+                  ],
                  ] as const
               ).map(([value, label, typeDisabled, disabledReason]) => (
                 <Pressable
@@ -18539,6 +18604,7 @@ const s = StyleSheet.create({
     backgroundColor: "#FFF",
     gap: 14,
   },
+  authKeyboard: { flex: 1 },
   authLoginCard: { paddingTop: 62 },
   authTitle: {
     marginTop: 10,
@@ -18565,6 +18631,9 @@ const s = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 160,
   },
+  authSignupScroll: {
+    paddingBottom: Platform.OS === "android" ? 72 : 160,
+  },
   authPhoneRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   authPhoneInput: { flex: 1, minWidth: 0 },
   authInputVerified: {
@@ -18588,7 +18657,7 @@ const s = StyleSheet.create({
   },
   authVerifyText: { color: colors.mint700, fontSize: 12, fontWeight: "800" },
   authVerifyTextDisabled: { color: colors.textMuted },
-  authSignupReveal: { overflow: "hidden", gap: 12 },
+  authSignupReveal: { overflow: "hidden", gap: Platform.OS === "android" ? 8 : 12 },
   authPinHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -18624,12 +18693,16 @@ const s = StyleSheet.create({
   },
   authTimer: { color: colors.mint700, fontSize: 12, fontWeight: "800" },
   authTimerExpired: { color: colors.pink600 },
-  authPasswordHint: { color: colors.mint700, fontSize: 10, marginTop: -5 },
+  authPasswordHint: {
+    color: colors.mint700,
+    fontSize: 10,
+    marginTop: Platform.OS === "android" ? -8 : -5,
+  },
   authPasswordMismatch: { color: colors.pink600 },
   signupConsentGroup: {
-    gap: 10,
-    marginTop: 4,
-    padding: 14,
+    gap: Platform.OS === "android" ? 7 : 10,
+    marginTop: Platform.OS === "android" ? 0 : 4,
+    padding: Platform.OS === "android" ? 10 : 14,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 14,
@@ -18639,7 +18712,7 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 9,
-    minHeight: 28,
+    minHeight: Platform.OS === "android" ? 24 : 28,
   },
   signupConsentBox: {
     width: 20,
@@ -18675,10 +18748,12 @@ const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background, overflow: "hidden" },
   flex: { flex: 1, minWidth: 0 },
   androidHeaderInset56: {
-    marginTop: 0,
+    height: 56 + ANDROID_STATUS_BAR_HEIGHT,
+    paddingTop: ANDROID_STATUS_BAR_HEIGHT,
   },
   androidHeaderInset58: {
-    marginTop: 0,
+    height: 58 + ANDROID_STATUS_BAR_HEIGHT,
+    paddingTop: ANDROID_STATUS_BAR_HEIGHT,
   },
   mainHeader: {
     height: 56,
@@ -18697,7 +18772,16 @@ const s = StyleSheet.create({
   },
   muteLogo: { height: 44, flexDirection: "row", alignItems: "center", gap: 9 },
   muteLogoSymbol: { width: 38, height: 28 },
-  splashLogoWrap: { transform: [{ scale: 0.28 }] },
+  splashLogoWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
+  splashLogoImage: { width: 72, height: 72 },
+  splashLogoImageLight: { tintColor: "#FFFFFF" },
+  splashLogoImageDark: { tintColor: "#1C1C1C" },
+  nativeSplashBridge: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
   muteLogoMark: { width: 50, height: 36 },
   muteName: {
     color: colors.text,

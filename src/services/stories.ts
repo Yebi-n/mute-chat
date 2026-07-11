@@ -113,9 +113,9 @@ export async function deleteStoryComment(commentId: string) {
 
 export async function listStories(input: { roomId?: string; storyId?: string; publicOnly?: boolean; limit?: number }) {
   const client = requireClient();
-  let storyQuery = client
-    .from('stories')
-    .select('id,room_id,author_user_id,visibility,title,created_at,view_count,heart_count')
+    let storyQuery = client
+      .from('stories')
+      .select('id,room_id,author_user_id,visibility,title,created_at,view_count,heart_count,author_name,author_avatar_asset_path')
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(input.limit ?? 50);
@@ -136,7 +136,7 @@ export async function listStories(input: { roomId?: string; storyId?: string; pu
     { data: likeRows },
   ] = await Promise.all([
     client.from('story_blocks').select('story_id,block_type,text_content,storage_path,mime_type,position').in('story_id', storyIds).order('position').limit(1000),
-    client.from('story_comments').select('id,story_id,author_user_id,body,created_at').in('story_id', storyIds).is('deleted_at', null).order('created_at').limit(500),
+    client.from('story_comments').select('id,story_id,author_user_id,body,created_at,author_name,author_avatar_asset_path').in('story_id', storyIds).is('deleted_at', null).order('created_at').limit(500),
     client.from('rooms').select('id,name').in('id', roomIds),
     client.from('room_profiles').select('room_id,user_id,display_name,avatar_asset_path').in('room_id', roomIds),
     client.from('story_likes').select('story_id').in('story_id', storyIds),
@@ -150,19 +150,28 @@ export async function listStories(input: { roomId?: string; storyId?: string; pu
   const signedByPath = await getCachedSignedUrls('chat-media', imagePaths)
     .catch(() => new Map<string, string>());
 
-  const avatarPaths = (profileRows ?? [])
-    .map((row) => row.avatar_asset_path as string | null)
+  const avatarPaths = [
+    ...(profileRows ?? []).map((row) => row.avatar_asset_path as string | null),
+    ...(storyRows ?? []).map((row) => row.author_avatar_asset_path as string | null),
+    ...(commentRows ?? []).map((row) => row.author_avatar_asset_path as string | null),
+  ]
     .filter((value): value is string => Boolean(value));
   const signedAvatarByPath = await getCachedSignedUrls('profile-avatars', avatarPaths)
     .catch(() => new Map<string, string>());
 
   const profileFor = (roomId: string, userId: string | null) =>
     profileRows?.find((row) => row.room_id === roomId && row.user_id === userId);
-  const profileName = (roomId: string, userId: string | null) =>
-    profileFor(roomId, userId)?.display_name ?? '멤버';
-  const profileAvatar = (roomId: string, userId: string | null) => {
+  const fallbackProfileName = (name: unknown) =>
+    typeof name === 'string' && name.trim().length ? name : '멤버';
+  const profileName = (roomId: string, userId: string | null, fallbackName?: unknown) =>
+    profileFor(roomId, userId)?.display_name ?? fallbackProfileName(fallbackName);
+  const profileAvatar = (roomId: string, userId: string | null, fallbackPath?: unknown) => {
     const path = profileFor(roomId, userId)?.avatar_asset_path as string | null | undefined;
-    return path ? signedAvatarByPath.get(path) : undefined;
+    if (path) return signedAvatarByPath.get(path);
+    if (typeof fallbackPath === 'string' && fallbackPath.trim().length) {
+      return signedAvatarByPath.get(fallbackPath);
+    }
+    return undefined;
   };
 
   return storyRows.map((story) => ({
@@ -170,8 +179,8 @@ export async function listStories(input: { roomId?: string; storyId?: string; pu
     roomId: story.room_id,
     roomName: roomRows?.find((room) => room.id === story.room_id)?.name ?? '채팅방',
     title: story.title,
-    author: profileName(story.room_id, story.author_user_id),
-    authorAvatarUrl: profileAvatar(story.room_id, story.author_user_id),
+    author: profileName(story.room_id, story.author_user_id, story.author_name),
+    authorAvatarUrl: profileAvatar(story.room_id, story.author_user_id, story.author_avatar_asset_path),
     authorUserId: story.author_user_id,
     createdAt: story.created_at,
     visibility: story.visibility,
@@ -189,8 +198,8 @@ export async function listStories(input: { roomId?: string; storyId?: string; pu
           }),
     comments: (commentRows ?? []).filter((comment) => comment.story_id === story.id).map((comment) => ({
       id: comment.id,
-      author: profileName(story.room_id, comment.author_user_id),
-      authorAvatarUrl: profileAvatar(story.room_id, comment.author_user_id),
+      author: profileName(story.room_id, comment.author_user_id, comment.author_name),
+      authorAvatarUrl: profileAvatar(story.room_id, comment.author_user_id, comment.author_avatar_asset_path),
       authorUserId: comment.author_user_id,
       body: comment.body,
       createdAt: comment.created_at,
