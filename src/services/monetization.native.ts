@@ -54,7 +54,10 @@ export function initializeAds(): Promise<boolean> {
       // temporarily fails. getConsentInfo is the final SDK gate below.
     }
     const consent = await AdsConsent.getConsentInfo();
-    if (!consent.canRequestAds) return false;
+    if (!consent.canRequestAds) {
+      adsInitializationPromise = null;
+      return false;
+    }
     await mobileAds().setRequestConfiguration({
       maxAdContentRating: MaxAdContentRating.T,
       tagForChildDirectedTreatment: false,

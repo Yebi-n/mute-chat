@@ -48,6 +48,7 @@ export default function InlineBannerAd({
   const [sdkReady, setSdkReady] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
   const useTestAds = __DEV__ || process.env.EXPO_PUBLIC_ADMOB_USE_TEST_ADS === 'true';
   const configured = configuredUnitId(placement);
   const unitId = useTestAds ? TestIds.ADAPTIVE_BANNER : configured;
@@ -73,7 +74,9 @@ export default function InlineBannerAd({
     let active = true;
     initializeAds()
       .then((ready) => {
-        if (active) setSdkReady(ready);
+        if (!active) return;
+        setSdkReady(ready);
+        if (!ready) setFailed(true);
       })
       .catch(() => {
         if (active) setFailed(true);
@@ -81,7 +84,17 @@ export default function InlineBannerAd({
     return () => {
       active = false;
     };
-  }, [disabled, unitId]);
+  }, [disabled, retryKey, unitId]);
+
+  useEffect(() => {
+    if (!failed || disabled || !unitId) return;
+    const timer = setTimeout(() => {
+      setLoaded(false);
+      setFailed(false);
+      setRetryKey((value) => value + 1);
+    }, 15000);
+    return () => clearTimeout(timer);
+  }, [disabled, failed, unitId]);
 
   if (disabled || !unitId || failed) {
     return reserveSpace ? <View pointerEvents="none" style={containerStyle} /> : null;
@@ -92,13 +105,17 @@ export default function InlineBannerAd({
   return (
     <View pointerEvents="box-none" style={containerStyle}>
       <BannerAd
+        key={`${placement}-${retryKey}`}
         unitId={unitId}
         size={size}
         width={adWidth}
         maxHeight={maxHeight}
         requestOptions={{ requestNonPersonalizedAdsOnly: true }}
         onAdLoaded={() => setLoaded(true)}
-        onAdFailedToLoad={() => setFailed(true)}
+        onAdFailedToLoad={() => {
+          setLoaded(false);
+          setFailed(true);
+        }}
       />
     </View>
   );

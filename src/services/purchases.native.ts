@@ -291,10 +291,18 @@ export async function restoreStorePurchases() {
   return { restored, pointBalance };
 }
 
-export async function listStoreEntitlements() {
-  const { data, error } = await requireSupabase()
+export async function listStoreEntitlements(expectedUserId?: string) {
+  const client = requireSupabase();
+  const { data: authData, error: authError } = await client.auth.getUser();
+  if (authError) throw authError;
+  const userId = authData.user?.id;
+  if (!userId) return [];
+  if (expectedUserId && userId !== expectedUserId) return [];
+
+  const { data, error } = await client
     .from('user_entitlements')
     .select('product_id,entitlement_type,expires_at')
+    .eq('user_id', userId)
     .in('entitlement_type', ['app_theme', 'ad_free']);
   if (error) throw error;
   return (data ?? []).map((row) => ({

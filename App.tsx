@@ -2493,11 +2493,14 @@ function AuthenticatedApp({
       return;
     }
     setAdFreeActive(false);
+    // Never show the previous app account's paid theme while the new
+    // account-specific ownership cache is being resolved.
+    applyAppTheme(APP_THEMES[0]);
     // Apply the last server-confirmed ownership cache before the network round
     // trip so app resume does not flash or reset a purchased theme.
-    const reloadEntitlements = () => listStoreEntitlements()
+    const reloadEntitlements = () => listStoreEntitlements(userId)
       .then((items) => {
-        if (!active) return;
+        if (!active || session?.user.id !== userId) return;
         const now = Date.now();
         const activeAdFree = items.find(
           (item) =>
@@ -13316,7 +13319,7 @@ function ItemShopScreen({
   const [themeChoice, setThemeChoice] = useState(theme.id);
   const reload = async () => {
     const [store, wallet] = await Promise.all([
-      listStoreEntitlements(),
+      listStoreEntitlements(currentUserId),
       getMyWallet(),
     ]);
     setStoreItems(store);
