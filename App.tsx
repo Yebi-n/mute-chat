@@ -574,6 +574,8 @@ const APP_LOCK_PIN_KEY = "mute:app-lock:pin";
 const APP_LOCK_SECURE_PIN_KEY = "mute_app_lock_pin";
 const PRIVACY_POLICY_URL =
   "https://service-introduction-theta.vercel.app/privacy/";
+const APPLE_STANDARD_EULA_URL =
+  "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
 const FIXED_POINT_COLOR = "#3F9A70";
 const FIXED_POINT_SOFT = "#EFF9F5";
 
@@ -13317,6 +13319,10 @@ function ItemShopScreen({
   const darkTheme = theme.id === "dark";
   const primaryTextColor = themeForeground(theme);
   const [themeChoice, setThemeChoice] = useState(theme.id);
+  const openSubscriptionPolicy = (url: string) =>
+    Linking.openURL(url).catch(() =>
+      Alert.alert("열기 실패", "브라우저 연결 상태를 확인해주세요."),
+    );
   const reload = async () => {
     const [store, wallet] = await Promise.all([
       listStoreEntitlements(currentUserId),
@@ -13490,7 +13496,9 @@ function ItemShopScreen({
           <MuteLogo symbolOnly compact />
           <View style={s.flex}>
             <Text style={s.itemShopCardTitle}>광고 없는 계정</Text>
-            <Text style={s.itemShopPrice}>{adFree ? "이용 중" : "월 5,900원"}</Text>
+            <Text style={s.itemShopPrice}>
+              {adFree ? "이용 중 · 1개월 자동 갱신" : "1개월 자동 갱신 · 월 5,900원"}
+            </Text>
           </View>
           <Pressable disabled={Boolean(busy) || Boolean(adFree)} onPress={() => void buyStoreItem(STORE_PRODUCTS.adFreeMonthly)} style={[s.itemShopAdBuy, adFree && s.disabled]}>
             <LinearGradient colors={["#82B9C1", "#5DBB8C"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.itemShopBuyGradient}>
@@ -13501,6 +13509,20 @@ function ItemShopScreen({
               )}
             </LinearGradient>
           </Pressable>
+        </View>
+        <View style={s.itemShopSubscriptionPolicies}>
+          <Text style={s.itemShopSubscriptionNotice}>
+            결제는 Apple ID로 청구되며, 현재 구독 기간 종료 24시간 전까지 취소하지 않으면 자동 갱신됩니다.
+          </Text>
+          <View style={s.itemShopSubscriptionLinks}>
+            <Pressable onPress={() => void openSubscriptionPolicy(PRIVACY_POLICY_URL)}>
+              <Text style={s.itemShopSubscriptionLink}>개인정보 처리방침</Text>
+            </Pressable>
+            <Text style={s.itemShopSubscriptionDivider}>·</Text>
+            <Pressable onPress={() => void openSubscriptionPolicy(APPLE_STANDARD_EULA_URL)}>
+              <Text style={s.itemShopSubscriptionLink}>이용약관 (EULA)</Text>
+            </Pressable>
+          </View>
         </View>
         {!adFree && (
         <Pressable
@@ -14984,6 +15006,11 @@ function Settings({
             icon="document-text-outline"
             title="개인정보 처리방침"
             onPress={() => openUrl(PRIVACY_POLICY_URL)}
+          />
+          <Menu
+            icon="reader-outline"
+            title="이용약관"
+            onPress={() => openUrl(APPLE_STANDARD_EULA_URL)}
           />
           <Menu
             icon="mail-outline"
@@ -21174,6 +21201,31 @@ const s = StyleSheet.create({
   },
   itemShopAdBuy: { minWidth: 84, height: 36, borderRadius: 10, overflow: "hidden", backgroundColor: colors.mint700, marginLeft: 4 },
   itemShopAdBuyText: { color: "#FFF", fontSize: 11, fontWeight: "700" },
+  itemShopSubscriptionPolicies: {
+    paddingHorizontal: 4,
+    paddingTop: 10,
+  },
+  itemShopSubscriptionNotice: {
+    color: colors.textMuted,
+    fontSize: 10,
+    lineHeight: 15,
+  },
+  itemShopSubscriptionLinks: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
+  },
+  itemShopSubscriptionLink: {
+    color: colors.mint700,
+    fontSize: 11,
+    fontWeight: "600",
+    textDecorationLine: "underline",
+  },
+  itemShopSubscriptionDivider: {
+    color: colors.textMuted,
+    fontSize: 11,
+  },
   itemShopRestore: {
     height: 40,
     alignItems: "center",

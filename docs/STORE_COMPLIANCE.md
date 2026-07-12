@@ -34,6 +34,14 @@
 성인 카테고리 및 성인인증 기능은 iOS 심사 빌드에서 제공되지 않습니다.
 ```
 
+## 자동 갱신 구독
+
+- 구독 구매 화면에 상품명, 구독 기간, 가격을 함께 표시한다.
+- 구매 전에 개인정보처리방침과 이용약관 링크를 모두 확인할 수 있어야 한다.
+- 개인정보처리방침: `https://service-introduction-theta.vercel.app/privacy/`
+- Apple 표준 EULA: `https://www.apple.com/legal/internet-services/itunes/dev/stdeula/`
+- App Store Connect의 앱 설명에도 Apple 표준 EULA 링크를 기재한다.
+
 ## UGC 안전장치
 
 - 신고 대상: 방, 프로필, 스토리, 채팅 관련 콘텐츠
