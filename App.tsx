@@ -217,6 +217,60 @@ import {
 
 const ANDROID_STATUS_BAR_HEIGHT =
   Platform.OS === "android" ? RNStatusBar.currentHeight ?? 0 : 0;
+const ANDROID_NAV_BAR_FALLBACK_HEIGHT = 34;
+
+function androidSystemBottomInset(insetBottom = 0) {
+  if (Platform.OS !== "android") return 0;
+  const screenHeight = Dimensions.get("screen").height;
+  const windowHeight = Dimensions.get("window").height;
+  const estimatedNavBar = Math.max(
+    0,
+    Math.round(screenHeight - windowHeight - ANDROID_STATUS_BAR_HEIGHT),
+  );
+  return Math.max(
+    insetBottom,
+    estimatedNavBar,
+    ANDROID_NAV_BAR_FALLBACK_HEIGHT,
+  );
+}
+
+function useAndroidKeyboardCompensation() {
+  const [inset, setInset] = useState(0);
+  const insetRef = useRef(0);
+  const baselineWindowHeightRef = useRef(Dimensions.get("window").height);
+
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    const refreshBaseline = () => {
+      if (insetRef.current <= 0)
+        baselineWindowHeightRef.current = Dimensions.get("window").height;
+    };
+    const dimensions = Dimensions.addEventListener("change", refreshBaseline);
+    const show = Keyboard.addListener("keyboardDidShow", (event) => {
+      const keyboardHeight = event.endCoordinates?.height ?? 0;
+      const currentWindowHeight = Dimensions.get("window").height;
+      const resizedBy = Math.max(
+        0,
+        baselineWindowHeightRef.current - currentWindowHeight,
+      );
+      const nextInset = Math.max(0, keyboardHeight - resizedBy);
+      insetRef.current = nextInset;
+      setInset(nextInset);
+    });
+    const hide = Keyboard.addListener("keyboardDidHide", () => {
+      insetRef.current = 0;
+      setInset(0);
+      baselineWindowHeightRef.current = Dimensions.get("window").height;
+    });
+    return () => {
+      dimensions.remove();
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
+  return Platform.OS === "android" ? inset : 0;
+}
 
 type Screen =
   | "main"
@@ -1107,6 +1161,7 @@ function KeyboardAvoidingView(
 
 function KeyboardSafeBottomSheet({ children }: { children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
+  const androidKeyboardInset = useAndroidKeyboardCompensation();
   const [keyboardVisible, setKeyboardVisible] = useState(false);
 
   useEffect(() => {
@@ -1125,8 +1180,10 @@ function KeyboardSafeBottomSheet({ children }: { children: React.ReactNode }) {
   const content = (
     <RNView
       style={
-        Platform.OS === "android" && !keyboardVisible && insets.bottom > 0
-          ? { paddingBottom: insets.bottom }
+        Platform.OS === "android" && androidKeyboardInset > 0
+          ? { paddingBottom: androidKeyboardInset }
+          : Platform.OS === "android" && !keyboardVisible
+            ? { paddingBottom: androidSystemBottomInset(insets.bottom) }
           : undefined
       }
     >
@@ -7078,13 +7135,18 @@ function ChatRoom({
   const appTheme = useAppTheme();
   const adsDisabled = useAdFree();
   const safeAreaInsets = useSafeAreaInsets();
+  const androidKeyboardInset = useAndroidKeyboardCompensation();
   const [chatKeyboardVisible, setChatKeyboardVisible] = useState(false);
   const [chatBannerHeight, setChatBannerHeight] = useState(0);
   useEffect(() => {
     if (adsDisabled) setChatBannerHeight(0);
   }, [adsDisabled]);
   const androidChatBottomInset =
-    Platform.OS === "android" && !chatKeyboardVisible ? safeAreaInsets.bottom : 0;
+    Platform.OS !== "android"
+      ? 0
+      : chatKeyboardVisible
+        ? androidKeyboardInset
+        : androidSystemBottomInset(safeAreaInsets.bottom);
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
     isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
   );
@@ -16308,7 +16370,8 @@ function BottomNav({
 }) {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
-  const androidBottomInset = Platform.OS === "android" ? insets.bottom : 0;
+  const androidBottomInset =
+    Platform.OS === "android" ? androidSystemBottomInset(insets.bottom) : 0;
   const items: [BottomTab, IconName, IconName, string][] = [
     ["myRooms", "chatbubbles-outline", "chatbubbles", "내 채팅"],
     ["discover", "home-outline", "home", "홈"],

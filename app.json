@@ -58,7 +58,7 @@
       [
         "react-native-google-mobile-ads",
         {
-          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
+          "androidAppId": "ca-app-pub-4013454985021474~9838684343",
           "iosAppId": "ca-app-pub-4013454985021474~4784155440",
           "delayAppMeasurementInit": true,
           "userTrackingUsageDescription": "맞춤형 광고 제공 여부를 선택하기 위해 기기 광고 식별자 접근 권한을 요청합니다."
