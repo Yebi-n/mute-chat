@@ -5527,6 +5527,7 @@ function MainScreen({
   const [storySearchOpen, setStorySearchOpen] = useState(false);
   const [storyQuery, setStoryQuery] = useState("");
   const appTheme = useAppTheme();
+  const mainInsets = useSafeAreaInsets();
   const primaryForeground = themeForeground(appTheme);
   useEffect(() => {
     setNow(Date.now());
@@ -5797,10 +5798,17 @@ function MainScreen({
       ) : (
         !storyDetailOpen && !profileSubpageOpen && (
           <LinearGradient
-            colors={["#82B9C1", "#5DBB8C"]}
+            colors={appTheme.gradient}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
-            style={[s.mainHeader, s.androidHeaderInset56]}
+            style={[
+              s.mainHeader,
+              Platform.OS === "android" && s.androidHeaderInset56,
+              Platform.OS === "ios" && {
+                height: 56 + mainInsets.top,
+                paddingTop: mainInsets.top,
+              },
+            ]}
           >
             <View style={s.mainHeaderLogoWrap}>
               <MuteLogo symbolOnly variant="white" compact />
@@ -6349,6 +6357,9 @@ function RoomDetail({
     isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
   );
   const [storyOverlayId, setStoryOverlayId] = useState<string | null>(null);
+  const [storyOverlayItem, setStoryOverlayItem] = useState<StoryItem | null>(
+    null,
+  );
   const [storyWriteOpen, setStoryWriteOpen] = useState(false);
   const [storyPanelKey, setStoryPanelKey] = useState(0);
   const appTheme = useAppTheme();
@@ -6366,6 +6377,7 @@ function RoomDetail({
       return;
     }
     if (profile) return setProfile(null);
+    if (storyOverlayItem) return setStoryOverlayItem(null);
     if (storyOverlayId) return setStoryOverlayId(null);
     if (storyWriteOpen) {
       setStoryWriteOpen(false);
@@ -6435,6 +6447,25 @@ function RoomDetail({
         onBack={() => setProfile(null)}
       />
     );
+  if (storyOverlayItem) {
+    const readOnlyStory = { ...storyOverlayItem, mine: false };
+    return (
+      <SafeAreaView style={s.safe}>
+        <StatusBar style="light" />
+        <StoryDetail
+          story={readOnlyStory}
+          room={room}
+          joined={false}
+          canModerate={false}
+          currentProfile={undefined}
+          onBack={() => setStoryOverlayItem(null)}
+          onChange={(story) => setStoryOverlayItem({ ...story, mine: false })}
+          onEdit={() => undefined}
+          onDelete={() => undefined}
+        />
+      </SafeAreaView>
+    );
+  }
   if (storyOverlayId)
     return (
       <SafeAreaView style={s.safe}>
@@ -6752,7 +6783,13 @@ function RoomDetail({
           showChatButton={false}
           showInternalHeader={false}
           onEnterChat={onEnterChat}
-          onOpenDetail={(story) => setStoryOverlayId(story.id)}
+          onOpenDetail={(story) => {
+            if (!joined && !adminReadOnly && !isSuperAdmin) {
+              setStoryOverlayItem({ ...story, mine: false });
+              return;
+            }
+            setStoryOverlayId(story.id);
+          }}
           onWriteRequest={() => setStoryWriteOpen(true)}
         />
       )}
@@ -8972,7 +9009,7 @@ function ChatRoom({
     setChatReady(false);
     setPanel(null);
   };
-  useAndroidHardwareBack(() => {
+  const handleChatBack = () => {
     if (drawerOpen) return setDrawerOpen(false);
     if (tool) return setTool(null);
     if (chatSearchOpen) return setChatSearchOpen(false);
@@ -8981,7 +9018,8 @@ function ChatRoom({
     if (selectedMember) return setSelectedMember(null);
     if (panel) return closePanel();
     onBack();
-  });
+  };
+  useAndroidHardwareBack(handleChatBack);
   if (imageEditorAssets)
     return (
       <ChatImageEditor
@@ -9281,6 +9319,7 @@ function ChatRoom({
   const unmuteSelectedMember=()=>{if(!selectedRoomMember?.userId)return;clearRoomMemberMute(room.id,selectedRoomMember.userId).then(()=>{setRoomMembers((items)=>items.map((item)=>item.userId===selectedRoomMember.userId?{...item,mutedUntil:null}:item));setSelectedMember(null);}).catch((error)=>Alert.alert("채팅 금지 해제 실패",serverErrorMessage(error)));};
   return (
     <SafeAreaView style={s.safe}>
+      <EdgeBackLayer onBack={handleChatBack} />
       <StatusBar style="light" />
       <TopBar
         title={`[${room.name}]`}
@@ -11510,10 +11549,17 @@ function StoryDetail({
       <EdgeBackLayer onBack={onBack} />
       {!hideHeader && (
         <LinearGradient
-          colors={["#82B9C1", "#5DBB8C"]}
+          colors={theme.gradient}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
-          style={[s.storyDetailHeader, s.androidHeaderInset58]}
+          style={[
+            s.storyDetailHeader,
+            Platform.OS === "android" && s.androidHeaderInset58,
+            Platform.OS === "ios" && {
+              height: 58 + safeAreaInsets.top,
+              paddingTop: safeAreaInsets.top,
+            },
+          ]}
         >
           <Pressable onPress={onBack} style={s.storyHeaderAction}>
             <Ionicons name="chevron-back" size={22} color={foreground} />
@@ -16322,15 +16368,23 @@ function TopBar({
   foregroundColor?: string;
 }) {
   const theme = useAppTheme();
+  const insets = useSafeAreaInsets();
   const foreground = foregroundColor ?? themeForeground(theme);
   return (
     <>
       {edgeBackEnabled && <EdgeBackLayer onBack={onBack} />}
       <LinearGradient
-        colors={["#82B9C1", "#5DBB8C"]}
+        colors={theme.gradient}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 0 }}
-        style={[s.topBar, Platform.OS === "android" && s.androidHeaderInset58]}
+        style={[
+          s.topBar,
+          Platform.OS === "android" && s.androidHeaderInset58,
+          Platform.OS === "ios" && {
+            height: 58 + insets.top,
+            paddingTop: insets.top,
+          },
+        ]}
       >
         <IconButton
           name="chevron-back"
