@@ -5548,8 +5548,6 @@ function MainScreen({
   const [profileSubpageOpen, setProfileSubpageOpen] = useState(false);
   const [storySearchOpen, setStorySearchOpen] = useState(false);
   const [storyQuery, setStoryQuery] = useState("");
-  const homeRoomListRef = useRef<FlatList<Room> | null>(null);
-  const topRevealPositionedKeyRef = useRef<string | null>(null);
   const appTheme = useAppTheme();
   const primaryForeground = themeForeground(appTheme);
   useEffect(() => {
@@ -5778,29 +5776,10 @@ function MainScreen({
   const listMode = bottomTab === "discover" || bottomTab === "myRooms";
   const topRoom =
     bottomTab === "discover"
-      ? activeTopSpaces.find(
-          (room) =>
-            !hiddenRoomIds.includes(room.id) &&
-            (!room.isAdult || canSeeAdultRooms || isSuperAdmin),
+      ? activeTopSpaces.find((room) =>
+          filtered.some((item) => item.id === room.id),
         )
       : undefined;
-  useEffect(() => {
-    if (!topRoom && bottomTab === "discover") {
-      topRevealPositionedKeyRef.current = null;
-      requestAnimationFrame(() =>
-        homeRoomListRef.current?.scrollToOffset({ offset: 0, animated: false }),
-      );
-    }
-  }, [bottomTab, category, topRoom?.id]);
-  const hideActiveTopInitially = (height: number) => {
-    if (Platform.OS !== "ios" || !topRoom || height <= 0) return;
-    const revealKey = `${category}:${topRoom.id}`;
-    if (topRevealPositionedKeyRef.current === revealKey) return;
-    topRevealPositionedKeyRef.current = revealKey;
-    requestAnimationFrame(() =>
-      homeRoomListRef.current?.scrollToOffset({ offset: height, animated: false }),
-    );
-  };
   return (
     <SafeAreaView style={s.safe}>
       <StatusBar
@@ -5911,7 +5890,6 @@ function MainScreen({
       )}
       {listMode && (
         <FlatList
-          ref={homeRoomListRef}
           data={filtered}
           keyExtractor={(item) => item.id}
           contentContainerStyle={s.list}
@@ -5929,20 +5907,14 @@ function MainScreen({
               </View>
             ) : category === "promotion" ? null : (
               <View>
+                <SectionLabel
+                  title="Top"
+                  action="랭킹"
+                  onAction={onRanking}
+                  compact
+                />
                 {topRoom ? (
-                  <View
-                    collapsable={false}
-                    onLayout={(event) =>
-                      hideActiveTopInitially(event.nativeEvent.layout.height)
-                    }
-                  >
-                    <SectionLabel
-                      title="Top"
-                      action="랭킹"
-                      onAction={onRanking}
-                      compact
-                    />
-                    <RoomRow
+                  <RoomRow
                       room={topRoom}
                       joined={joinedIds.includes(topRoom.id)}
                       blurAdult={category === "adult"}
@@ -5959,8 +5931,7 @@ function MainScreen({
                           : ""
                       }
                       topHighlight
-                    />
-                  </View>
+                  />
                 ) : null}
                 <SectionLabel title="Hot" compact />
               </View>
@@ -16369,20 +16340,29 @@ function TopBar({
   return (
     <>
       {edgeBackEnabled && <EdgeBackLayer onBack={onBack} />}
-      <LinearGradient
-        colors={["#82B9C1", "#5DBB8C"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-        style={[s.topBar, Platform.OS === "android" && s.androidHeaderInset58]}
+      <RNView
+        style={[
+          s.topBar,
+          Platform.OS === "android" && s.androidHeaderInset58,
+          theme.id === "white" && s.primaryWhiteGradient,
+        ]}
       >
-        <IconButton
-          name="chevron-back"
-          color={foreground}
-          onPress={onBack}
-          preserveColor
+        <ExpoLinearGradient
+          pointerEvents="none"
+          colors={theme.gradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={StyleSheet.absoluteFill}
         />
-        <View style={s.topCenter}>
-          <View style={s.topTitleLine}>
+        <RNPressable
+          accessibilityLabel="chevron-back"
+          onPress={onBack}
+          style={s.iconButton}
+        >
+          <RNIonicons name="chevron-back" size={23} color={foreground} />
+        </RNPressable>
+        <RNView style={s.topCenter}>
+          <RNView style={s.topTitleLine}>
             <RNText numberOfLines={1} style={[s.topTitle, { color: foreground }]}>
               {title}
             </RNText>
@@ -16391,12 +16371,12 @@ function TopBar({
                 {inlineCount}명
               </RNText>
             )}
-          </View>
+          </RNView>
           {subtitle && (
             <RNText style={[s.topSub, { color: foreground }]}>{subtitle}</RNText>
           )}
-        </View>
-        <View style={s.topActions}>
+        </RNView>
+        <RNView style={s.topActions}>
           {secondaryTrailing && (
             <RNPressable
               hitSlop={16}
@@ -16418,8 +16398,8 @@ function TopBar({
           >
             {trailing && <RNIonicons name={trailing} size={22} color={foreground} />}
           </RNPressable>
-        </View>
-      </LinearGradient>
+        </RNView>
+      </RNView>
     </>
   );
 }
