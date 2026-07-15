@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { Platform, StatusBar } from 'react-native';
 import {
   getTrackingPermissionsAsync,
   requestTrackingPermissionsAsync,
@@ -25,21 +25,23 @@ let trackingPermissionPromise: Promise<void> | null = null;
 const IOS_REWARDED_UNIT_ID =
   process.env.EXPO_PUBLIC_ADMOB_REWARDED_IOS_ID
   || 'ca-app-pub-4013454985021474/1566965165';
-const REVIEW_AD_TEST_EMAILS = new Set([
-  'test-alpha@user.mute.app',
-  'test-bravo@user.mute.app',
-  'test-charlie@user.mute.app',
-]);
+const ANDROID_REWARDED_UNIT_ID =
+  process.env.EXPO_PUBLIC_ADMOB_REWARDED_ANDROID_ID
+  || 'ca-app-pub-4013454985021474/7523392050';
 
-export async function shouldUseReviewTestAds(): Promise<boolean> {
-  if (!isSupabaseConfigured || !supabase) return false;
-  const { data, error } = await supabase.auth.getUser();
-  if (error) return false;
-  const email = data.user?.email?.trim().toLowerCase();
-  return Boolean(email && REVIEW_AD_TEST_EMAILS.has(email));
+function setRewardedAdChrome(active: boolean) {
+  if (Platform.OS !== 'android') return;
+  try {
+    StatusBar.setHidden(active, 'fade');
+    StatusBar.setBarStyle(active ? 'light-content' : 'dark-content', true);
+    StatusBar.setTranslucent(true);
+    StatusBar.setBackgroundColor(active ? '#000000' : 'transparent', true);
+  } catch {
+    // Status bar styling should never block rewarded ads.
+  }
 }
 
-export async function ensureTrackingPermissionRequested(): Promise<void> {
+async function ensureTrackingPermissionRequested(): Promise<void> {
   if (Platform.OS !== 'ios') return;
   if (trackingPermissionPromise) return trackingPermissionPromise;
   trackingPermissionPromise = (async () => {
@@ -67,10 +69,7 @@ export function initializeAds(): Promise<boolean> {
       // temporarily fails. getConsentInfo is the final SDK gate below.
     }
     const consent = await AdsConsent.getConsentInfo();
-    if (!consent.canRequestAds) {
-      adsInitializationPromise = null;
-      return false;
-    }
+    if (!consent.canRequestAds) return false;
     await mobileAds().setRequestConfiguration({
       maxAdContentRating: MaxAdContentRating.T,
       tagForChildDirectedTreatment: false,
@@ -92,11 +91,8 @@ export async function showRewardedAd(
   if (!initialized) throw new Error('ADS_CONSENT_REQUIRED');
   const configuredUnitId = Platform.OS === 'ios'
     ? IOS_REWARDED_UNIT_ID
-    : process.env.EXPO_PUBLIC_ADMOB_REWARDED_ANDROID_ID;
-  const useTestAds =
-    __DEV__
-    || process.env.EXPO_PUBLIC_ADMOB_USE_TEST_ADS === 'true'
-    || await shouldUseReviewTestAds();
+    : ANDROID_REWARDED_UNIT_ID;
+  const useTestAds = __DEV__ || process.env.EXPO_PUBLIC_ADMOB_USE_TEST_ADS === 'true';
   const productionUnitId = useTestAds ? undefined : configuredUnitId;
   const unitId = productionUnitId || TestIds.REWARDED;
   let rewardKey = `admob-test-${Date.now()}`;
@@ -138,14 +134,26 @@ export async function showRewardedAd(
     };
     const unsubscribeLoaded = rewarded.addAdEventListener(
       RewardedAdEventType.LOADED,
-      () => rewarded.show().catch((error) => finish(() => reject(error))),
+      () => {
+        setRewardedAdChrome(true);
+        rewarded.show().catch((error) => finish(() => {
+          setRewardedAdChrome(false);
+          reject(error);
+        }));
+      },
     );
     const unsubscribeEarned = rewarded.addAdEventListener(RewardedAdEventType.EARNED_REWARD, () => { earned = true; });
     const unsubscribeClosed = rewarded.addAdEventListener(AdEventType.CLOSED, () => {
-      finish(() => resolve({ completed: earned, rewardKey }));
+      finish(() => {
+        setRewardedAdChrome(false);
+        resolve({ completed: earned, rewardKey });
+      });
     });
     const unsubscribeError = rewarded.addAdEventListener(AdEventType.ERROR, (error) => {
-      finish(() => reject(error));
+      finish(() => {
+        setRewardedAdChrome(false);
+        reject(error);
+      });
     });
     const timeout = setTimeout(
       () => finish(() => reject(new Error('REWARDED_AD_LOAD_TIMEOUT'))),

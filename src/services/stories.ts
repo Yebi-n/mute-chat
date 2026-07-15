@@ -10,6 +10,7 @@ export type ServerStory = {
   id: string;
   roomId: string;
   roomName: string;
+  roomCoverUrl?: string;
   title: string;
   author: string;
   authorAvatarUrl?: string;
@@ -137,7 +138,7 @@ export async function listStories(input: { roomId?: string; storyId?: string; pu
   ] = await Promise.all([
     client.from('story_blocks').select('story_id,block_type,text_content,storage_path,mime_type,position').in('story_id', storyIds).order('position').limit(1000),
     client.from('story_comments').select('id,story_id,author_user_id,body,created_at,author_name,author_avatar_asset_path').in('story_id', storyIds).is('deleted_at', null).order('created_at').limit(500),
-    client.from('rooms').select('id,name').in('id', roomIds),
+    client.from('rooms').select('id,name,description,category,region,max_members,visibility,cover_asset_path,created_at,updated_at').in('id', roomIds),
     client.from('room_profiles').select('room_id,user_id,display_name,avatar_asset_path').in('room_id', roomIds),
     client.from('story_likes').select('story_id').in('story_id', storyIds),
   ]);
@@ -148,6 +149,12 @@ export async function listStories(input: { roomId?: string; storyId?: string; pu
 
   const imagePaths = (blockRows ?? []).flatMap((row) => row.storage_path ? [row.storage_path as string] : []);
   const signedByPath = await getCachedSignedUrls('chat-media', imagePaths)
+    .catch(() => new Map<string, string>());
+
+  const roomCoverPaths = (roomRows ?? [])
+    .map((row) => row.cover_asset_path as string | null)
+    .filter((value): value is string => Boolean(value));
+  const signedRoomCoverByPath = await getCachedSignedUrls('room-covers', roomCoverPaths)
     .catch(() => new Map<string, string>());
 
   const avatarPaths = [
@@ -174,37 +181,43 @@ export async function listStories(input: { roomId?: string; storyId?: string; pu
     return undefined;
   };
 
-  return storyRows.map((story) => ({
-    id: story.id,
-    roomId: story.room_id,
-    roomName: roomRows?.find((room) => room.id === story.room_id)?.name ?? '채팅방',
-    title: story.title,
-    author: profileName(story.room_id, story.author_user_id, story.author_name),
-    authorAvatarUrl: profileAvatar(story.room_id, story.author_user_id, story.author_avatar_asset_path),
-    authorUserId: story.author_user_id,
-    createdAt: story.created_at,
-    visibility: story.visibility,
-    viewCount: story.view_count ?? 0,
-    heartCount: story.heart_count ?? 0,
-    liked: Boolean(likeRows?.some((like) => like.story_id === story.id)),
-    blocks: (blockRows ?? []).filter((block) => block.story_id === story.id).map((block) =>
-      block.block_type === 'text'
-        ? { type: 'text' as const, text: block.text_content ?? '' }
-        : {
-            type: 'image' as const,
-            uri: signedByPath.get(block.storage_path ?? '') ?? '',
-            storagePath: block.storage_path ?? '',
-            mimeType: block.mime_type ?? 'image/jpeg',
-          }),
-    comments: (commentRows ?? []).filter((comment) => comment.story_id === story.id).map((comment) => ({
-      id: comment.id,
-      author: profileName(story.room_id, comment.author_user_id, comment.author_name),
-      authorAvatarUrl: profileAvatar(story.room_id, comment.author_user_id, comment.author_avatar_asset_path),
-      authorUserId: comment.author_user_id,
-      body: comment.body,
-      createdAt: comment.created_at,
-    })),
-  })) as ServerStory[];
+  return storyRows.map((story) => {
+    const room = roomRows?.find((item) => item.id === story.room_id);
+    return {
+      id: story.id,
+      roomId: story.room_id,
+      roomName: room?.name ?? '???',
+      roomCoverUrl: room?.cover_asset_path
+        ? signedRoomCoverByPath.get(room.cover_asset_path as string)
+        : undefined,
+      title: story.title,
+      author: profileName(story.room_id, story.author_user_id, story.author_name),
+      authorAvatarUrl: profileAvatar(story.room_id, story.author_user_id, story.author_avatar_asset_path),
+      authorUserId: story.author_user_id,
+      createdAt: story.created_at,
+      visibility: story.visibility,
+      viewCount: story.view_count ?? 0,
+      heartCount: story.heart_count ?? 0,
+      liked: Boolean(likeRows?.some((like) => like.story_id === story.id)),
+      blocks: (blockRows ?? []).filter((block) => block.story_id === story.id).map((block) =>
+        block.block_type === 'text'
+          ? { type: 'text' as const, text: block.text_content ?? '' }
+          : {
+              type: 'image' as const,
+              uri: signedByPath.get(block.storage_path ?? '') ?? '',
+              storagePath: block.storage_path ?? '',
+              mimeType: block.mime_type ?? 'image/jpeg',
+            }),
+      comments: (commentRows ?? []).filter((comment) => comment.story_id === story.id).map((comment) => ({
+        id: comment.id,
+        author: profileName(story.room_id, comment.author_user_id, comment.author_name),
+        authorAvatarUrl: profileAvatar(story.room_id, comment.author_user_id, comment.author_avatar_asset_path),
+        authorUserId: comment.author_user_id,
+        body: comment.body,
+        createdAt: comment.created_at,
+      })),
+    };
+  }) as ServerStory[];
 }
 
 export async function recordStoryView(storyId: string) {

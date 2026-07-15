@@ -58,7 +58,6 @@ async function ensureConnection() {
 
 export async function configurePurchases(appUserId: string) {
   configuredUserId = appUserId;
-  await ensureConnection();
 }
 
 export function resetPurchaseConfiguration() {
@@ -73,9 +72,9 @@ export async function purchaseProduct(productId: string) {
   return Array.isArray(data) ? data[0] : data;
 }
 
-function normalizePurchaseResult(event: Purchase | Purchase[] | null): Purchase | null {
+function normalizePurchaseResult(event: Purchase | Purchase[] | null | unknown): Purchase | null {
   if (!event) return null;
-  return Array.isArray(event) ? event[0] ?? null : event;
+  return Array.isArray(event) ? (event[0] as Purchase | undefined) ?? null : event as Purchase;
 }
 
 function getStoreProductId(product: unknown) {
@@ -119,11 +118,15 @@ async function waitForPurchase(productId: string, startPurchase: () => Promise<u
       cleanup();
       fn();
     };
-    const updated = purchaseUpdatedListener((event) => {
+    const handlePurchase = (event: Purchase | Purchase[] | null | unknown) => {
       const purchase = normalizePurchaseResult(event);
       if (!purchase || purchase.productId !== productId) return;
-      if (!purchaseBelongsToConfiguredUser(purchase)) return;
+      if (!purchaseBelongsToConfiguredUser(purchase, { allowMissingToken: true })) return;
       settle(() => resolve(purchase));
+    };
+
+    const updated = purchaseUpdatedListener((event) => {
+      handlePurchase(event);
     });
     const failed = purchaseErrorListener((error) => {
       settle(() => reject(new Error(error.message || error.code || 'PURCHASE_FAILED')));
@@ -132,9 +135,13 @@ async function waitForPurchase(productId: string, startPurchase: () => Promise<u
       settle(() => reject(new Error('PURCHASE_TIMEOUT')));
     }, 120000);
 
-    startPurchase().catch((error) => {
-      settle(() => reject(error));
-    });
+    startPurchase()
+      .then((result) => {
+        handlePurchase(result);
+      })
+      .catch((error) => {
+        settle(() => reject(error));
+      });
   });
 }
 
@@ -184,6 +191,11 @@ function getVerifiedTransactionId(purchase: Purchase) {
 }
 
 function getVerifiedAppAccountToken(purchase: Purchase) {
+  const record = purchase as unknown as Record<string, unknown>;
+  const directAppAccountToken = record.appAccountToken;
+  if (typeof directAppAccountToken === 'string' && directAppAccountToken.trim()) {
+    return directAppAccountToken.toLowerCase();
+  }
   const signedTransactionInfo = getSignedTransactionInfo(purchase);
   if (!signedTransactionInfo) return null;
   const payload = decodeBase64UrlJson(signedTransactionInfo.split('.')[1] ?? '');
@@ -191,14 +203,17 @@ function getVerifiedAppAccountToken(purchase: Purchase) {
   return typeof appAccountToken === 'string' ? appAccountToken.toLowerCase() : null;
 }
 
-function purchaseBelongsToConfiguredUser(purchase: Purchase) {
+function purchaseBelongsToConfiguredUser(
+  purchase: Purchase,
+  options: { allowMissingToken?: boolean } = {},
+) {
   if (!configuredUserId) return true;
   const appAccountToken = getVerifiedAppAccountToken(purchase);
   // If StoreKit publishes a completed transaction for another app account
   // while the user has switched accounts, do not verify it against the
   // current Supabase user. This prevents stale purchases from becoming
   // TRANSACTION_OWNED_BY_ANOTHER_ACCOUNT on the server.
-  if (!appAccountToken) return false;
+  if (!appAccountToken) return Boolean(options.allowMissingToken);
   return appAccountToken === configuredUserId.toLowerCase();
 }
 
@@ -291,18 +306,10 @@ export async function restoreStorePurchases() {
   return { restored, pointBalance };
 }
 
-export async function listStoreEntitlements(expectedUserId?: string) {
-  const client = requireSupabase();
-  const { data: authData, error: authError } = await client.auth.getUser();
-  if (authError) throw authError;
-  const userId = authData.user?.id;
-  if (!userId) return [];
-  if (expectedUserId && userId !== expectedUserId) return [];
-
-  const { data, error } = await client
+export async function listStoreEntitlements() {
+  const { data, error } = await requireSupabase()
     .from('user_entitlements')
     .select('product_id,entitlement_type,expires_at')
-    .eq('user_id', userId)
     .in('entitlement_type', ['app_theme', 'ad_free']);
   if (error) throw error;
   return (data ?? []).map((row) => ({

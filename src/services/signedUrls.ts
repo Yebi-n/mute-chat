@@ -21,6 +21,20 @@ function isRemoteAssetUrl(path: string) {
   return /^https?:\/\//i.test(path);
 }
 
+function normalizePathForBucket(bucket: string, path: string) {
+  if (isRemoteAssetUrl(path)) return path;
+  let normalized = path.replace(/^\/+/, '');
+  try {
+    normalized = decodeURIComponent(normalized);
+  } catch {
+    // Keep legacy paths with malformed percent escapes usable.
+  }
+  const bucketPrefix = `${bucket}/`;
+  if (normalized.startsWith(bucketPrefix))
+    normalized = normalized.slice(bucketPrefix.length);
+  return normalized;
+}
+
 function pruneCache(now: number) {
   for (const [key, entry] of signedUrlCache) {
     if (entry.expiresAt <= now) signedUrlCache.delete(key);
@@ -38,7 +52,13 @@ export async function getCachedSignedUrls(
 ) {
   if (!isSupabaseConfigured || !supabase) return new Map<string, string>();
   const normalizedPairs = paths
-    .map((original) => ({ original, normalized: normalizeAssetPath(original) }))
+    .map((original) => {
+      const value = normalizeAssetPath(original);
+      return {
+        original,
+        normalized: value ? normalizePathForBucket(bucket, value) : null,
+      };
+    })
     .filter((entry): entry is { original: string | null | undefined; normalized: string } => Boolean(entry.normalized));
   const uniquePaths = [...new Set(normalizedPairs.map((entry) => entry.normalized))];
   if (!uniquePaths.length) return new Map<string, string>();

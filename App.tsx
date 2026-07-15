@@ -32,16 +32,22 @@ import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
 } from "react-native-reanimated";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import {
   ActivityIndicator as RNActivityIndicator,
   Alert,
   Animated,
   AppState,
+  BackHandler,
   FlatList,
   Image,
   KeyboardAvoidingView as RNKeyboardAvoidingView,
   Linking,
+  Modal,
+  NativeModules,
   Platform,
   Pressable as RNPressable,
   RefreshControl,
@@ -49,6 +55,7 @@ import {
   ScrollView as RNScrollView,
   Share,
   StyleSheet,
+  StatusBar as RNStatusBar,
   Switch as RNSwitch,
   Text as RNText,
   TextProps,
@@ -167,7 +174,7 @@ import {
 import {
   claimPointReward,
   getMyWallet,
-  ensureTrackingPermissionRequested,
+  initializeAds,
   listPointLedger,
   showRewardedAd,
 } from "./src/services/monetization";
@@ -207,6 +214,9 @@ import {
   screenshotDemoRooms,
   screenshotDemoUnreadCounts,
 } from "./src/screenshotDemo";
+
+const ANDROID_STATUS_BAR_HEIGHT =
+  Platform.OS === "android" ? RNStatusBar.currentHeight ?? 0 : 0;
 
 type Screen =
   | "main"
@@ -393,6 +403,7 @@ type ChatMessage =
       name: string;
       avatarUri?: string;
       imageUris?: string[];
+      fullImageUris?: string[];
       time: string;
       replyTo?: { id: string; name: string; text: string };
     })
@@ -713,13 +724,55 @@ function Pressable(props: AppPressableProps) {
 function StatusBar(_props: {
   style?: "auto" | "inverted" | "light" | "dark";
   hidden?: boolean;
+  background?: "theme" | "white" | "dark";
 }) {
   const theme = useAppTheme();
+  const insets = useSafeAreaInsets();
+  const resolvedStyle = _props.style ?? (theme.id === "dark" ? "light" : "dark");
+  const androidBackgroundColor =
+    theme.id === "dark"
+      ? "#222222"
+      : theme.id === "white"
+        ? "#FFFFFF"
+        : theme.gradient[0];
+  const iosStatusBarColors: [string, string] =
+    _props.background === "white"
+      ? ["#FFFFFF", "#FFFFFF"]
+      : _props.background === "dark"
+        ? ["#222222", "#222222"]
+        : theme.id === "dark"
+          ? ["#222222", "#222222"]
+          : theme.id === "white"
+            ? ["#FFFFFF", "#FFFFFF"]
+            : theme.gradient;
+  const showIosStatusBarBackground =
+    Platform.OS === "ios" && !(_props.hidden ?? false) && insets.top > 0;
   return (
-    <ExpoStatusBar
-      style={theme.id === "dark" ? "light" : "dark"}
-      hidden={_props.hidden ?? false}
-    />
+    <>
+      {showIosStatusBarBackground ? (
+        <ExpoLinearGradient
+          pointerEvents="none"
+          colors={iosStatusBarColors}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={[s.iosStatusBarBackground, { height: insets.top }]}
+        />
+      ) : null}
+      {Platform.OS === "android" ? (
+        <RNStatusBar
+          barStyle={resolvedStyle === "light" ? "light-content" : "dark-content"}
+          backgroundColor={androidBackgroundColor}
+          hidden={_props.hidden ?? false}
+          translucent={false}
+        />
+      ) : null}
+      {Platform.OS !== "android" ? (
+        <ExpoStatusBar
+          style={resolvedStyle}
+          hidden={_props.hidden ?? false}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -782,8 +835,17 @@ function applyAppTheme(theme: AppTheme) {
   activeAppTheme = theme;
   appThemeListeners.forEach((listener) => listener(theme));
 }
+function syncNativeSplashTheme(theme: AppTheme) {
+  if (Platform.OS !== "android") return;
+  try {
+    NativeModules.MuteThemePreference?.setTheme(theme.id);
+  } catch {
+    // The JavaScript theme remains authoritative if the native cache is unavailable.
+  }
+}
 function selectAppTheme(theme: AppTheme, userId?: string | null) {
   applyAppTheme(theme);
+  syncNativeSplashTheme(theme);
   void AsyncStorage.setItem(themeStorageKey(userId), theme.id);
   void AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, theme.id);
 }
@@ -802,13 +864,16 @@ async function loadStoredAppTheme(
       (found.legacyProductIds ?? []).some((id) => ownedProductIds.includes(id)));
   const selected = allowed ? found : APP_THEMES[0];
   applyAppTheme(selected);
+  syncNativeSplashTheme(selected);
   await AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, selected.id);
 }
 
 async function loadSplashTheme() {
   const stored = await AsyncStorage.getItem(SPLASH_THEME_STORAGE_KEY);
   const found = APP_THEMES.find((theme) => theme.id === stored);
-  applyAppTheme(found ?? APP_THEMES[0]);
+  const selected = found ?? APP_THEMES[0];
+  applyAppTheme(selected);
+  syncNativeSplashTheme(selected);
 }
 function themeForeground(theme: AppTheme) {
   return theme.id === "white" ? "#222222" : "#FFF";
@@ -943,20 +1008,217 @@ function View(props: React.ComponentProps<typeof RNView>) {
 }
 
 function SafeAreaView(props: React.ComponentProps<typeof RNSafeAreaView>) {
+  const insets = useSafeAreaInsets();
+  const styled = themedStyle(props.style, "view");
+  const flattenedStyle = (StyleSheet.flatten(styled) ?? {}) as {
+    paddingBottom?: number | string;
+  };
+  const basePaddingBottom =
+    typeof flattenedStyle.paddingBottom === "number"
+      ? flattenedStyle.paddingBottom
+      : 0;
+  const androidPaddingBottom =
+    Platform.OS === "android" && insets.bottom > 0
+      ? basePaddingBottom + insets.bottom
+      : undefined;
   return (
-    <RNSafeAreaView {...props} style={themedStyle(props.style, "view")} />
+    <RNSafeAreaView
+      {...props}
+      style={[
+        styled,
+        androidPaddingBottom ? { paddingBottom: androidPaddingBottom } : null,
+      ]}
+    />
   );
 }
 
 function KeyboardAvoidingView(
   props: React.ComponentProps<typeof RNKeyboardAvoidingView>,
 ) {
+  const { behavior, enabled, keyboardVerticalOffset, ...rest } = props;
+  // MainActivity already uses adjustResize. Applying RN's Android `height`
+  // behavior as well resizes the same screen twice and causes visible shaking.
+  if (Platform.OS === "android") {
+    return <RNView {...rest} style={themedStyle(props.style, "view")} />;
+  }
   return (
     <RNKeyboardAvoidingView
-      {...props}
+      {...rest}
+      behavior={behavior ?? "padding"}
+      enabled={enabled ?? true}
+      keyboardVerticalOffset={keyboardVerticalOffset ?? 0}
       style={themedStyle(props.style, "view")}
     />
   );
+}
+
+function KeyboardSafeBottomSheet({ children }: { children: React.ReactNode }) {
+  const insets = useSafeAreaInsets();
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const show = Keyboard.addListener("keyboardDidShow", () =>
+      setKeyboardVisible(true),
+    );
+    const hide = Keyboard.addListener("keyboardDidHide", () =>
+      setKeyboardVisible(false),
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
+  const content = (
+    <RNView
+      style={
+        Platform.OS === "android" && !keyboardVisible && insets.bottom > 0
+          ? { paddingBottom: insets.bottom }
+          : undefined
+      }
+    >
+      {children}
+    </RNView>
+  );
+  if (Platform.OS === "android") {
+    // The activity viewport is already reduced by adjustResize. Anchoring to
+    // its bottom places the sheet directly above the keyboard/navigation bar.
+    return <RNView style={s.keyboardSafeSheetLayer}>{content}</RNView>;
+  }
+  return (
+    <RNKeyboardAvoidingView
+      behavior="padding"
+      enabled
+      keyboardVerticalOffset={0}
+      style={s.keyboardSafeSheetLayer}
+    >
+      {content}
+    </RNKeyboardAvoidingView>
+  );
+}
+
+function useAndroidHardwareBack(onBack: () => void, enabled = true) {
+  const onBackRef = useRef(onBack);
+  useEffect(() => {
+    onBackRef.current = onBack;
+  }, [onBack]);
+  useEffect(() => {
+    if (Platform.OS !== "android" || !enabled) return;
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        Keyboard.dismiss();
+        onBackRef.current();
+        return true;
+      },
+    );
+    return () => subscription.remove();
+  }, [enabled]);
+}
+
+function KeyboardSafeFixedBottom({
+  children,
+  style,
+}: {
+  children: React.ReactNode;
+  style?: React.ComponentProps<typeof RNView>["style"];
+}) {
+  const insets = useSafeAreaInsets();
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener("keyboardDidShow", () =>
+      setKeyboardVisible(true),
+    );
+    const hide = Keyboard.addListener("keyboardDidHide", () =>
+      setKeyboardVisible(false),
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  const themed = themedStyle(style, "view");
+  const flat = (StyleSheet.flatten(themed) ?? {}) as { paddingBottom?: number };
+  const basePaddingBottom = flat.paddingBottom ?? 0;
+  const bottomPadding =
+    Platform.OS === "android" && !keyboardVisible
+      ? basePaddingBottom + insets.bottom
+      : basePaddingBottom;
+  return (
+    <RNView style={[themed, { paddingBottom: bottomPadding }]}>
+      {children}
+    </RNView>
+  );
+}
+
+type AndroidActionOption = {
+  label: string;
+  value: string | null;
+  destructive?: boolean;
+};
+type AndroidActionConfig = {
+  title: string;
+  options: AndroidActionOption[];
+  resolve: (value: string | null) => void;
+};
+let presentAndroidActionList:
+  | ((config: AndroidActionConfig) => void)
+  | null = null;
+
+function AndroidActionListHost() {
+  const [config, setConfig] = useState<AndroidActionConfig | null>(null);
+  useEffect(() => {
+    presentAndroidActionList = setConfig;
+    return () => {
+      presentAndroidActionList = null;
+    };
+  }, []);
+  const finish = (value: string | null) => {
+    const current = config;
+    setConfig(null);
+    current?.resolve(value);
+  };
+  return (
+    <Modal
+      animationType="fade"
+      transparent
+      visible={Boolean(config)}
+      onRequestClose={() => finish(null)}
+    >
+      <RNView style={s.androidActionLayer}>
+        <RNPressable style={s.androidActionDim} onPress={() => finish(null)} />
+        <RNView style={s.androidActionCard}>
+          <RNText style={s.androidActionTitle}>{config?.title}</RNText>
+          {config?.options.map((option) => (
+            <RNPressable
+              key={`${option.label}-${String(option.value)}`}
+              onPress={() => finish(option.value)}
+              style={s.androidActionRow}
+            >
+              <RNText
+                style={[
+                  s.androidActionText,
+                  option.destructive && s.androidActionDestructive,
+                ]}
+              >
+                {option.label}
+              </RNText>
+            </RNPressable>
+          ))}
+        </RNView>
+      </RNView>
+    </Modal>
+  );
+}
+
+function showAndroidActionList(
+  title: string,
+  options: AndroidActionOption[],
+) {
+  return new Promise<string | null>((resolve) => {
+    if (!presentAndroidActionList) return resolve(null);
+    presentAndroidActionList({ title, options, resolve });
+  });
 }
 
 const ScrollView = forwardRef<
@@ -1628,6 +1890,16 @@ const IOS_BOTTOM_SAFE_PADDING = Platform.OS === "ios" ? 16 : 0;
 async function promptImageSource({
   allowDelete = false,
 }: { allowDelete?: boolean } = {}) {
+  if (Platform.OS === "android") {
+    return (await showAndroidActionList("사진 선택", [
+      { label: "사진", value: "gallery" },
+      { label: "카메라", value: "camera" },
+      ...(allowDelete
+        ? [{ label: "삭제", value: "remove", destructive: true }]
+        : []),
+      { label: "취소", value: null },
+    ])) as "camera" | "gallery" | "remove" | null;
+  }
   return new Promise<"camera" | "gallery" | "remove" | null>((resolve) => {
     let settled = false;
     const finish = (value: "camera" | "gallery" | "remove" | null) => {
@@ -1666,27 +1938,34 @@ async function pickSingleImage({
   aspect?: [number, number];
   quality?: number;
 }) {
-  const permission =
-    source === "camera"
-      ? await ImagePicker.requestCameraPermissionsAsync()
-      : await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!permission.granted) return null;
-  const result =
-    source === "camera"
-      ? await ImagePicker.launchCameraAsync({
-          mediaTypes: ["images"],
-          allowsEditing: true,
-          aspect,
-          quality,
-        })
-      : await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ["images"],
-          allowsEditing: true,
-          aspect,
-          quality,
-        });
-  if (result.canceled) return null;
-  return result.assets[0];
+  try {
+    const permission =
+      source === "camera"
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) return null;
+    const result =
+      source === "camera"
+        ? await ImagePicker.launchCameraAsync({
+            mediaTypes: ["images"],
+            // Several Android providers crash while returning from their
+            // vendor crop activity. Keep cropping inside the app instead.
+            allowsEditing: Platform.OS !== "android",
+            aspect,
+            quality: Platform.OS === "android" ? Math.min(quality, 0.72) : quality,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ["images"],
+            allowsEditing: Platform.OS !== "android",
+            aspect,
+            quality: Platform.OS === "android" ? Math.min(quality, 0.72) : quality,
+          });
+    if (result.canceled) return null;
+    return result.assets[0] ?? null;
+  } catch (error) {
+    Alert.alert("사진 선택 실패", serverErrorMessage(error));
+    return null;
+  }
 }
 
 async function resizeLocalImage(
@@ -1751,43 +2030,52 @@ type ChatImageAsset = ImagePicker.ImagePickerAsset & {
 async function pickChatImages(
   source: "camera" | "gallery",
 ): Promise<ChatImageAsset[]> {
-  const permission =
-    source === "camera"
-      ? await ImagePicker.requestCameraPermissionsAsync()
-      : await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!permission.granted) return [];
-  const result =
-    source === "camera"
-      ? await ImagePicker.launchCameraAsync({
-          mediaTypes: ["images"],
-          allowsEditing: false,
-          quality: 0.9,
-        })
-      : await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ["images"],
-          allowsMultipleSelection: true,
-          selectionLimit: 5,
-          orderedSelection: true,
-          quality: 0.9,
-        });
-  if (result.canceled) return [];
-  const selected = result.assets.slice(0, 5);
-  const gifs = selected.filter(
-    (asset) =>
-      asset.mimeType === "image/gif" || asset.uri.toLowerCase().endsWith(".gif"),
-  );
-  if (gifs.length && selected.length > 1) {
-    Alert.alert("GIF 첨부", "GIF는 사진과 함께 보낼 수 없으며 한 장씩만 전송할 수 있습니다.");
+  try {
+    const permission =
+      source === "camera"
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) return [];
+    const result =
+      source === "camera"
+        ? await ImagePicker.launchCameraAsync({
+            mediaTypes: ["images"],
+            allowsEditing: false,
+            quality: Platform.OS === "android" ? 0.6 : 0.7,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ["images"],
+            allowsMultipleSelection: true,
+            selectionLimit: 5,
+            orderedSelection: true,
+            quality: Platform.OS === "android" ? 0.6 : 0.7,
+          });
+    if (result.canceled) return [];
+    const selected = result.assets.slice(0, 5);
+    const gifs = selected.filter(
+      (asset) =>
+        asset.mimeType === "image/gif" || asset.uri.toLowerCase().endsWith(".gif"),
+    );
+    if (gifs.length && selected.length > 1) {
+      Alert.alert("GIF 첨부", "GIF는 사진과 함께 보낼 수 없으며 한 장씩만 전송할 수 있습니다.");
+      return [];
+    }
+    if (gifs[0]?.fileSize && gifs[0].fileSize > 5 * 1024 * 1024) {
+      Alert.alert("GIF 용량 초과", "GIF는 5MB 이하 파일만 전송할 수 있습니다.");
+      return [];
+    }
+    return gifs.length ? [gifs[0]] : selected;
+  } catch (error) {
+    Alert.alert("사진 선택 실패", serverErrorMessage(error));
     return [];
   }
-  if (gifs[0]?.fileSize && gifs[0].fileSize > 5 * 1024 * 1024) {
-    Alert.alert("GIF 용량 초과", "GIF는 5MB 이하 파일만 전송할 수 있습니다.");
-    return [];
-  }
-  return gifs.length ? [gifs[0]] : selected;
 }
 
-async function prepareChatImage(asset: ChatImageAsset) {
+async function prepareChatImage(
+  asset: ChatImageAsset,
+  maxDimension = 1080,
+  compress = 0.58,
+) {
   const isGif =
     asset.mimeType === "image/gif" || asset.uri.toLowerCase().endsWith(".gif");
   if (isGif) return asset;
@@ -1847,21 +2135,21 @@ async function prepareChatImage(asset: ChatImageAsset) {
   if (!(requested === "original" && zoom <= 1)) actions.push({ crop });
   const resultWidth = requested === "original" && zoom <= 1 ? width : crop.width;
   const resultHeight = requested === "original" && zoom <= 1 ? height : crop.height;
-  if (Math.max(resultWidth, resultHeight) > 1600)
+  if (Math.max(resultWidth, resultHeight) > maxDimension)
     actions.push(
       resultWidth >= resultHeight
-        ? { resize: { width: 1600 } }
-        : { resize: { height: 1600 } },
+        ? { resize: { width: maxDimension } }
+        : { resize: { height: maxDimension } },
     );
   const result = await ImageManipulator.manipulateAsync(asset.uri, actions, {
-    compress: 0.78,
+    compress,
     format: ImageManipulator.SaveFormat.JPEG,
   });
   const outputWidth =
     requested === "original" && zoom <= 1 ? width : crop.width;
   const outputHeight =
     requested === "original" && zoom <= 1 ? height : crop.height;
-  const scale = Math.min(1, 1600 / Math.max(outputWidth, outputHeight));
+  const scale = Math.min(1, maxDimension / Math.max(outputWidth, outputHeight));
   return {
     ...asset,
     uri: result.uri,
@@ -1888,7 +2176,7 @@ function EdgeBackLayer({ onBack }: { onBack?: () => void }) {
           }),
     [onBack],
   );
-  if (!onBack || !responder) return null;
+  if (Platform.OS !== "ios" || !onBack || !responder) return null;
   return (
     <View
       {...responder.panHandlers}
@@ -1902,7 +2190,7 @@ function AuthHeader({ title, onBack }: { title: string; onBack?: () => void }) {
   return (
     <>
       <EdgeBackLayer onBack={onBack} />
-      <View style={s.authHeader}>
+      <View style={[s.authHeader, s.androidHeaderInset58]}>
         <Pressable disabled={!onBack} onPress={onBack} style={s.authHeaderBack}>
           {onBack ? (
             <Ionicons name="chevron-back" size={22} color={colors.textSubtle} />
@@ -1920,8 +2208,11 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [passwordRecoveryActive, setPasswordRecoveryActive] = useState(false);
   const [authReady, setAuthReady] = useState(demoMode || !isSupabaseConfigured);
+  const [splashThemeReady, setSplashThemeReady] = useState(false);
   useEffect(() => {
-    void loadSplashTheme().catch(() => applyAppTheme(APP_THEMES[0]));
+    void loadSplashTheme()
+      .catch(() => applyAppTheme(APP_THEMES[0]))
+      .finally(() => setSplashThemeReady(true));
   }, []);
   useEffect(() => {
     if (demoMode || !supabase) return;
@@ -1936,7 +2227,9 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, [demoMode]);
   let content: React.ReactNode;
-  if (!authReady) {
+  if (!splashThemeReady) {
+    content = <NativeSplashBridge />;
+  } else if (!authReady) {
     content = (
       <>
         <SplashScreen />
@@ -1979,7 +2272,10 @@ export default function App() {
   }
   return (
     <GestureHandlerRootView style={s.flex}>
-      <NavigationContainer ref={appNavigationRef}>{content}</NavigationContainer>
+      <SafeAreaProvider>
+        <NavigationContainer ref={appNavigationRef}>{content}</NavigationContainer>
+        <AndroidActionListHost />
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
@@ -2088,6 +2384,16 @@ function AppLockScreen({
   const [recoveryPhone, setRecoveryPhone] = useState(session?.user.phone ?? "");
   const [normalizedPhone, setNormalizedPhone] = useState("");
   const [loading, setLoading] = useState(false);
+  useAndroidHardwareBack(
+    () => {
+      setRecovering(false);
+      setOtp("");
+      setOtpSent(false);
+      setError("");
+      Keyboard.dismiss();
+    },
+    recovering,
+  );
   const checkPin = async (value: string) => {
     const stored = await readAppLockPin();
     if (value === stored) {
@@ -2143,7 +2449,7 @@ function AppLockScreen({
   if (recovering)
     return (
       <SafeAreaView style={s.lockScreen}>
-        <StatusBar style="dark" />
+        <StatusBar style="dark" background="white" />
         <AuthHeader
           title="앱 잠금 해제"
           onBack={() => {
@@ -2209,7 +2515,7 @@ function AppLockScreen({
     );
   return (
     <SafeAreaView style={s.lockScreen}>
-      <StatusBar style="dark" />
+      <StatusBar style="dark" background="white" />
       <View style={s.lockCard}>
         <View style={s.lockIcon}>
           <Ionicons name="lock-closed" size={34} color={colors.mint700} />
@@ -2292,6 +2598,8 @@ function AuthenticatedApp({
   const [roomData, setRoomData] = useState<Room[]>([]);
   const [roomDataLoaded, setRoomDataLoaded] = useState(false);
   const [dataRefreshing, setDataRefreshing] = useState(false);
+  const appDataReloadInFlightRef = useRef(false);
+  const lastAppDataReloadAtRef = useRef(0);
   const [joinedIds, setJoinedIds] = useState<string[]>([]);
   const [ownedRoomIds, setOwnedRoomIds] = useState<string[]>([]);
   const [pendingIds, setPendingIds] = useState<string[]>([]);
@@ -2340,6 +2648,7 @@ function AuthenticatedApp({
     null,
   );
   const [chatInitialUnreadFocus, setChatInitialUnreadFocus] = useState(false);
+  const [chatInitialPanelSignal, setChatInitialPanelSignal] = useState(0);
   const [returnToNotifications, setReturnToNotifications] = useState(false);
   const [notificationDrawerSignal, setNotificationDrawerSignal] = useState(0);
   const handledPushResponseIdsRef = useRef<Set<string>>(new Set());
@@ -2471,7 +2780,7 @@ function AuthenticatedApp({
     return () => subscription.remove();
   }, []);
   useEffect(() => {
-    ensureTrackingPermissionRequested().catch(() => undefined);
+    initializeAds().catch(() => undefined);
   }, []);
   useEffect(()=>{
     if(!supabase||!isSupabaseConfigured)return;
@@ -2494,22 +2803,16 @@ function AuthenticatedApp({
       void AsyncStorage.setItem(SPLASH_THEME_STORAGE_KEY, APP_THEMES[0].id);
       return;
     }
-    setAdFreeActive(false);
-    // Never show the previous app account's paid theme while the new
-    // account-specific ownership cache is being resolved.
-    applyAppTheme(APP_THEMES[0]);
     // Apply the last server-confirmed ownership cache before the network round
     // trip so app resume does not flash or reset a purchased theme.
-    const reloadEntitlements = () => listStoreEntitlements(userId)
+    const reloadEntitlements = () => listStoreEntitlements()
       .then((items) => {
-        if (!active || session?.user.id !== userId) return;
+        if (!active) return;
         const now = Date.now();
         const activeAdFree = items.find(
           (item) =>
             item.type === "ad_free" &&
-            item.productId === STORE_PRODUCTS.adFreeMonthly &&
-            typeof item.expiresAt === "string" &&
-            Date.parse(item.expiresAt) > now,
+            (!item.expiresAt || Date.parse(item.expiresAt) > now),
         );
         setAdFreeActive(
           Boolean(activeAdFree),
@@ -2590,6 +2893,11 @@ function AuthenticatedApp({
       setRoomDataLoaded(true);
       return;
     }
+    if (appDataReloadInFlightRef.current) return;
+    const reloadStartedAt = Date.now();
+    if (silent && reloadStartedAt - lastAppDataReloadAtRef.current < 3000) return;
+    appDataReloadInFlightRef.current = true;
+    lastAppDataReloadAtRef.current = reloadStartedAt;
     if (showSpinner) setDataRefreshing(true);
     try {
       const [roomsResult, activeIdsResult, ownedIdsResult, verificationResult, promotionsResult, reportedRoomsResult] =
@@ -2657,6 +2965,7 @@ function AuthenticatedApp({
       if (!silent)
         Alert.alert("방 목록 불러오기 실패", serverErrorMessage(error));
     } finally {
+      appDataReloadInFlightRef.current = false;
       setDataRefreshing(false);
     }
   };
@@ -2775,13 +3084,44 @@ function AuthenticatedApp({
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => void reload(), 300);
     };
+    const applyMessageInsert = (payload: { new?: Record<string, unknown> }) => {
+      const row = payload.new;
+      if (!row) return;
+      const roomId = typeof row?.room_id === "string" ? row.room_id : "";
+      if (!roomId || !joinedIds.includes(roomId)) return;
+
+      const kind = typeof row.kind === "string" ? row.kind : "text";
+      const body = typeof row.body === "string" ? row.body.trim() : "";
+      const lastMessage = row.story_id
+        ? "스토리를 올렸습니다."
+        : kind === "image"
+          ? "사진을 보냈습니다."
+          : kind === "secret"
+            ? "비밀 쪽지가 도착했습니다."
+            : body || undefined;
+      const createdAt =
+        typeof row.created_at === "string"
+          ? new Date(row.created_at).getTime()
+          : Date.now();
+
+      setRoomSummaries((current) => ({
+        ...current,
+        [roomId]: { lastMessage, updatedAt: createdAt },
+      }));
+      if (row.sender_user_id !== session.user.id) {
+        setUnreadCounts((current) => ({
+          ...current,
+          [roomId]: (current[roomId] ?? 0) + 1,
+        }));
+      }
+    };
     void reload();
     const messageChannel = client
       .channel(`my-room-summaries-${session.user.id}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "messages" },
-        scheduleReload,
+        { event: "INSERT", schema: "public", table: "messages" },
+        applyMessageInsert,
       )
       .on(
         "postgres_changes",
@@ -2799,7 +3139,7 @@ function AuthenticatedApp({
       if (timer) clearTimeout(timer);
       client.removeChannel(messageChannel);
     };
-  }, [session?.user.id]);
+  }, [session?.user.id, joinedIds]);
 
   const adminReport = async (
     targetType: "room" | "user",
@@ -2897,14 +3237,17 @@ function AuthenticatedApp({
     }
     setSelectedRoom(room);
     setAdminReadOnly(Boolean(isSuperAdmin && !joinedIds.includes(room.id)));
-    setReturnToNotifications(notice.destination === "applications");
-    setChatInitialPanel(
+    const nextInitialPanel: ChatPanel =
       notice.destination === "applications"
         ? "applications"
         : notice.destination === "stories"
           ? "stories"
-          : null,
-    );
+          : null;
+    setReturnToNotifications(nextInitialPanel === "applications");
+    setChatInitialPanel(nextInitialPanel);
+    if (nextInitialPanel) {
+      setChatInitialPanelSignal((value) => value + 1);
+    }
     setChatInitialStoryId(
       notice.destination === "stories" ? notice.storyId ?? null : null,
     );
@@ -3231,14 +3574,17 @@ function AuthenticatedApp({
             }
             setSelectedRoom(room);
             setAdminReadOnly(Boolean(isSuperAdmin && !joinedIds.includes(room.id)));
-            setReturnToNotifications(notice.destination === "applications");
-            setChatInitialPanel(
+            const nextInitialPanel: ChatPanel =
               notice.destination === "applications"
                 ? "applications"
                 : notice.destination === "stories"
                   ? "stories"
-                  : null,
-            );
+                  : null;
+            setReturnToNotifications(nextInitialPanel === "applications");
+            setChatInitialPanel(nextInitialPanel);
+            if (nextInitialPanel) {
+              setChatInitialPanelSignal((value) => value + 1);
+            }
             setChatInitialStoryId(
               notice.destination === "stories"
                 ? notice.storyId ?? null
@@ -3380,6 +3726,7 @@ function AuthenticatedApp({
             onAdminReportUser={(id, label) => adminReport("user", id, label)}
             onEditRoom={() => navigation.navigate("EditRoom")}
             initialPanel={chatInitialPanel}
+            initialPanelSignal={chatInitialPanelSignal}
             initialStoryId={chatInitialStoryId}
             initialFocusUnread={chatInitialUnreadFocus}
             onApplicationsBack={
@@ -3561,19 +3908,14 @@ function serverErrorMessage(error: unknown) {
     );
     if (!message || message === "[object Object]") {
       try {
-        const json = JSON.stringify(error);
-        message = json && json !== "{}" ? json : "UNKNOWN_ERROR";
+        message = JSON.stringify(error);
       } catch {
-        message = "UNKNOWN_ERROR";
+        message = "알 수 없는 오류가 발생했습니다.";
       }
     }
   }
-  if (!message || message === "[object Object]" || message === "{}")
-    message = "UNKNOWN_ERROR";
-  if (message.includes("AUTH_SESSION_MISSING"))
-    return "로그인 세션을 확인할 수 없습니다. 다시 로그인한 뒤 시도해주세요.";
-  if (message.includes("UNKNOWN_ERROR"))
-    return "알 수 없는 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
+  if (!message || message === "[object Object]")
+    message = "알 수 없는 오류가 발생했습니다.";
   if (message.includes("MESSAGE_RATE_LIMIT"))
     return "메시지를 너무 빠르게 보내고 있어요. 잠시 후 다시 시도해주세요.";
   if (message.includes("RATE_LIMITED")) return "잠시 후 다시 시도해주세요.";
@@ -3701,10 +4043,38 @@ function serverErrorMessage(error: unknown) {
 
 function SplashScreen() {
   const theme = useAppTheme();
+  const splashLogo = require("./assets/mute-logo-white.png");
+  const splashLogoStyle =
+    theme.id === "white" ? s.splashLogoImageDark : s.splashLogoImageLight;
   return (
     <LinearGradient colors={theme.gradient} style={s.authSplash}>
       <StatusBar style="light" hidden />
-      <MuteLogo variant="white" />
+      <View style={s.splashLogoWrap}>
+        <Image
+          source={splashLogo}
+          style={[s.splashLogoImage, splashLogoStyle]}
+          resizeMode="contain"
+        />
+      </View>
+    </LinearGradient>
+  );
+}
+
+function NativeSplashBridge() {
+  const theme = useAppTheme();
+  const splashLogo = require("./assets/mute-logo-white.png");
+  const splashLogoStyle =
+    theme.id === "white" ? s.splashLogoImageDark : s.splashLogoImageLight;
+  return (
+    <LinearGradient colors={theme.gradient} style={s.nativeSplashBridge}>
+      <StatusBar style="light" hidden />
+      <View style={s.splashLogoWrap}>
+        <Image
+          source={splashLogo}
+          style={[s.splashLogoImage, splashLogoStyle]}
+          resizeMode="contain"
+        />
+      </View>
     </LinearGradient>
   );
 }
@@ -3840,7 +4210,7 @@ function PhoneAuthScreen({
   if (step === "otp")
     return (
       <SafeAreaView style={s.authScreen}>
-        <StatusBar style="dark" />
+        <StatusBar style="dark" background="white" />
         <View style={s.authCard}>
           <MuteLogo />
           <Text style={s.authTitle}>인증번호 입력</Text>
@@ -3890,7 +4260,7 @@ function PhoneAuthScreen({
   if (step === "newPassword")
     return (
       <SafeAreaView style={s.authScreen}>
-        <StatusBar style="dark" />
+        <StatusBar style="dark" background="white" />
         <View style={s.authCard}>
           <MuteLogo />
           <Text style={s.authTitle}>새 비밀번호 설정</Text>
@@ -3936,7 +4306,7 @@ function PhoneAuthScreen({
     );
   return (
     <SafeAreaView style={s.authScreen}>
-      <StatusBar style="dark" />
+      <StatusBar style="dark" background="white" />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={s.authCard}
@@ -4102,6 +4472,13 @@ function PhoneAuthScreenV2({
     }
     resetFlow("login");
   };
+  useAndroidHardwareBack(
+    () => {
+      if (mode === "signup") return exitSignup();
+      resetFlow("login");
+    },
+    mode !== "login",
+  );
 
   const login = async () => {
     if (!validLoginIdentifier || !validPassword) return;
@@ -4159,11 +4536,13 @@ function PhoneAuthScreenV2({
       setCooldown(60);
       setSignupOtpRequested(true);
       onRecoveryStateChange(true);
-      Animated.timing(signupReveal, {
-        toValue: 1,
-        duration: 240,
-        useNativeDriver: false,
-      }).start();
+      if (Platform.OS === "android") signupReveal.setValue(1);
+      else
+        Animated.timing(signupReveal, {
+          toValue: 1,
+          duration: 240,
+          useNativeDriver: false,
+        }).start();
     } catch (error) {
       const message = serverErrorMessage(error);
       if (/already|registered|exists|duplicate|가입된|존재/i.test(message)) {
@@ -4314,7 +4693,7 @@ function PhoneAuthScreenV2({
   if (mode === "recovery" && step === "otp") {
     return (
       <SafeAreaView style={s.authScreen}>
-        <StatusBar style="dark" />
+        <StatusBar style="dark" background="white" />
         <AuthHeader title="비밀번호 찾기" onBack={() => resetFlow("login")} />
         <View style={s.authCard}>
           <Text style={s.authTitle}>인증번호 입력</Text>
@@ -4374,7 +4753,7 @@ function PhoneAuthScreenV2({
   if (mode === "recovery" && step === "newPassword") {
     return (
       <SafeAreaView style={s.authScreen}>
-        <StatusBar style="dark" />
+        <StatusBar style="dark" background="white" />
         <AuthHeader title="비밀번호 찾기" onBack={() => setStep("otp")} />
         <View style={s.authCard}>
           <Text style={s.authTitle}>새 비밀번호 설정</Text>
@@ -4422,16 +4801,19 @@ function PhoneAuthScreenV2({
   if (mode === "signup") {
     return (
       <SafeAreaView style={s.authScreen}>
-        <StatusBar style="dark" />
+        <StatusBar style="dark" background="white" />
         <AuthHeader title="회원가입" onBack={exitSignup} />
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={[s.authScroll, s.authSignupScroll]}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={s.authKeyboard}
         >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={s.authCard}
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={[s.authScroll, s.authSignupScroll]}
           >
+            <View style={s.authCard}>
             <Text style={s.authTitle}>전화번호로 가입</Text>
             <Text style={s.authBody}>
               전화번호를 인증한 뒤 비밀번호를 설정해주세요.
@@ -4500,13 +4882,15 @@ function PhoneAuthScreenV2({
               <Animated.View
                 style={[
                   s.authSignupReveal,
-                  {
-                    opacity: signupReveal,
-                    maxHeight: signupReveal.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0, 760],
-                    }),
-                  },
+                  Platform.OS === "android"
+                    ? { opacity: 1 }
+                    : {
+                        opacity: signupReveal,
+                        maxHeight: signupReveal.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0, 340],
+                        }),
+                      },
                 ]}
               >
                 <View style={s.authPinHeader}>
@@ -4705,8 +5089,9 @@ function PhoneAuthScreenV2({
                 )}
               </Animated.View>
             )}
-          </KeyboardAvoidingView>
-        </ScrollView>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     );
   }
@@ -4714,7 +5099,7 @@ function PhoneAuthScreenV2({
   if (false && mode === "signup") {
     return (
       <SafeAreaView style={s.authScreen}>
-        <StatusBar style="dark" />
+        <StatusBar style="dark" background="white" />
         <ScrollView
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={s.authScroll}
@@ -4787,7 +5172,7 @@ function PhoneAuthScreenV2({
                     opacity: signupReveal,
                     maxHeight: signupReveal.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [0, 760],
+                      outputRange: [0, Platform.OS === "android" ? 560 : 310],
                     }),
                   },
                 ]}
@@ -4908,7 +5293,7 @@ function PhoneAuthScreenV2({
 
   return (
     <SafeAreaView style={s.authScreen}>
-      <StatusBar style="dark" />
+      <StatusBar style="dark" background="white" />
       <AuthHeader
         title={mode === "login" ? "로그인" : "비밀번호 찾기"}
         onBack={mode === "login" ? undefined : () => resetFlow("login")}
@@ -5189,6 +5574,67 @@ function MainScreen({
     if (!submitted) return;
     Alert.alert("신고 접수 완료", "방 신고가 접수되었습니다.");
   };
+  const openRoomActionMenu = async (room: Room) => {
+    const pinLabel = pinnedRoomIds.includes(room.id)
+      ? "상단 고정 해제"
+      : "상단에 고정";
+    if (Platform.OS === "android") {
+      const selected = await showAndroidActionList(room.name, [
+        ...(bottomTab === "myRooms"
+          ? [
+              { label: pinLabel, value: "pin" },
+              { label: "나가기", value: "leave", destructive: true },
+            ]
+          : []),
+        ...(isSuperAdmin && bottomTab !== "myRooms"
+          ? [{ label: "서버로 신고", value: "admin-report", destructive: true }]
+          : []),
+        ...(bottomTab !== "myRooms"
+          ? [{ label: "신고하기", value: "report", destructive: true }]
+          : []),
+        { label: "취소", value: null },
+      ]);
+      if (selected === "pin") void toggleRoomPin(room);
+      else if (selected === "leave") leaveJoinedRoom(room);
+      else if (selected === "admin-report") onAdminReportRoom(room);
+      else if (selected === "report") void reportVisibleRoom(room);
+      return;
+    }
+    Alert.alert(room.name, undefined, [
+      ...(bottomTab === "myRooms"
+        ? [
+            {
+              text: pinLabel,
+              onPress: () => toggleRoomPin(room),
+            },
+            {
+              text: "나가기",
+              style: "destructive" as const,
+              onPress: () => leaveJoinedRoom(room),
+            },
+          ]
+        : []),
+      ...(isSuperAdmin && bottomTab !== "myRooms"
+        ? [
+            {
+              text: "서버로 신고",
+              style: "destructive" as const,
+              onPress: () => onAdminReportRoom(room),
+            },
+          ]
+        : []),
+      ...(bottomTab !== "myRooms"
+        ? [
+            {
+              text: "신고하기",
+              style: "destructive" as const,
+              onPress: () => reportVisibleRoom(room),
+            },
+          ]
+        : []),
+      { text: "취소", style: "cancel" },
+    ]);
+  };
   const filtered = useMemo(
     () =>
       roomData
@@ -5244,12 +5690,14 @@ function MainScreen({
           filtered.some((item) => item.id === room.id),
         )
       : undefined;
-
   return (
     <SafeAreaView style={s.safe}>
-      <StatusBar style="dark" />
+      <StatusBar
+        style="dark"
+        background={storySearchOpen && bottomTab === "stories" ? "white" : "theme"}
+      />
       {!storyDetailOpen && storySearchOpen && bottomTab === "stories" ? (
-        <View style={s.searchHeader}>
+        <View style={[s.searchHeader, s.androidHeaderInset58]}>
           <IconButton
             name="chevron-back"
             color={colors.textSubtle}
@@ -5284,7 +5732,7 @@ function MainScreen({
             colors={["#82B9C1", "#5DBB8C"]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
-            style={s.mainHeader}
+            style={[s.mainHeader, s.androidHeaderInset56]}
           >
             <View style={s.mainHeaderLogoWrap}>
               <MuteLogo symbolOnly variant="white" compact />
@@ -5412,44 +5860,7 @@ function MainScreen({
                     (category === "promotion" && Boolean(item.isAdult)))
                 }
                 pinned={bottomTab === "myRooms" && pinnedRoomIds.includes(item.id)}
-                onLongPress={() =>
-                  Alert.alert(item.name, undefined, [
-                    ...(bottomTab === "myRooms"
-                      ? [
-                          {
-                            text: pinnedRoomIds.includes(item.id)
-                              ? "상단 고정 해제"
-                              : "상단에 고정",
-                            onPress: () => toggleRoomPin(item),
-                          },
-                          {
-                            text: "나가기",
-                            style: "destructive" as const,
-                            onPress: () => leaveJoinedRoom(item),
-                          },
-                        ]
-                      : []),
-                    ...(isSuperAdmin && bottomTab !== "myRooms"
-                      ? [
-                          {
-                            text: "서버로 신고",
-                            style: "destructive" as const,
-                            onPress: () => onAdminReportRoom(item),
-                          },
-                        ]
-                      : []),
-                    ...(bottomTab !== "myRooms"
-                      ? [
-                          {
-                            text: "신고하기",
-                            style: "destructive" as const,
-                            onPress: () => reportVisibleRoom(item),
-                          },
-                        ]
-                      : []),
-                    { text: "취소", style: "cancel" },
-                  ])
-                }
+                onLongPress={() => void openRoomActionMenu(item)}
                 onPress={() => openRoom(item)}
                 onDescriptionPress={
                   bottomTab === "discover"
@@ -5585,6 +5996,7 @@ function SearchScreen({
   onBack: () => void;
   openRoom: (room: Room) => void;
 }) {
+  useAndroidHardwareBack(onBack);
   const normalized = query.trim().toLowerCase();
   const results = useMemo(
     () =>
@@ -5603,8 +6015,8 @@ function SearchScreen({
   return (
     <SafeAreaView style={s.safe}>
       <EdgeBackLayer onBack={onBack} />
-      <StatusBar style="dark" />
-      <View style={s.searchHeader}>
+      <StatusBar style="dark" background="white" />
+      <View style={[s.searchHeader, s.androidHeaderInset58]}>
         <IconButton
           name="chevron-back"
           color={colors.textSubtle}
@@ -5674,6 +6086,7 @@ function RankingScreen({
   openRoom: (room: Room) => void;
   countFor: (room: Room) => number;
 }) {
+  useAndroidHardwareBack(onBack);
   const appTheme = useAppTheme();
   const dark = appTheme.id === "dark";
   const ranked = [...roomData].sort((a, b) => countFor(b) - countFor(a));
@@ -5877,6 +6290,24 @@ function RoomDetail({
     providedCurrentUserId,
   );
   const isPrivateRoom = Boolean(room.isPrivate || room.tags.includes("비밀방"));
+
+  useAndroidHardwareBack(() => {
+    if (menuOpen) return setMenuOpen(false);
+    if (pinOpen) {
+      setPinOpen(false);
+      setPin("");
+      setPinError("");
+      return;
+    }
+    if (profile) return setProfile(null);
+    if (storyOverlayId) return setStoryOverlayId(null);
+    if (storyWriteOpen) {
+      setStoryWriteOpen(false);
+      setTab("story");
+      return;
+    }
+    onBack();
+  });
 
   useEffect(() => {
     if (providedCurrentUserId) {
@@ -6118,10 +6549,7 @@ function RoomDetail({
             }}
             style={s.sheetDim}
           />
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            keyboardVerticalOffset={0}
-          >
+          <KeyboardSafeBottomSheet>
             <View style={s.privatePinSheet}>
               <View style={s.sheetHandle} />
               <Text style={s.privatePinTitle}>비밀방 PIN 입력</Text>
@@ -6163,7 +6591,7 @@ function RoomDetail({
                 </LinearGradient>
               </Pressable>
             </View>
-          </KeyboardAvoidingView>
+          </KeyboardSafeBottomSheet>
         </View>
       )}
       <View style={s.profileTabs}>
@@ -6263,7 +6691,9 @@ function RoomDetail({
         />
       )}
       {tab === "profile" && (
-        <View style={[s.detailSticky, appTheme.id === "dark" && s.detailStickyDark]}>
+        <KeyboardSafeFixedBottom
+          style={[s.detailSticky, appTheme.id === "dark" && s.detailStickyDark]}
+        >
           {joined || adminReadOnly || isSuperAdmin || room.isSample ? (
             <Pressable onPress={onEnterChat} style={s.detailJoinButton}>
               <LinearGradient
@@ -6296,7 +6726,7 @@ function RoomDetail({
               </LinearGradient>
             </Pressable>
           )}
-        </View>
+        </KeyboardSafeFixedBottom>
       )}
       {toast !== "" && (
         <View pointerEvents="none" style={s.toast}>
@@ -6331,6 +6761,7 @@ function JoinApplication({
   const [toast, setToast] = useState("");
   const [submitStatus, setSubmitStatus] = useState("");
   const [submitError, setSubmitError] = useState("");
+  useAndroidHardwareBack(onBack);
   const enabled = name.trim().length > 0 && intro.trim().length > 0;
   const pick = async () => {
     const source = await promptImageSource();
@@ -6448,7 +6879,7 @@ function JoinApplication({
             <Text style={s.joinSubmitError}>{submitError}</Text>
           )}
         </ScrollView>
-        <View style={s.sticky}>
+        <KeyboardSafeFixedBottom style={s.sticky}>
           <Pressable
             disabled={!enabled || submitting || toast !== ""}
             onPress={submit}
@@ -6468,7 +6899,7 @@ function JoinApplication({
               </Text>
             </LinearGradient>
           </Pressable>
-        </View>
+        </KeyboardSafeFixedBottom>
       </KeyboardAvoidingView>
       {toast !== "" && (
         <View pointerEvents="none" style={s.joinSuccessToast}>
@@ -6489,6 +6920,7 @@ function ChatRoom({
   onAdminReportUser,
   onEditRoom,
   initialPanel = null,
+  initialPanelSignal = 0,
   initialStoryId = null,
   initialFocusUnread = false,
   points,
@@ -6511,6 +6943,7 @@ function ChatRoom({
   onAdminReportUser: (id: string, label: string) => void;
   onEditRoom: () => void;
   initialPanel?: ChatPanel;
+  initialPanelSignal?: number;
   initialStoryId?: string | null;
   initialFocusUnread?: boolean;
   points: number;
@@ -6531,7 +6964,10 @@ function ChatRoom({
   const olderMessagePageSize = 30;
   const appTheme = useAppTheme();
   const adsDisabled = useAdFree();
+  const safeAreaInsets = useSafeAreaInsets();
   const [chatKeyboardVisible, setChatKeyboardVisible] = useState(false);
+  const androidChatBottomInset =
+    Platform.OS === "android" && !chatKeyboardVisible ? safeAreaInsets.bottom : 0;
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
     isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
   );
@@ -6570,7 +7006,9 @@ function ChatRoom({
   const [chatEntitlements, setChatEntitlements] = useState<ChatEntitlement[]>(
     [],
   );
-  const [chatStyleLoaded, setChatStyleLoaded] = useState(false);
+  const [chatStyleLoadedRoomId, setChatStyleLoadedRoomId] = useState<
+    string | null
+  >(null);
   const [customColorTarget, setCustomColorTarget] = useState<{
     target: "bubble" | "text" | "background";
     productId: string;
@@ -6706,7 +7144,7 @@ function ChatRoom({
       setStoryPanelInitialId(null);
       setStoryPanelInitialWrite(false);
     }
-  }, [initialPanel, initialStoryId, room.id]);
+  }, [initialPanel, initialPanelSignal, initialStoryId, room.id]);
   const [photoViewer, setPhotoViewer] = useState<{
     uris:string[];
     index:number;
@@ -6874,8 +7312,21 @@ function ChatRoom({
     else LOCAL_PENDING_MESSAGES.delete(room.id);
   }, [messages, room.id]);
   useEffect(() => {
+    const resetToRoomDefaults = () => {
+      const dark = appTheme.id === "dark";
+      setBubbleColor(dark ? "#303030" : "#F5F5F5");
+      setTextColor(dark ? "#F2F2F2" : "#1C1C1C");
+      setChatBackground(dark ? "#222222" : "#FFFFFF");
+      setBubbleProductId(undefined);
+      setTextProductId(undefined);
+      setBackgroundProductId(undefined);
+    };
+
+    // Invalidate the previous room before its colors can be auto-saved here.
+    setChatStyleLoadedRoomId(null);
+    resetToRoomDefaults();
     if (!isSupabaseConfigured || !isUuid(room.id) || !currentUserId) {
-      setChatStyleLoaded(true);
+      setChatStyleLoadedRoomId(room.id);
       return;
     }
     let active = true;
@@ -6891,21 +7342,19 @@ function ChatRoom({
           setBubbleProductId(own.bubbleProductId);
           setTextProductId(own.textProductId);
           setBackgroundProductId(own.backgroundProductId);
-        } else if (appTheme.id === "dark") {
-          setBubbleColor("#303030");
-          setTextColor("#F2F2F2");
-          setChatBackground("#222222");
-          setBubbleProductId(undefined);
-          setTextProductId(undefined);
-          setBackgroundProductId(undefined);
+        } else {
+          resetToRoomDefaults();
         }
-        setChatStyleLoaded(true);
+        setChatStyleLoadedRoomId(room.id);
       })
-      .catch(() => setChatStyleLoaded(true));
+      .catch(() => {
+        if (!active) return;
+        resetToRoomDefaults();
+      });
     return () => {
       active = false;
     };
-  }, [currentUserId, room.id]);
+  }, [appTheme.id, currentUserId, room.id]);
   useEffect(() => {
     if (!currentUserId || !isUuid(room.id) || !chatEntitlements.length) return;
     const nextExpiry = Math.min(
@@ -6937,7 +7386,7 @@ function ChatRoom({
   }, [chatReady, initialMessagesLoaded, messages.length]);
   useEffect(() => {
     if (
-      !chatStyleLoaded ||
+      chatStyleLoadedRoomId !== room.id ||
       !isSupabaseConfigured ||
       !isUuid(room.id) ||
       readOnly ||
@@ -6966,7 +7415,7 @@ function ChatRoom({
     bubbleColor,
     bubbleProductId,
     chatBackground,
-    chatStyleLoaded,
+    chatStyleLoadedRoomId,
     currentUserId,
     readOnly,
     roomMembers,
@@ -7666,7 +8115,12 @@ function ChatRoom({
     const createdAt = new Date().toISOString();
     const reply = replyTo ?? undefined;
     const sessionId = roomSessionRef.current;
-    const previewUris = selected.map((asset) => asset.uri);
+    const previewAssets = await Promise.all(
+      selected.map((asset) =>
+        prepareChatImage(asset, 420, 0.38).catch(() => asset),
+      ),
+    );
+    const previewUris = previewAssets.map((asset) => asset.uri);
     if (!existingId)
       setMessages((items) => [
         ...items,
@@ -7730,6 +8184,7 @@ function ChatRoom({
               uri: asset.uri,
               mimeType: "image/gif",
               fileSize: bytes.byteLength,
+              bytes,
               width: asset.width ?? 1,
               height: asset.height ?? 1,
               purpose: "chat",
@@ -7763,6 +8218,7 @@ function ChatRoom({
             uri: asset.uri,
             mimeType: "image/jpeg",
             fileSize: bytes.byteLength,
+            bytes,
             width,
             height,
             purpose: "chat",
@@ -7801,7 +8257,8 @@ function ChatRoom({
             ? {
                 ...item,
                 id,
-                imageUris: output,
+                imageUris: previewUris,
+                fullImageUris: output,
                 delivery: "sent" as const,
                 uploadProgress: 1,
                 uploadProgressLabel: undefined,
@@ -7971,19 +8428,83 @@ function ChatRoom({
         (Number.isFinite(createdAt) &&
           Date.now() - createdAt <= 5 * 60 * 1000 &&
           (item.kind !== "text" || item.text !== "삭제된 메시지입니다.")));
+    const copyableText = item.kind === "image" ? "" : item.text;
+    const reply = () => {
+      if (item.kind !== "text" && item.kind !== "image") return;
+      setReplyTo({
+        id: item.id,
+        name: item.name,
+        text: item.kind === "image" ? "사진" : item.text,
+      });
+      setTimeout(() => composerInputRef.current?.focus(), 120);
+    };
+    const remove = async () => {
+      try {
+        if (localOnly) {
+          setMessages((current) =>
+            current.filter((message) => message.id !== item.id),
+          );
+          return;
+        }
+        if (isSupabaseConfigured && isUuid(item.id))
+          await softDeleteMyMessage(item.id);
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === item.id
+              ? message.kind === "image"
+                ? {
+                    id: message.id,
+                    kind: "text" as const,
+                    mine: message.mine,
+                    name: message.name,
+                    avatarUri: message.avatarUri,
+                    text: "삭제된 메시지입니다.",
+                    time: message.time,
+                    createdAt: message.createdAt,
+                    delivery: message.delivery,
+                    uploadProgress: message.uploadProgress,
+                    bubbleColor: message.bubbleColor,
+                    textColor: message.textColor,
+                  }
+                : message.kind === "text"
+                  ? {
+                      ...message,
+                      text: "삭제된 메시지입니다.",
+                      replyTo: undefined,
+                    }
+                  : message
+              : message,
+          ),
+        );
+      } catch (error) {
+        Alert.alert("메시지 삭제 실패", serverErrorMessage(error));
+      }
+    };
+    if (Platform.OS === "android") {
+      void showAndroidActionList("메시지", [
+        ...(item.kind === "text" || item.kind === "image"
+          ? [{ label: "답장", value: "reply" }]
+          : []),
+        ...(item.kind !== "image"
+          ? [{ label: "복사", value: "copy" }]
+          : []),
+        ...(canDelete
+          ? [{ label: "삭제하기", value: "delete", destructive: true }]
+          : []),
+        { label: "취소", value: null },
+      ]).then((selected) => {
+        if (selected === "reply") reply();
+        else if (selected === "copy") copyMessage(copyableText);
+        else if (selected === "delete") void remove();
+      });
+      return;
+    }
     return Alert.alert("메시지", undefined, [
       ...(item.kind === "text" || item.kind === "image"
         ? [
             {
               text: "답장",
-              onPress: () => {
-                setReplyTo({
-                  id: item.id,
-                  name: item.name,
-                  text: item.kind === "image" ? "사진" : item.text,
-                });
-                setTimeout(() => composerInputRef.current?.focus(), 120);
-              },
+              onPress: reply,
             },
           ]
         : []),
@@ -7995,48 +8516,7 @@ function ChatRoom({
             {
               text: "삭제하기",
               style: "destructive" as const,
-              onPress: async () => {
-                try {
-                  if (localOnly) {
-                    setMessages((current) =>
-                      current.filter((message) => message.id !== item.id),
-                    );
-                    return;
-                  }
-                  if (isSupabaseConfigured && isUuid(item.id))
-                    await softDeleteMyMessage(item.id);
-                  setMessages((current) =>
-                    current.map((message) =>
-                      message.id === item.id
-                        ? message.kind === "image"
-                          ? {
-                              id: message.id,
-                              kind: "text" as const,
-                              mine: message.mine,
-                              name: message.name,
-                              avatarUri: message.avatarUri,
-                              text: "삭제된 메시지입니다.",
-                              time: message.time,
-                              createdAt: message.createdAt,
-                              delivery: message.delivery,
-                              uploadProgress: message.uploadProgress,
-                              bubbleColor: message.bubbleColor,
-                              textColor: message.textColor,
-                            }
-                          : message.kind === "text"
-                            ? {
-                                ...message,
-                                text: "삭제된 메시지입니다.",
-                                replyTo: undefined,
-                              }
-                            : message
-                        : message,
-                    ),
-                  );
-                } catch (error) {
-                  Alert.alert("메시지 삭제 실패", serverErrorMessage(error));
-                }
-              },
+              onPress: remove,
             },
           ]
         : []),
@@ -8426,6 +8906,16 @@ function ChatRoom({
     setChatReady(false);
     setPanel(null);
   };
+  useAndroidHardwareBack(() => {
+    if (drawerOpen) return setDrawerOpen(false);
+    if (tool) return setTool(null);
+    if (chatSearchOpen) return setChatSearchOpen(false);
+    if (customColorTarget) return setCustomColorTarget(null);
+    if (profileMember) return setProfileMember(null);
+    if (selectedMember) return setSelectedMember(null);
+    if (panel) return closePanel();
+    onBack();
+  });
   const panelTitle =
     panel === "applications"
       ? "가입 신청 목록"
@@ -8581,7 +9071,22 @@ function ChatRoom({
     if(!selectedRoomMember?.userId)return;
     setRoomMemberMute(room.id,selectedRoomMember.userId,seconds).then((until)=>{setRoomMembers((items)=>items.map((item)=>item.userId===selectedRoomMember.userId?{...item,mutedUntil:until}:item));setSelectedMember(null);setToast(`${selectedRoomMember.name}님을 ${label} 동안 채팅 금지했습니다.`);setTimeout(()=>setToast(""),1800);}).catch((error)=>Alert.alert("채팅 금지 실패",serverErrorMessage(error)));
   };
-  const openSelectedMemberMute=()=>Alert.alert("채팅 금지 기간 선택",undefined,[{text:"10초",onPress:()=>muteSelectedMember(10,"10초")},{text:"30초",onPress:()=>muteSelectedMember(30,"30초")},{text:"1분",onPress:()=>muteSelectedMember(60,"1분")},{text:"5분",onPress:()=>muteSelectedMember(300,"5분")},{text:"10분",onPress:()=>muteSelectedMember(600,"10분")},{text:"1시간",onPress:()=>muteSelectedMember(3600,"1시간")},{text:"취소",style:"cancel"}]);
+  const openSelectedMemberMute=async()=>{
+    if(Platform.OS==="android"){
+      const selected=await showAndroidActionList("채팅 금지 기간 선택",[
+        {label:"10초",value:"10"},{label:"30초",value:"30"},
+        {label:"1분",value:"60"},{label:"5분",value:"300"},
+        {label:"10분",value:"600"},{label:"1시간",value:"3600"},
+        {label:"취소",value:null},
+      ]);
+      if(!selected)return;
+      const seconds=Number(selected);
+      const labels:Record<number,string>={10:"10초",30:"30초",60:"1분",300:"5분",600:"10분",3600:"1시간"};
+      muteSelectedMember(seconds,labels[seconds]);
+      return;
+    }
+    Alert.alert("채팅 금지 기간 선택",undefined,[{text:"10초",onPress:()=>muteSelectedMember(10,"10초")},{text:"30초",onPress:()=>muteSelectedMember(30,"30초")},{text:"1분",onPress:()=>muteSelectedMember(60,"1분")},{text:"5분",onPress:()=>muteSelectedMember(300,"5분")},{text:"10분",onPress:()=>muteSelectedMember(600,"10분")},{text:"1시간",onPress:()=>muteSelectedMember(3600,"1시간")},{text:"취소",style:"cancel"}]);
+  };
   const unmuteSelectedMember=()=>{if(!selectedRoomMember?.userId)return;clearRoomMemberMute(room.id,selectedRoomMember.userId).then(()=>{setRoomMembers((items)=>items.map((item)=>item.userId===selectedRoomMember.userId?{...item,mutedUntil:null}:item));setSelectedMember(null);}).catch((error)=>Alert.alert("채팅 금지 해제 실패",serverErrorMessage(error)));};
   return (
     <SafeAreaView style={s.safe}>
@@ -8702,6 +9207,10 @@ function ChatRoom({
           <Pressable
             onPress={() => {
               cancelChatSearchNavigation();
+              Keyboard.dismiss();
+              keyboardOpenedAtBottomRef.current = false;
+              composerFocusPreparedRef.current = false;
+              setChatKeyboardVisible(false);
               setChatSearchOpen(false);
               setChatSearch("");
               setChatSearchResults([]);
@@ -8730,7 +9239,6 @@ function ChatRoom({
             opacity: chatReady ? 1 : 0,
           }}
           contentContainerStyle={s.messages}
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           onLayout={(event) => {
@@ -9121,7 +9629,7 @@ function ChatRoom({
                               onReply={() => messageActions(item)}
                               onPress={(_uri, index) =>
                                 setPhotoViewer({
-                                  uris: item.imageUris ?? [],
+                                  uris: item.fullImageUris ?? item.imageUris ?? [],
                                   index,
                                   menuOpen: false,
                                 })
@@ -9364,6 +9872,11 @@ function ChatRoom({
             )}
             {!readOnly && (
               <View
+                style={
+                  androidChatBottomInset
+                    ? { paddingBottom: androidChatBottomInset }
+                    : undefined
+                }
                 onLayout={() => {
                   if (!keyboardOpenedAtBottomRef.current) return;
                   requestAnimationFrame(() => scrollToLatestRef.current(false));
@@ -9547,11 +10060,7 @@ function ChatRoom({
             }}
             style={s.sheetDim}
           />
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            keyboardVerticalOffset={0}
-            style={s.sheetKeyboard}
-          >
+          <KeyboardSafeBottomSheet>
             <View style={s.pointSendSheet}>
               <View style={s.sheetHandle} />
               <Text style={s.pointSendTitle}>
@@ -9618,7 +10127,7 @@ function ChatRoom({
                 </Pressable>
               </View>
             </View>
-          </KeyboardAvoidingView>
+          </KeyboardSafeBottomSheet>
         </View>
       )}
       {photoViewer && (
@@ -10090,6 +10599,7 @@ function StoryPanel({
   onOpenDetail?: (story: StoryItem) => void;
   onWriteRequest?: () => void;
 }) {
+  const storyInsets = useSafeAreaInsets();
   const canViewMemberStories = joined || isSuperAdmin;
   const [filter, setFilter] = useState<"all" | StoryVisibility>(
     canViewMemberStories ? "all" : "public",
@@ -10107,6 +10617,19 @@ function StoryPanel({
   const [storiesLoaded, setStoriesLoaded] = useState(isLocalDemoRoomId(room.id));
   const [storiesLoadError, setStoriesLoadError] = useState("");
   const seededSelection = useRef(false);
+  useAndroidHardwareBack(
+    () => {
+      if (editing) return setEditing(null);
+      if (writing) {
+        setWriting(false);
+        if (initialWrite) onClose?.();
+        return;
+      }
+      if (selected) return setSelected(null);
+      (onClose ?? onEnterChat)();
+    },
+    Boolean(editing || writing || selected || showInternalHeader),
+  );
   useEffect(() => {
     if (room.isAdult && filter === "public")
       setFilter(canViewMemberStories ? "all" : "room");
@@ -10447,7 +10970,15 @@ function StoryPanel({
       {joined && (
         <>
           {showChatButton && (
-            <Pressable onPress={onEnterChat} style={s.storyChatButton}>
+            <Pressable
+              onPress={onEnterChat}
+              style={[
+                s.storyChatButton,
+                Platform.OS === "android" && {
+                  bottom: 22 + storyInsets.bottom,
+                },
+              ]}
+            >
               <LinearGradient
                 colors={["#82B9C1", "#5DBB8C"]}
                 start={{ x: 0, y: 0 }}
@@ -10463,7 +10994,17 @@ function StoryPanel({
             onPress={() =>
               onWriteRequest ? onWriteRequest() : setWriting(true)
             }
-            style={[s.storyFab, !showChatButton && { bottom: 22 }]}
+            style={[
+              s.storyFab,
+              Platform.OS === "android" && {
+                bottom: 22 + storyInsets.bottom,
+              },
+              !showChatButton && {
+                bottom:
+                  22 +
+                  (Platform.OS === "android" ? storyInsets.bottom : 0),
+              },
+            ]}
           >
             <LinearGradient
               colors={["#82B9C1", "#5DBB8C"]}
@@ -10529,6 +11070,7 @@ function StoryDetail({
   const safeAreaInsets = useSafeAreaInsets();
   const theme = useAppTheme();
   const foreground = themeForeground(theme);
+  useAndroidHardwareBack(onBack);
   const canDelete = story.mine || canModerate;
   const onChangeRef = useRef(onChange);
   useEffect(() => {
@@ -10762,7 +11304,7 @@ function StoryDetail({
           colors={["#82B9C1", "#5DBB8C"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
-          style={s.storyDetailHeader}
+          style={[s.storyDetailHeader, s.androidHeaderInset58]}
         >
           <Pressable onPress={onBack} style={s.storyHeaderAction}>
             <Ionicons name="chevron-back" size={22} color={foreground} />
@@ -10976,6 +11518,7 @@ function StoryEditor({
   onSave: (story: StoryItem) => void;
 }) {
   const appTheme = useAppTheme();
+  useAndroidHardwareBack(onCancel);
   const [title, setTitle] = useState(initial?.title ?? "");
   const [visibility, setVisibility] = useState<StoryVisibility>(
     room.isAdult ? "room" : initial?.visibility ?? "room",
@@ -11975,6 +12518,7 @@ function MemberProfile({
   onReport?: () => void | Promise<void>;
   availablePoints?: number;
 }) {
+  useAndroidHardwareBack(onBack);
   const [photoOpen, setPhotoOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [name, setName] = useState(member.name);
@@ -12033,7 +12577,11 @@ function MemberProfile({
   };
   const pick = async () => {
     if (!editable || !editMode) {
-      setPhotoOpen(true);
+      const currentAvatarUri = avatarRemoved
+        ? undefined
+        : (avatar?.uri ?? member.avatarUri);
+      if (typeof currentAvatarUri === "string" && currentAvatarUri.trim().length > 0)
+        setPhotoOpen(true);
       return;
     }
     const source = await promptImageSource({
@@ -12244,6 +12792,30 @@ function MemberProfile({
       return;
     }
     if (label === "채팅 금지") {
+      if (Platform.OS === "android") {
+        void showAndroidActionList("채팅 금지 기간 선택", [
+          { label: "10초", value: "10" },
+          { label: "30초", value: "30" },
+          { label: "1분", value: "60" },
+          { label: "5분", value: "300" },
+          { label: "10분", value: "600" },
+          { label: "1시간", value: "3600" },
+          { label: "취소", value: null },
+        ]).then((selected) => {
+          if (!selected) return;
+          const seconds = Number(selected);
+          const labels: Record<number, string> = {
+            10: "10초",
+            30: "30초",
+            60: "1분",
+            300: "5분",
+            600: "10분",
+            3600: "1시간",
+          };
+          void applyMute(seconds, labels[seconds]);
+        });
+        return;
+      }
       Alert.alert("채팅 금지 기간 선택", undefined, [
         { text: "10초", onPress: () => applyMute(10, "10초") },
         { text: "30초", onPress: () => applyMute(30, "30초") },
@@ -12258,6 +12830,10 @@ function MemberProfile({
   const displayedAvatarUri = avatarRemoved
     ? undefined
     : (avatar?.uri ?? member.avatarUri);
+  const safeDisplayedAvatarUri =
+    typeof displayedAvatarUri === "string" && displayedAvatarUri.trim().length > 0
+      ? displayedAvatarUri.trim()
+      : undefined;
   return (
     <SafeAreaView style={s.safe}>
       <EdgeBackLayer onBack={onBack} />
@@ -12317,7 +12893,7 @@ function MemberProfile({
             }
             onPress={pick}
           >
-            <Avatar uri={displayedAvatarUri} size={96} />
+            <Avatar uri={safeDisplayedAvatarUri} size={96} />
           </Pressable>
           {editable && !editMode ? (
             <>
@@ -12452,15 +13028,14 @@ function MemberProfile({
             onPress={() => setPhotoOpen(false)}
             style={s.photoViewerDim}
           />
-          <ExpoImage
-            source={
-              displayedAvatarUri
-                ? { uri: displayedAvatarUri }
-                : require("./assets/default-profile.png")
-            }
-            contentFit="cover"
-            style={s.photoViewerImage}
-          />
+          {safeDisplayedAvatarUri ? (
+            <ExpoImage
+              source={{ uri: safeDisplayedAvatarUri }}
+              contentFit="cover"
+              onError={() => setPhotoOpen(false)}
+              style={s.photoViewerImage}
+            />
+          ) : null}
         </View>
       )}
       {quickAction && (
@@ -12470,10 +13045,7 @@ function MemberProfile({
             onPress={closeQuickAction}
             style={s.sheetDim}
           />
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={s.sheetKeyboard}
-          >
+          <KeyboardSafeBottomSheet>
             <View style={s.pointSendSheet}>
               <View style={s.sheetHandle} />
               <Text style={s.pointSendTitle}>
@@ -12538,7 +13110,7 @@ function MemberProfile({
                 </Pressable>
               </View>
             </View>
-          </KeyboardAvoidingView>
+          </KeyboardSafeBottomSheet>
         </View>
       )}
     </SafeAreaView>
@@ -13100,6 +13672,7 @@ function PointLogScreen({
   points: number;
   onBack: () => void;
 }) {
+  useAndroidHardwareBack(onBack);
   const [rows, setRows] = useState<PointLogRow[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -13212,6 +13785,7 @@ function PointLogScreen({
 }
 
 function PaymentHistoryScreen({ onBack }: { onBack: () => void }) {
+  useAndroidHardwareBack(onBack);
   const [items, setItems] = useState<StoreTransactionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -13311,6 +13885,7 @@ function ItemShopScreen({
   onRecharge: () => void;
   onPointBalanceChange: (value: number) => void;
 }) {
+  useAndroidHardwareBack(onBack);
   const [busy, setBusy] = useState<string | null>(null);
   const [storeItems, setStoreItems] = useState<
     Array<{ productId: string; type: string; expiresAt: string | null }>
@@ -13325,7 +13900,7 @@ function ItemShopScreen({
     );
   const reload = async () => {
     const [store, wallet] = await Promise.all([
-      listStoreEntitlements(currentUserId),
+      listStoreEntitlements(),
       getMyWallet(),
     ]);
     setStoreItems(store);
@@ -13401,7 +13976,7 @@ function ItemShopScreen({
   );
   return (
     <SafeAreaView style={[s.safe, darkTheme && { backgroundColor: "#222222" }]}>
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
       <TopBar title="아이템샵" onBack={onBack} />
       <ScrollView
         contentContainerStyle={[
@@ -13538,7 +14113,7 @@ function ItemShopScreen({
         </Pressable>
         )}
       </ScrollView>
-      <View
+      <KeyboardSafeFixedBottom
         style={[
           s.itemShopFooter,
           darkTheme && {
@@ -13556,7 +14131,7 @@ function ItemShopScreen({
             <Text style={[s.itemShopBuyText, { color: primaryTextColor }]}>충전하기</Text>
           </LinearGradient>
         </Pressable>
-      </View>
+      </KeyboardSafeFixedBottom>
     </SafeAreaView>
   );
 }
@@ -13600,6 +14175,14 @@ function Profile({
   const [selectedCharge, setSelectedCharge] = useState(0);
   const [chargeBusy, setChargeBusy] = useState(false);
   const [now, setNow] = useState(parentNow);
+  useAndroidHardwareBack(
+    () => {
+      if (logOpen) return setLogOpen(false);
+      if (itemShopOpen) return setItemShopOpen(false);
+      if (shopOpen) return setShopOpen(false);
+    },
+    logOpen || itemShopOpen || shopOpen,
+  );
   useEffect(() => {
     setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -13951,6 +14534,7 @@ function EditRoom({
     if (Platform.OS === "ios") setTimeout(onBack, 80);
     else onBack();
   }, [blurRoomEditInputs, onBack]);
+  useAndroidHardwareBack(goBackSafely);
   const setCapacity = (value: number) =>
     setMaxMembers(
       Math.min(80, Math.max(currentMemberCount, value || currentMemberCount)),
@@ -14066,7 +14650,7 @@ function EditRoom({
   };
   return (
     <SafeAreaView style={s.safe}>
-      <StatusBar style="dark" hidden={false} />
+      <StatusBar style="light" hidden={false} />
       <TopBar title="방 편집하기" onBack={goBackSafely} />
       <KeyboardAvoidingView
         style={s.flex}
@@ -14119,12 +14703,12 @@ function EditRoom({
                    ["member", "Member", false, undefined],
                    ["concept", "콘셉트", false, undefined],
                    ["region", "지역별", false, undefined],
-                   [
-                      "adult",
-                      Platform.OS === "ios" ? "인증 필요" : "성인",
-                      Platform.OS === "ios",
-                      "현재 iOS에서 지원되지 않는 기능입니다.",
-                   ],
+                  [
+                    "adult",
+                    "인증 필요",
+                    true,
+                    "성인 인증이 필요합니다.",
+                  ],
                  ] as const
               ).map(([value, label, typeDisabled, disabledReason]) => (
                 <Pressable
@@ -14205,7 +14789,9 @@ function EditRoom({
             </View>
           </View>
         </ScrollView>
-        <View style={[s.sticky, appTheme.id === "dark" && s.stickyDark]}>
+        <KeyboardSafeFixedBottom
+          style={[s.sticky, appTheme.id === "dark" && s.stickyDark]}
+        >
           <Pressable
             disabled={disabled}
             onPress={save}
@@ -14228,7 +14814,7 @@ function EditRoom({
               </Text>
             </LinearGradient>
           </Pressable>
-        </View>
+        </KeyboardSafeFixedBottom>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -14246,6 +14832,7 @@ function CreateRoom({
   onCreated: (room: Room) => void;
 }) {
   const appTheme = useAppTheme();
+  useAndroidHardwareBack(onBack);
   const disabledGradient: [string, string] =
     appTheme.id === "dark" ? ["#343434", "#303030"] : ["#C9D8D5", "#BFCAC7"];
   const activeGradient: [string, string] =
@@ -14721,7 +15308,9 @@ function CreateRoom({
             </View>
           </View>
         </ScrollView>
-        <View style={[s.sticky, appTheme.id === "dark" && s.stickyDark]}>
+        <KeyboardSafeFixedBottom
+          style={[s.sticky, appTheme.id === "dark" && s.stickyDark]}
+        >
           <Pressable
             disabled={disabled}
             onPress={submit}
@@ -14740,7 +15329,7 @@ function CreateRoom({
               </Text>
             </LinearGradient>
           </Pressable>
-        </View>
+        </KeyboardSafeFixedBottom>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -14755,6 +15344,7 @@ function AdultVerificationScreen({
   onBack: () => void;
   onRefresh: () => Promise<boolean>;
 }) {
+  useAndroidHardwareBack(onBack);
   const [loading, setLoading] = useState(false);
   const openPortal = async () => {
     setLoading(true);
@@ -14849,6 +15439,12 @@ function Settings({
   const [passwordChangeOpen, setPasswordChangeOpen] = useState(false);
   const [paymentHistoryOpen, setPaymentHistoryOpen] = useState(false);
   const [appLockEnabled, setAppLockEnabled] = useState(false);
+  useAndroidHardwareBack(() => {
+    if (lockSettingsOpen) return setLockSettingsOpen(false);
+    if (passwordChangeOpen) return setPasswordChangeOpen(false);
+    if (paymentHistoryOpen) return setPaymentHistoryOpen(false);
+    onBack();
+  });
   useEffect(() => {
     getGlobalNotificationsEnabled()
       .then(setNotificationsState)
@@ -15006,8 +15602,7 @@ function Settings({
             icon="document-text-outline"
             title="개인정보 처리방침"
             onPress={() => openUrl(PRIVACY_POLICY_URL)}
-          />
-          <Menu
+          />          <Menu
             icon="reader-outline"
             title="이용약관"
             onPress={() => openUrl(APPLE_STANDARD_EULA_URL)}
@@ -15044,6 +15639,7 @@ function Settings({
 }
 
 function PasswordChangeScreen({ onBack }: { onBack: () => void }) {
+  useAndroidHardwareBack(onBack);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -15163,6 +15759,7 @@ function AppLockSettings({
   onBack: () => void;
   onChanged: (enabled: boolean) => void;
 }) {
+  useAndroidHardwareBack(onBack);
   const [enabled, setEnabled] = useState(false);
   const [desiredEnabled, setDesiredEnabled] = useState(false);
   const [unlocked, setUnlocked] = useState(false);
@@ -15362,6 +15959,7 @@ function LockSettingsRecovery({
   onBack: () => void;
   onRecovered: () => void | Promise<void>;
 }) {
+  useAndroidHardwareBack(onBack);
   const [phone, setPhone] = useState("");
   const [normalized, setNormalized] = useState("");
   const [otp, setOtp] = useState("");
@@ -15473,6 +16071,8 @@ function BottomNav({
   docked?: boolean;
 }) {
   const theme = useAppTheme();
+  const insets = useSafeAreaInsets();
+  const androidBottomInset = Platform.OS === "android" ? insets.bottom : 0;
   const items: [BottomTab, IconName, IconName, string][] = [
     ["myRooms", "chatbubbles-outline", "chatbubbles", "내 채팅"],
     ["discover", "home-outline", "home", "홈"],
@@ -15480,7 +16080,18 @@ function BottomNav({
     ["profile", "person-outline", "person", "내 정보"],
   ];
   return (
-    <View style={[s.bottomNav, docked && s.bottomNavDocked]}>
+    <View
+      style={[
+        s.bottomNav,
+        androidBottomInset
+          ? {
+              height: 112 + androidBottomInset,
+              paddingBottom: 28 + androidBottomInset,
+            }
+          : null,
+        docked && s.bottomNavDocked,
+      ]}
+    >
       {items.map(([key, icon, active, label]) => (
         <Pressable key={key} onPress={() => onSelect(key)} style={s.navItem}>
           <Ionicons
@@ -15533,7 +16144,7 @@ function TopBar({
         colors={["#82B9C1", "#5DBB8C"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 0 }}
-        style={s.topBar}
+        style={[s.topBar, Platform.OS === "android" && s.androidHeaderInset58]}
       >
         <IconButton name="chevron-back" color={foreground} onPress={onBack} />
         <View style={s.topCenter}>
@@ -15720,7 +16331,10 @@ function ImageGrid({
           <ExpoImage
             source={{ uri }}
             contentFit="cover"
-            transition={120}
+            cachePolicy="memory-disk"
+            priority="high"
+            transition={80}
+            recyclingKey={uri}
             style={s.imageGridImage}
           />
           {uri.toLowerCase().includes(".gif") && (
@@ -15743,6 +16357,7 @@ function ChatImageEditor({
   onSend: (assets: ChatImageAsset[]) => void;
 }) {
   const theme = useAppTheme();
+  useAndroidHardwareBack(onBack);
   const [items, setItems] = useState<ChatImageAsset[]>(
     assets.map((asset) => ({
       ...asset,
@@ -16592,11 +17207,7 @@ function MemberActionSheet({
         onPress={onClose}
         style={s.sheetDim}
       />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={0}
-        style={s.sheetKeyboard}
-      >
+      <KeyboardSafeBottomSheet>
         <View style={s.memberSheet}>
           <View style={s.sheetHandle} />
           <Pressable
@@ -16687,7 +17298,7 @@ function MemberActionSheet({
             </View>
           )}
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeBottomSheet>
     </View>
   );
 }
@@ -16855,6 +17466,59 @@ function ColorPicker({
   );
 }
 
+function colorChannels(value: string) {
+  const normalized = value.replace("#", "").padEnd(6, "0").slice(0, 6);
+  return [
+    Number.parseInt(normalized.slice(0, 2), 16) || 0,
+    Number.parseInt(normalized.slice(2, 4), 16) || 0,
+    Number.parseInt(normalized.slice(4, 6), 16) || 0,
+  ];
+}
+
+function colorFromChannels(channels: number[]) {
+  return `#${channels
+    .map((channel) =>
+      Math.max(0, Math.min(255, channel || 0)).toString(16).padStart(2, "0"),
+    )
+    .join("")}`.toUpperCase();
+}
+
+function AndroidRgbColorPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const channels = colorChannels(value);
+  const update = (index: number, text: string) => {
+    const next = [...channels];
+    next[index] = Math.max(0, Math.min(255, Number(text.replace(/\D/g, "")) || 0));
+    onChange(colorFromChannels(next));
+  };
+  return (
+    <View style={s.androidRgbPicker}>
+      <View style={[s.androidRgbPreview, { backgroundColor: value }]} />
+      <View style={s.androidRgbInputs}>
+        {["R", "G", "B"].map((label, index) => (
+          <View key={label} style={s.androidRgbField}>
+            <Text style={s.androidRgbLabel}>{label}</Text>
+            <TextInput
+              value={String(channels[index])}
+              onChangeText={(text) => update(index, text)}
+              keyboardType="number-pad"
+              maxLength={3}
+              selectTextOnFocus
+              style={s.androidRgbInput}
+            />
+          </View>
+        ))}
+      </View>
+      <Text style={s.androidRgbHex}>{value.toUpperCase()}</Text>
+    </View>
+  );
+}
+
 function CustomColorScreen({
   target,
   productId,
@@ -16874,6 +17538,7 @@ function CustomColorScreen({
 }) {
   const [selection, setSelection] = useState(initialColor);
   const [purchasing, setPurchasing] = useState(false);
+  useAndroidHardwareBack(onBack);
   const complete = async () => {
     if (purchasing) return;
     setPurchasing(true);
@@ -16896,33 +17561,37 @@ function CustomColorScreen({
       <StatusBar style="light" />
       <TopBar title="커스텀 색상 선택" onBack={onBack} />
       <ScrollView contentContainerStyle={s.customColorPage}>
-        <ExternalColorPicker
-          value={selection}
-          thumbShape="ring"
-          onChangeJS={(value) => setSelection(value.hex)}
-          onCompleteJS={(value) => setSelection(value.hex)}
-          style={s.customPickerRoot}
-        >
-          <View style={s.customPickerTopRow}>
-            <Panel3 style={s.customPickerWheelLarge} />
-            <View
-              style={[
-                s.customPickerPreviewBarLarge,
-                { backgroundColor: selection },
-              ]}
+        {Platform.OS === "android" ? (
+          <AndroidRgbColorPicker value={selection} onChange={setSelection} />
+        ) : (
+          <ExternalColorPicker
+            value={selection}
+            thumbShape="ring"
+            onChangeJS={(value) => setSelection(value.hex)}
+            onCompleteJS={(value) => setSelection(value.hex)}
+            style={s.customPickerRoot}
+          >
+            <View style={s.customPickerTopRow}>
+              <Panel3 style={s.customPickerWheelLarge} />
+              <View
+                style={[
+                  s.customPickerPreviewBarLarge,
+                  { backgroundColor: selection },
+                ]}
+              />
+            </View>
+            <BrightnessSlider style={s.customPickerSlider} />
+            <InputWidget
+              defaultFormat="RGB"
+              formats={["RGB", "HEX"]}
+              disableAlphaChannel
+              containerStyle={s.customInputWidget}
+              inputStyle={s.customInput}
+              inputTitleStyle={s.customInputTitle}
+              iconColor={colors.textSubtle}
             />
-          </View>
-          <BrightnessSlider style={s.customPickerSlider} />
-          <InputWidget
-            defaultFormat="RGB"
-            formats={["RGB", "HEX"]}
-            disableAlphaChannel
-            containerStyle={s.customInputWidget}
-            inputStyle={s.customInput}
-            inputTitleStyle={s.customInputTitle}
-            iconColor={colors.textSubtle}
-          />
-        </ExternalColorPicker>
+          </ExternalColorPicker>
+        )}
         <View style={[s.customColorPreview,target==="background"&&{backgroundColor:selection}]}>
           <Text
             style={[
@@ -16993,6 +17662,7 @@ function TopSpaceSheet({
         onPress={loading ? undefined : onClose}
         style={s.sheetDim}
       />
+      <KeyboardSafeBottomSheet>
       <View style={s.topSpaceSheet}>
         <View style={s.sheetHandle} />
         <View style={[s.topSpaceTitleLine, s.topSpaceTitleLineRelaxed]}>
@@ -17066,6 +17736,7 @@ function TopSpaceSheet({
           </LinearGradient>
         </Pressable>
       </View>
+      </KeyboardSafeBottomSheet>
     </View>
   );
 }
@@ -17793,6 +18464,48 @@ function Empty({ title, body }: { title: string; body: string }) {
 }
 
 const s = StyleSheet.create({
+  iosStatusBarBackground: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 9999,
+    elevation: 9999,
+  },
+  androidActionLayer: {
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  androidActionDim: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: "rgba(0,0,0,.48)",
+  },
+  androidActionCard: {
+    borderRadius: 22,
+    overflow: "hidden",
+    backgroundColor: "#FFF",
+  },
+  androidActionTitle: {
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  androidActionRow: {
+    minHeight: 52,
+    justifyContent: "center",
+    paddingHorizontal: 20,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  androidActionText: { color: colors.text, fontSize: 15 },
+  androidActionDestructive: { color: colors.pink600 },
+  keyboardSafeSheetLayer: {
+    ...StyleSheet.absoluteFill,
+    justifyContent: "flex-end",
+  },
   notificationDrawer: { paddingTop: 82 },
   notificationDrawerContent: { flexGrow: 1, paddingBottom: 36 },
   ownerProfileBlock: {
@@ -18511,6 +19224,7 @@ const s = StyleSheet.create({
     backgroundColor: "#FFF",
     gap: 14,
   },
+  authKeyboard: { flex: 1 },
   authLoginCard: { paddingTop: 62 },
   authTitle: {
     marginTop: 10,
@@ -18538,7 +19252,7 @@ const s = StyleSheet.create({
     paddingBottom: 160,
   },
   authSignupScroll: {
-    paddingBottom: Platform.OS === "ios" ? 280 : 160,
+    paddingBottom: 160,
   },
   authPhoneRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   authPhoneInput: { flex: 1, minWidth: 0 },
@@ -18599,7 +19313,11 @@ const s = StyleSheet.create({
   },
   authTimer: { color: colors.mint700, fontSize: 12, fontWeight: "800" },
   authTimerExpired: { color: colors.pink600 },
-  authPasswordHint: { color: colors.mint700, fontSize: 10, marginTop: -5 },
+  authPasswordHint: {
+    color: colors.mint700,
+    fontSize: 10,
+    marginTop: -5,
+  },
   authPasswordMismatch: { color: colors.pink600 },
   signupConsentGroup: {
     gap: 10,
@@ -18649,6 +19367,14 @@ const s = StyleSheet.create({
   authBackText: { color: colors.mint700, fontSize: 12, fontWeight: "700" },
   safe: { flex: 1, backgroundColor: colors.background, overflow: "hidden" },
   flex: { flex: 1, minWidth: 0 },
+  androidHeaderInset56: {
+    height: 56 + ANDROID_STATUS_BAR_HEIGHT,
+    paddingTop: ANDROID_STATUS_BAR_HEIGHT,
+  },
+  androidHeaderInset58: {
+    height: 58 + ANDROID_STATUS_BAR_HEIGHT,
+    paddingTop: ANDROID_STATUS_BAR_HEIGHT,
+  },
   mainHeader: {
     height: 56,
     paddingHorizontal: 12,
@@ -18666,6 +19392,16 @@ const s = StyleSheet.create({
   },
   muteLogo: { height: 44, flexDirection: "row", alignItems: "center", gap: 9 },
   muteLogoSymbol: { width: 38, height: 28 },
+  splashLogoWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
+  splashLogoImage: { width: 72, height: 72 },
+  splashLogoImageLight: { tintColor: "#FFFFFF" },
+  splashLogoImageDark: { tintColor: "#1C1C1C" },
+  nativeSplashBridge: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
   muteLogoMark: { width: 50, height: 36 },
   muteName: {
     color: colors.text,
@@ -19370,7 +20106,7 @@ const s = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
     zIndex: 6,
-    elevation: 6,
+    elevation: 0,
   },
   toolMenu: {
     paddingHorizontal: 15,
@@ -19985,9 +20721,10 @@ const s = StyleSheet.create({
     backgroundColor: "#FFF",
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
+    maxHeight: "90%",
     paddingHorizontal: 20,
     paddingTop: 10,
-    paddingBottom: 28,
+    paddingBottom: 36,
     ...shadows.floating,
   },
   privatePinTitle: {
@@ -20003,7 +20740,7 @@ const s = StyleSheet.create({
     marginBottom: 16,
   },
   privatePinInput: { marginBottom: 14 },
-  privatePinButton: { marginTop: 4 },
+  privatePinButton: { marginTop: 8, marginBottom: 4 },
   coHostSheet: {
     backgroundColor: "#FFF",
     borderTopLeftRadius: 24,
@@ -21225,8 +21962,7 @@ const s = StyleSheet.create({
   itemShopSubscriptionDivider: {
     color: colors.textMuted,
     fontSize: 11,
-  },
-  itemShopRestore: {
+  },  itemShopRestore: {
     height: 40,
     alignItems: "center",
     justifyContent: "center",
@@ -21400,6 +22136,33 @@ const s = StyleSheet.create({
   },
   customPickerSlider: { borderRadius: 999, height: 16 },
   customInputWidget: { marginTop: 4 },
+  androidRgbPicker: {
+    gap: 16,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 18,
+    backgroundColor: "#FFF",
+  },
+  androidRgbPreview: { height: 110, borderRadius: 16 },
+  androidRgbInputs: { flexDirection: "row", gap: 10 },
+  androidRgbField: { flex: 1, gap: 6 },
+  androidRgbLabel: { color: colors.textSubtle, fontSize: 12, fontWeight: "700" },
+  androidRgbInput: {
+    height: 48,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    color: colors.text,
+    textAlign: "center",
+    fontSize: 16,
+  },
+  androidRgbHex: {
+    color: colors.textSubtle,
+    fontSize: 13,
+    fontWeight: "700",
+    textAlign: "center",
+  },
   customInput: {
     height: 44,
     borderRadius: 10,

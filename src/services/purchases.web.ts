@@ -23,6 +23,6 @@ export async function restoreStorePurchases(): Promise<{
   throw new Error('NATIVE_PURCHASE_REQUIRED');
 }
 
-export async function listStoreEntitlements(_expectedUserId?: string) {
+export async function listStoreEntitlements() {
   return [];
 }

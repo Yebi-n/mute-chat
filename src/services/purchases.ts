@@ -31,18 +31,11 @@ export async function restoreStorePurchases(): Promise<{
   throw new Error('STORE_PURCHASE_PLATFORM_NOT_AVAILABLE');
 }
 
-export async function listStoreEntitlements(expectedUserId?: string) {
+export async function listStoreEntitlements() {
   if (!isSupabaseConfigured || !supabase) return [];
-  const { data: authData, error: authError } = await supabase.auth.getUser();
-  if (authError) throw authError;
-  const userId = authData.user?.id;
-  if (!userId) return [];
-  if (expectedUserId && userId !== expectedUserId) return [];
-
   const { data, error } = await supabase
     .from('user_entitlements')
     .select('product_id,entitlement_type,expires_at')
-    .eq('user_id', userId)
     .in('entitlement_type', ['app_theme', 'ad_free']);
   if (error) throw error;
   return (data ?? []).map((row) => ({
