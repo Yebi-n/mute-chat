@@ -868,21 +868,6 @@ function StatusBar(_props: {
   );
 }
 
-function ThemedStatusBarBackground() {
-  const theme = useAppTheme();
-  const insets = useSafeAreaInsets();
-  if (Platform.OS !== "ios" || insets.top <= 0) return null;
-  return (
-    <LinearGradient
-      pointerEvents="none"
-      colors={theme.gradient}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 0 }}
-      style={[s.iosStatusBarBackground, { height: insets.top }]}
-    />
-  );
-}
-
 const LINK_PATTERN = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
 
 type AppTheme = {
@@ -5599,6 +5584,7 @@ function MainScreen({
   const [storySearchOpen, setStorySearchOpen] = useState(false);
   const [storyQuery, setStoryQuery] = useState("");
   const appTheme = useAppTheme();
+  const mainInsets = useSafeAreaInsets();
   const primaryForeground = themeForeground(appTheme);
   useEffect(() => {
     setNow(Date.now());
@@ -5836,9 +5822,6 @@ function MainScreen({
         style="dark"
         background={storySearchOpen && bottomTab === "stories" ? "white" : "theme"}
       />
-      {!storyDetailOpen && !profileSubpageOpen && !storySearchOpen && (
-        <ThemedStatusBarBackground />
-      )}
       {!storyDetailOpen && storySearchOpen && bottomTab === "stories" ? (
         <View style={[s.searchHeader, s.androidHeaderInset58]}>
           <IconButton
@@ -5875,7 +5858,15 @@ function MainScreen({
             colors={appTheme.gradient}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
-            style={[s.mainHeader, Platform.OS === "android" && s.androidHeaderInset56]}
+            style={[
+              s.mainHeader,
+              Platform.OS === "android" && s.androidHeaderInset56,
+              Platform.OS === "ios" && {
+                height: 56 + mainInsets.top,
+                marginTop: -mainInsets.top,
+                paddingTop: mainInsets.top,
+              },
+            ]}
           >
             <View style={s.mainHeaderLogoWrap}>
               <MuteLogo symbolOnly variant="white" compact />
@@ -11620,13 +11611,19 @@ function StoryDetail({
     >
       <EdgeBackLayer onBack={onBack} />
       {!hideHeader && (
-        <>
-        <ThemedStatusBarBackground />
         <LinearGradient
           colors={theme.gradient}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
-          style={[s.storyDetailHeader, Platform.OS === "android" && s.androidHeaderInset58]}
+          style={[
+            s.storyDetailHeader,
+            Platform.OS === "android" && s.androidHeaderInset58,
+            Platform.OS === "ios" && {
+              height: 58 + safeAreaInsets.top,
+              marginTop: -safeAreaInsets.top,
+              paddingTop: safeAreaInsets.top,
+            },
+          ]}
         >
           <Pressable onPress={onBack} style={s.storyHeaderAction}>
             <Ionicons name="chevron-back" size={22} color={foreground} />
@@ -11642,7 +11639,6 @@ function StoryDetail({
             </Pressable>
           </View>
         </LinearGradient>
-        </>
       )}
       {!hideHeader && menuOpen && (
         <View style={s.storyMenuLayer}>
@@ -16437,16 +16433,24 @@ function TopBar({
   foregroundColor?: string;
 }) {
   const theme = useAppTheme();
+  const insets = useSafeAreaInsets();
   const foreground = foregroundColor ?? themeForeground(theme);
   return (
     <>
       {edgeBackEnabled && <EdgeBackLayer onBack={onBack} />}
-      <ThemedStatusBarBackground />
       <LinearGradient
         colors={theme.gradient}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 0 }}
-        style={[s.topBar, Platform.OS === "android" && s.androidHeaderInset58]}
+        style={[
+          s.topBar,
+          Platform.OS === "android" && s.androidHeaderInset58,
+          Platform.OS === "ios" && {
+            height: 58 + insets.top,
+            marginTop: -insets.top,
+            paddingTop: insets.top,
+          },
+        ]}
       >
         <IconButton
           name="chevron-back"
@@ -19710,13 +19714,6 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "transparent",
-  },
-  iosStatusBarBackground: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 1,
   },
   muteLogoMark: { width: 50, height: 36 },
   muteName: {
