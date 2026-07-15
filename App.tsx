@@ -5778,8 +5778,10 @@ function MainScreen({
   const listMode = bottomTab === "discover" || bottomTab === "myRooms";
   const topRoom =
     bottomTab === "discover"
-      ? activeTopSpaces.find((room) =>
-          filtered.some((item) => item.id === room.id),
+      ? activeTopSpaces.find(
+          (room) =>
+            !hiddenRoomIds.includes(room.id) &&
+            (!room.isAdult || canSeeAdultRooms || isSuperAdmin),
         )
       : undefined;
   useEffect(() => {
@@ -5791,7 +5793,7 @@ function MainScreen({
     }
   }, [bottomTab, category, topRoom?.id]);
   const hideActiveTopInitially = (height: number) => {
-    if (!topRoom || height <= 0) return;
+    if (Platform.OS !== "ios" || !topRoom || height <= 0) return;
     const revealKey = `${category}:${topRoom.id}`;
     if (topRevealPositionedKeyRef.current === revealKey) return;
     topRevealPositionedKeyRef.current = revealKey;
@@ -9013,6 +9015,24 @@ function ChatRoom({
         (value + delta + chatSearchMatches.length) % chatSearchMatches.length,
     );
   };
+  const closePanel = () => {
+    restoreScrollAfterPanelRef.current = true;
+    initialScrollDone.current = false;
+    setStoryPanelInitialId(null);
+    setStoryPanelInitialWrite(false);
+    setChatReady(false);
+    setPanel(null);
+  };
+  useAndroidHardwareBack(() => {
+    if (drawerOpen) return setDrawerOpen(false);
+    if (tool) return setTool(null);
+    if (chatSearchOpen) return setChatSearchOpen(false);
+    if (customColorTarget) return setCustomColorTarget(null);
+    if (profileMember) return setProfileMember(null);
+    if (selectedMember) return setSelectedMember(null);
+    if (panel) return closePanel();
+    onBack();
+  });
   if (imageEditorAssets)
     return (
       <ChatImageEditor
@@ -9130,24 +9150,7 @@ function ChatRoom({
       Alert.alert("스토리 알림 실패", serverErrorMessage(error));
     }
   };
-  const closePanel = () => {
-    restoreScrollAfterPanelRef.current = true;
-    initialScrollDone.current = false;
-    setStoryPanelInitialId(null);
-    setStoryPanelInitialWrite(false);
-    setChatReady(false);
-    setPanel(null);
-  };
-  useAndroidHardwareBack(() => {
-    if (drawerOpen) return setDrawerOpen(false);
-    if (tool) return setTool(null);
-    if (chatSearchOpen) return setChatSearchOpen(false);
-    if (customColorTarget) return setCustomColorTarget(null);
-    if (profileMember) return setProfileMember(null);
-    if (selectedMember) return setSelectedMember(null);
-    if (panel) return closePanel();
-    onBack();
-  });
+
   const panelTitle =
     panel === "applications"
       ? "가입 신청 목록"
