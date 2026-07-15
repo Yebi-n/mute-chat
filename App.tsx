@@ -787,7 +787,6 @@ function StatusBar(_props: {
   background?: "theme" | "white" | "dark";
 }) {
   const theme = useAppTheme();
-  const insets = useSafeAreaInsets();
   const resolvedStyle = _props.style ?? (theme.id === "dark" ? "light" : "dark");
   const androidBackgroundColor =
     theme.id === "dark"
@@ -795,29 +794,8 @@ function StatusBar(_props: {
       : theme.id === "white"
         ? "#FFFFFF"
         : theme.gradient[0];
-  const iosStatusBarColors: [string, string] =
-    _props.background === "white"
-      ? ["#FFFFFF", "#FFFFFF"]
-      : _props.background === "dark"
-        ? ["#222222", "#222222"]
-        : theme.id === "dark"
-          ? ["#222222", "#222222"]
-          : theme.id === "white"
-            ? ["#FFFFFF", "#FFFFFF"]
-            : theme.gradient;
-  const showIosStatusBarBackground =
-    Platform.OS === "ios" && !(_props.hidden ?? false) && insets.top > 0;
   return (
     <>
-      {showIosStatusBarBackground ? (
-        <ExpoLinearGradient
-          pointerEvents="none"
-          colors={iosStatusBarColors}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={[s.iosStatusBarBackground, { height: insets.top }]}
-        />
-      ) : null}
       {Platform.OS === "android" ? (
         <RNStatusBar
           barStyle={resolvedStyle === "light" ? "light-content" : "dark-content"}
@@ -11115,7 +11093,11 @@ function StoryPanel({
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => reloadStories(true)}
+            onRefresh={() =>
+              reloadStories(true).catch((error) =>
+                Alert.alert("스토리 새로고침 실패", serverErrorMessage(error)),
+              )
+            }
             tintColor={activeAppTheme.accent}
           />
         }
@@ -11577,7 +11559,11 @@ function StoryDetail({
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={refreshStory}
+            onRefresh={() =>
+              refreshStory().catch((error) =>
+                Alert.alert("스토리 새로고침 실패", serverErrorMessage(error)),
+              )
+            }
             tintColor={activeAppTheme.accent}
           />
         }
@@ -13931,7 +13917,7 @@ function PointLogScreen({
   return (
     <SafeAreaView style={s.pointLogPage}>
       <StatusBar style="light" />
-      <Build108TopBar title="포인트 내역" onBack={onBack} />
+      <TopBar title="포인트 내역" onBack={onBack} />
       {loading ? (
         <View style={s.centerState}>
           <ActivityIndicator color={colors.mint700} />
@@ -14175,7 +14161,7 @@ function ItemShopScreen({
   return (
     <SafeAreaView style={[s.safe, darkTheme && { backgroundColor: "#222222" }]}>
       <StatusBar style="light" />
-      <Build108TopBar title="아이템샵" onBack={onBack} />
+      <TopBar title="아이템샵" onBack={onBack} />
       <ScrollView
         contentContainerStyle={[
           s.itemShopPage,
@@ -16340,29 +16326,20 @@ function TopBar({
   return (
     <>
       {edgeBackEnabled && <EdgeBackLayer onBack={onBack} />}
-      <RNView
-        style={[
-          s.topBar,
-          Platform.OS === "android" && s.androidHeaderInset58,
-          theme.id === "white" && s.primaryWhiteGradient,
-        ]}
+      <LinearGradient
+        colors={["#82B9C1", "#5DBB8C"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={[s.topBar, Platform.OS === "android" && s.androidHeaderInset58]}
       >
-        <ExpoLinearGradient
-          pointerEvents="none"
-          colors={theme.gradient}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={StyleSheet.absoluteFill}
-        />
-        <RNPressable
-          accessibilityLabel="chevron-back"
+        <IconButton
+          name="chevron-back"
+          color={foreground}
           onPress={onBack}
-          style={s.iconButton}
-        >
-          <RNIonicons name="chevron-back" size={23} color={foreground} />
-        </RNPressable>
-        <RNView style={s.topCenter}>
-          <RNView style={s.topTitleLine}>
+          preserveColor
+        />
+        <View style={s.topCenter}>
+          <View style={s.topTitleLine}>
             <RNText numberOfLines={1} style={[s.topTitle, { color: foreground }]}>
               {title}
             </RNText>
@@ -16371,12 +16348,12 @@ function TopBar({
                 {inlineCount}명
               </RNText>
             )}
-          </RNView>
+          </View>
           {subtitle && (
             <RNText style={[s.topSub, { color: foreground }]}>{subtitle}</RNText>
           )}
-        </RNView>
-        <RNView style={s.topActions}>
+        </View>
+        <View style={s.topActions}>
           {secondaryTrailing && (
             <RNPressable
               hitSlop={16}
@@ -16398,33 +16375,6 @@ function TopBar({
           >
             {trailing && <RNIonicons name={trailing} size={22} color={foreground} />}
           </RNPressable>
-        </RNView>
-      </RNView>
-    </>
-  );
-}
-function Build108TopBar({ title, onBack }: { title: string; onBack: () => void }) {
-  const theme = useAppTheme();
-  const foreground = themeForeground(theme);
-  return (
-    <>
-      <EdgeBackLayer onBack={onBack} />
-      <LinearGradient
-        colors={["#82B9C1", "#5DBB8C"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-        style={s.topBar}
-      >
-        <IconButton name="chevron-back" color={foreground} onPress={onBack} />
-        <View style={s.topCenter}>
-          <View style={s.topTitleLine}>
-            <Text numberOfLines={1} style={[s.topTitle, { color: foreground }]}>
-              {title}
-            </Text>
-          </View>
-        </View>
-        <View style={s.topActions}>
-          <View style={s.topSide} />
         </View>
       </LinearGradient>
     </>
@@ -18715,14 +18665,6 @@ function Empty({ title, body }: { title: string; body: string }) {
 }
 
 const s = StyleSheet.create({
-  iosStatusBarBackground: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 9999,
-    elevation: 9999,
-  },
   androidActionLayer: {
     flex: 1,
     justifyContent: "center",
