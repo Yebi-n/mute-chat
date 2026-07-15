@@ -143,8 +143,9 @@ export async function getRoomMessageCreatedAt(messageId: string) {
 export async function listRoomMessages(roomId: string, limit = 50, before?: string) {
   const client = requireClient();
   const {
-    data: { user },
-  } = await client.auth.getUser();
+    data: { session },
+  } = await client.auth.getSession();
+  const user = session?.user;
   const { data: membership } = await client
     .from('room_memberships')
     .select('joined_at')

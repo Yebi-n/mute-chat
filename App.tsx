@@ -15,8 +15,8 @@ import * as Notifications from "expo-notifications";
 import * as ScreenCapture from "expo-screen-capture";
 import * as SecureStore from "expo-secure-store";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
-import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import type { ComponentProps } from "react";
+import { Component, createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import ExternalColorPicker, {
   BrightnessSlider,
   InputWidget,
@@ -317,6 +317,66 @@ type RoomMember = {
   blocked?: boolean;
   mutedUntil?: string | null;
 };
+
+function safeImageUri(value?: string) {
+  if (typeof value !== "string") return undefined;
+  const uri = value.trim();
+  if (!uri) return undefined;
+  return /^(https?:\/\/|file:\/\/|content:\/\/|ph:\/\/|assets-library:\/\/|data:image\/)/i.test(uri)
+    ? uri
+    : undefined;
+}
+
+function normalizeRoomMember(member: RoomMember): RoomMember {
+  const name = typeof member.name === "string" ? member.name.trim() : "";
+  return {
+    ...member,
+    name: name || "멤버",
+    intro: typeof member.intro === "string" ? member.intro : "",
+    avatarUri: safeImageUri(member.avatarUri),
+  };
+}
+class MemberProfileErrorBoundary extends Component<
+  { children: ReactNode; onBack: () => void },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("member profile render failed", error);
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <RNView
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          paddingHorizontal: 28,
+          backgroundColor: "#FFFFFF",
+        }}
+      >
+        <RNText style={{ color: "#222222", fontSize: 17, fontWeight: "700" }}>
+          프로필을 표시하지 못했어요.
+        </RNText>
+        <RNPressable
+          onPress={this.props.onBack}
+          style={{ marginTop: 18, paddingHorizontal: 22, paddingVertical: 12 }}
+        >
+          <RNText style={{ color: "#31A777", fontSize: 14, fontWeight: "700" }}>
+            채팅방으로 돌아가기
+          </RNText>
+        </RNPressable>
+      </RNView>
+    );
+  }
+}
 type TopSpacePackage = { points: number; seconds: number; boosts: number };
 type ColorProduct = {
   color: string;
@@ -3021,16 +3081,41 @@ function AuthenticatedApp({
     if (!supabase || !isSupabaseConfigured) return;
     const client = supabase;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const scheduleReload = () => {
+    let lastFullRefreshAt = 0;
+    const scheduleReload = (force = false) => {
+      if (!force && Date.now() - lastFullRefreshAt < 30000) return;
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => void reloadAppData(false, true), 250);
+      const delay = force ? 300 + Math.random() * 500 : 1200 + Math.random() * 1800;
+      timer = setTimeout(() => {
+        lastFullRefreshAt = Date.now();
+        void reloadAppData(false, true);
+      }, delay);
     };
     const channel = client
       .channel("room-directory-changes")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "rooms" },
-        scheduleReload,
+        (payload) => {
+          const row = payload.new as Record<string, unknown> | undefined;
+          if (
+            payload.eventType === "UPDATE" &&
+            typeof row?.id === "string" &&
+            typeof row.updated_at === "string"
+          ) {
+            const updatedAt = Date.parse(row.updated_at);
+            if (Number.isFinite(updatedAt)) {
+              setRoomData((rooms) =>
+                rooms.map((room) =>
+                  room.id === row.id ? { ...room, updatedAt } : room,
+                ),
+              );
+            }
+            scheduleReload(false);
+            return;
+          }
+          scheduleReload(true);
+        },
       )
       .subscribe();
     return () => {
@@ -5463,6 +5548,8 @@ function MainScreen({
   const [profileSubpageOpen, setProfileSubpageOpen] = useState(false);
   const [storySearchOpen, setStorySearchOpen] = useState(false);
   const [storyQuery, setStoryQuery] = useState("");
+  const homeRoomListRef = useRef<FlatList<Room> | null>(null);
+  const topRevealPositionedKeyRef = useRef<string | null>(null);
   const appTheme = useAppTheme();
   const primaryForeground = themeForeground(appTheme);
   useEffect(() => {
@@ -5474,7 +5561,7 @@ function MainScreen({
     if (notificationDrawerSignal > 0) setDrawerOpen(true);
   }, [notificationDrawerSignal]);
   useEffect(() => {
-    if (!supabase || !isSupabaseConfigured) return;
+    if (!supabase || !isSupabaseConfigured || !currentUserId) return;
     const client = supabase;
     let active = true;
     const reload = () =>
@@ -5489,7 +5576,12 @@ function MainScreen({
       .channel("main-notification-badge")
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "user_notifications" },
+        {
+          event: "*",
+          schema: "public",
+          table: "user_notifications",
+          filter: `recipient_user_id=eq.${currentUserId}`,
+        },
         reload,
       )
       .subscribe();
@@ -5497,7 +5589,7 @@ function MainScreen({
       active = false;
       client.removeChannel(channel);
     };
-  }, []);
+  }, [currentUserId]);
   useEffect(() => {
     if (!isSupabaseConfigured) return;
     let active = true;
@@ -5690,6 +5782,23 @@ function MainScreen({
           filtered.some((item) => item.id === room.id),
         )
       : undefined;
+  useEffect(() => {
+    if (!topRoom && bottomTab === "discover") {
+      topRevealPositionedKeyRef.current = null;
+      requestAnimationFrame(() =>
+        homeRoomListRef.current?.scrollToOffset({ offset: 0, animated: false }),
+      );
+    }
+  }, [bottomTab, category, topRoom?.id]);
+  const hideActiveTopInitially = (height: number) => {
+    if (!topRoom || height <= 0) return;
+    const revealKey = `${category}:${topRoom.id}`;
+    if (topRevealPositionedKeyRef.current === revealKey) return;
+    topRevealPositionedKeyRef.current = revealKey;
+    requestAnimationFrame(() =>
+      homeRoomListRef.current?.scrollToOffset({ offset: height, animated: false }),
+    );
+  };
   return (
     <SafeAreaView style={s.safe}>
       <StatusBar
@@ -5800,6 +5909,7 @@ function MainScreen({
       )}
       {listMode && (
         <FlatList
+          ref={homeRoomListRef}
           data={filtered}
           keyExtractor={(item) => item.id}
           contentContainerStyle={s.list}
@@ -5817,14 +5927,19 @@ function MainScreen({
               </View>
             ) : category === "promotion" ? null : (
               <View>
-                <>
-                  <SectionLabel
-                    title="Top"
-                    action="랭킹"
-                    onAction={onRanking}
-                    compact
-                  />
-                  {topRoom ? (
+                {topRoom ? (
+                  <View
+                    collapsable={false}
+                    onLayout={(event) =>
+                      hideActiveTopInitially(event.nativeEvent.layout.height)
+                    }
+                  >
+                    <SectionLabel
+                      title="Top"
+                      action="랭킹"
+                      onAction={onRanking}
+                      compact
+                    />
                     <RoomRow
                       room={topRoom}
                       joined={joinedIds.includes(topRoom.id)}
@@ -5843,8 +5958,8 @@ function MainScreen({
                       }
                       topHighlight
                     />
-                  ) : null}
-                </>
+                  </View>
+                ) : null}
                 <SectionLabel title="Hot" compact />
               </View>
             )
@@ -6966,11 +7081,19 @@ function ChatRoom({
   const adsDisabled = useAdFree();
   const safeAreaInsets = useSafeAreaInsets();
   const [chatKeyboardVisible, setChatKeyboardVisible] = useState(false);
+  const [chatBannerHeight, setChatBannerHeight] = useState(0);
+  useEffect(() => {
+    if (adsDisabled) setChatBannerHeight(0);
+  }, [adsDisabled]);
   const androidChatBottomInset =
     Platform.OS === "android" && !chatKeyboardVisible ? safeAreaInsets.bottom : 0;
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
     isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
   );
+  const roomMembersRef = useRef(roomMembers);
+  useEffect(() => {
+    roomMembersRef.current = roomMembers;
+  }, [roomMembers]);
   useEffect(() => {
     if (isUuid(room.id)) setForegroundRoomId(room.id);
     return () => {
@@ -7557,18 +7680,21 @@ function ChatRoom({
     let fallbackTimer: ReturnType<typeof setInterval> | null = null;
     let reloadInFlight = false;
     let reloadPending = false;
-    const reload = async () => {
+    let reloadPendingLimit = 1;
+    const reload = async (messageLimit = initialMessageLimit) => {
       if (reloadInFlight) {
         reloadPending = true;
+        reloadPendingLimit = Math.max(reloadPendingLimit, messageLimit);
         return;
       }
       reloadInFlight = true;
+      let currentLimit = messageLimit;
       try {
         do {
           reloadPending = false;
           const serverMessages = await listRoomMessages(
             room.id,
-            initialMessageLimit,
+            currentLimit,
           );
           lastSyncedServerMessageIdRef.current =
             serverMessages[serverMessages.length - 1]?.id ?? null;
@@ -7578,6 +7704,10 @@ function ChatRoom({
             );
             return mergeChatMessages(current, mapped);
           });
+          if (reloadPending) {
+            currentLimit = reloadPendingLimit;
+            reloadPendingLimit = 1;
+          }
         } while (reloadPending);
       } catch {
         // Realtime will deliver a later event; avoid retry storms here.
@@ -7585,9 +7715,12 @@ function ChatRoom({
         reloadInFlight = false;
       }
     };
-    const scheduleReload = (delay = 0) => {
+    const scheduleReload = (
+      delay = 0,
+      messageLimit = initialMessageLimit,
+    ) => {
       if (reloadTimer) clearTimeout(reloadTimer);
-      reloadTimer = setTimeout(() => void reload(), delay);
+      reloadTimer = setTimeout(() => void reload(messageLimit), delay);
     };
     const checkForMissedMessages = async () => {
       if (AppState.currentState !== "active") return;
@@ -7614,7 +7747,98 @@ function ChatRoom({
           table: "messages",
           filter: `room_id=eq.${room.id}`,
         },
-        () => scheduleReload(),
+        (payload) => {
+          const row = payload.new as Record<string, unknown> | undefined;
+          const eventType = payload.eventType;
+          if (eventType === "INSERT" && row) {
+            const id = typeof row.id === "string" ? row.id : "";
+            const body = typeof row.body === "string" ? row.body : "";
+            const createdAt =
+              typeof row.created_at === "string"
+                ? row.created_at
+                : new Date().toISOString();
+            const senderUserId =
+              typeof row.sender_user_id === "string"
+                ? row.sender_user_id
+                : null;
+            const kind =
+              row.kind === "text" || row.kind === "system" || row.kind === "secret"
+                ? row.kind
+                : null;
+            const hasReply = typeof row.reply_to_message_id === "string";
+            if (id && kind && !hasReply) {
+              const sender = roomMembersRef.current.find(
+                (member) => member.userId === senderUserId,
+              );
+              const recipientId =
+                typeof row.secret_recipient_user_id === "string"
+                  ? row.secret_recipient_user_id
+                  : null;
+              const recipient = roomMembersRef.current.find(
+                (member) => member.userId === recipientId,
+              );
+              const instant = mapServerChatMessage(
+                {
+                  id,
+                  userId: senderUserId,
+                  kind,
+                  body,
+                  createdAt,
+                  replyToMessageId: null,
+                  secretRecipientUserId: recipientId,
+                  senderName:
+                    typeof row.sender_display_name_snapshot === "string"
+                      ? row.sender_display_name_snapshot
+                      : sender?.name,
+                  senderAvatarUrl: sender?.avatarUri,
+                  recipientName: recipient?.name,
+                },
+                currentUserId,
+              );
+              const instantName = "name" in instant ? instant.name : undefined;
+              setMessages((current) => {
+                const pendingOwnMessage =
+                  senderUserId === currentUserId &&
+                  current.some(
+                    (item) =>
+                      item.id.startsWith("pending-text-") &&
+                      item.kind === "text" &&
+                      item.text === body,
+                  );
+                if (pendingOwnMessage) return current;
+                const previousFromSender = [...current]
+                  .reverse()
+                  .find(
+                    (item) =>
+                      item.kind !== "system" &&
+                      "name" in item &&
+                      instantName !== undefined && item.name === instantName,
+                  );
+                const styledInstant = previousFromSender
+                  ? {
+                      ...instant,
+                      bubbleColor:
+                        "bubbleColor" in previousFromSender
+                          ? previousFromSender.bubbleColor
+                          : undefined,
+                      textColor:
+                        "textColor" in previousFromSender
+                          ? previousFromSender.textColor
+                          : undefined,
+                    }
+                  : instant;
+                return mergeChatMessages(current, [styledInstant]);
+              });
+              lastSyncedServerMessageIdRef.current = id;
+              return;
+            }
+            // Replies, images and story previews need their related rows, but
+            // only the newest message is enriched instead of the whole window.
+            scheduleReload(80, 1);
+            return;
+          }
+          scheduleReload();
+        },
       )
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT")
@@ -7625,7 +7849,7 @@ function ChatRoom({
     });
     // Realtime remains primary. This single-row cursor check only repairs
     // missed websocket events while the room is actually on screen.
-    fallbackTimer = setInterval(() => void checkForMissedMessages(), 4000);
+    fallbackTimer = setInterval(() => void checkForMissedMessages(), 15000);
     return () => {
       if (reloadTimer) clearTimeout(reloadTimer);
       if (fallbackTimer) clearInterval(fallbackTimer);
@@ -8802,6 +9026,13 @@ function ChatRoom({
     );
   if (profileMember)
     return (
+      <MemberProfileErrorBoundary
+        key={`${profileMember.userId ?? profileMember.name}-${room.id}`}
+        onBack={() => {
+          setProfileMember(null);
+          setProfileEditOnOpen(false);
+        }}
+      >
       <MemberProfile
         member={profileMember}
         room={room}
@@ -8843,6 +9074,7 @@ function ChatRoom({
         onPoint={(amount) => sendPointTo(profileMember, amount)}
         onSecret={(body) => sendSecretTo(profileMember, body)}
       />
+      </MemberProfileErrorBoundary>
     );
   if (customColorTarget)
     return (
@@ -8989,7 +9221,14 @@ function ChatRoom({
             isOwner={isOwner}
             isSuperAdmin={isSuperAdmin}
             onAdminReportUser={onAdminReportUser}
-            onProfile={setProfileMember}
+            onProfile={(member) => {
+              const nextMember = normalizeRoomMember(member);
+              setPanel(null);
+              requestAnimationFrame(() => {
+                setProfileEditOnOpen(Boolean(nextMember.mine));
+                setProfileMember(nextMember);
+              });
+            }}
           />
         ) : panel === "blocked" ? (
           <BlockedMembers room={room} />
@@ -9776,6 +10015,7 @@ function ChatRoom({
             onPress={() => scrollToLatest(false)}
             style={[
               s.newMessagePreview,
+              { bottom: 74 + chatBannerHeight },
               appTheme.id === "dark" && s.newMessagePreviewDark,
             ]}
           >
@@ -9803,7 +10043,7 @@ function ChatRoom({
           <Pressable
             accessibilityLabel="가장 최근 메시지로 이동"
             onPress={() => scrollToLatest()}
-            style={s.scrollToBottomButton}
+            style={[s.scrollToBottomButton, { bottom: 78 + chatBannerHeight }]}
           >
             <Ionicons
               name="chevron-down"
@@ -9966,11 +10206,20 @@ function ChatRoom({
                 </Pressable>
                 </View>
                 {!adsDisabled && (
-                  <InlineBannerAd
-                    placement="chat"
-                    dark={appTheme.id === "dark"}
-                    reserveSpace
-                  />
+                  <View
+                    collapsable={false}
+                    onLayout={(event) => {
+                      const nextHeight = Math.round(event.nativeEvent.layout.height);
+                      if (nextHeight !== chatBannerHeight)
+                        setChatBannerHeight(nextHeight);
+                    }}
+                  >
+                    <InlineBannerAd
+                      placement="chat"
+                      dark={appTheme.id === "dark"}
+                      reserveSpace
+                    />
+                  </View>
                 )}
               </View>
             )}
@@ -10014,9 +10263,12 @@ function ChatRoom({
           };
           rememberScrollPosition();
           restoreScrollAfterPanelRef.current = true;
+          const nextMember = normalizeRoomMember(found);
           setSelectedMember(null);
-          setProfileEditOnOpen(Boolean(found.mine));
-          setProfileMember(found);
+          requestAnimationFrame(() => {
+            setProfileEditOnOpen(Boolean(nextMember.mine));
+            setProfileMember(nextMember);
+          });
         }}
         onReport={async () => {
           const found = selectedRoomMember;
@@ -13705,7 +13957,7 @@ function PointLogScreen({
   return (
     <SafeAreaView style={s.pointLogPage}>
       <StatusBar style="light" />
-      <TopBar title="포인트 내역" onBack={onBack} foregroundColor="#FFFFFF" />
+      <TopBar title="포인트 내역" onBack={onBack} />
       {loading ? (
         <View style={s.centerState}>
           <ActivityIndicator color={colors.mint700} />
@@ -13949,7 +14201,7 @@ function ItemShopScreen({
   return (
     <SafeAreaView style={[s.safe, darkTheme && { backgroundColor: "#222222" }]}>
       <StatusBar style="light" />
-      <TopBar title="아이템샵" onBack={onBack} foregroundColor="#FFFFFF" />
+      <TopBar title="아이템샵" onBack={onBack} />
       <ScrollView
         contentContainerStyle={[
           s.itemShopPage,
@@ -16120,19 +16372,26 @@ function TopBar({
         end={{ x: 1, y: 0 }}
         style={[s.topBar, Platform.OS === "android" && s.androidHeaderInset58]}
       >
-        <IconButton name="chevron-back" color={foreground} onPress={onBack} />
+        <IconButton
+          name="chevron-back"
+          color={foreground}
+          onPress={onBack}
+          preserveColor
+        />
         <View style={s.topCenter}>
           <View style={s.topTitleLine}>
-            <Text numberOfLines={1} style={[s.topTitle, { color: foreground }]}>
+            <RNText numberOfLines={1} style={[s.topTitle, { color: foreground }]}>
               {title}
-            </Text>
+            </RNText>
             {inlineCount !== undefined && (
-              <Text style={[s.topInlineCount, { color: foreground }]}>
+              <RNText style={[s.topInlineCount, { color: foreground }]}>
                 {inlineCount}명
-              </Text>
+              </RNText>
             )}
           </View>
-          {subtitle && <Text style={[s.topSub, { color: foreground }]}>{subtitle}</Text>}
+          {subtitle && (
+            <RNText style={[s.topSub, { color: foreground }]}>{subtitle}</RNText>
+          )}
         </View>
         <View style={s.topActions}>
           {secondaryTrailing && (
@@ -16144,7 +16403,7 @@ function TopBar({
               onPress={onSecondaryTrailingPress}
               style={s.topSide}
             >
-              <Ionicons name={secondaryTrailing} size={21} color={foreground} />
+              <RNIonicons name={secondaryTrailing} size={21} color={foreground} />
             </RNPressable>
           )}
           <RNPressable
@@ -16154,7 +16413,7 @@ function TopBar({
             disabled={!onTrailingPress}
             style={s.topSide}
           >
-            {trailing && <Ionicons name={trailing} size={22} color={foreground} />}
+            {trailing && <RNIonicons name={trailing} size={22} color={foreground} />}
           </RNPressable>
         </View>
       </LinearGradient>
@@ -16193,10 +16452,11 @@ function Avatar({
   size?: number;
   overlap?: boolean;
 }) {
-  if (!uri) return <DefaultAvatar size={size} overlap={overlap} />;
+  const safeUri = safeImageUri(uri);
+  if (!safeUri) return <DefaultAvatar size={size} overlap={overlap} />;
   return (
     <ExpoImage
-      source={{ uri }}
+      source={{ uri: safeUri }}
       contentFit="cover"
       cachePolicy="memory-disk"
       transition={100}
@@ -18229,19 +18489,22 @@ function IconButton({
   color,
   onPress,
   size = 23,
+  preserveColor = false,
 }: {
   name: IconName;
   color: string;
   onPress: () => void;
   size?: number;
+  preserveColor?: boolean;
 }) {
+  const Icon = preserveColor ? RNIonicons : Ionicons;
   return (
     <Pressable
       accessibilityLabel={name === "search" ? "검색" : name}
       onPress={onPress}
       style={size < 23 ? s.headerIconButton : s.iconButton}
     >
-      <Ionicons name={name} size={size} color={color} />
+      <Icon name={name} size={size} color={color} />
     </Pressable>
   );
 }
