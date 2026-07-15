@@ -13931,7 +13931,7 @@ function PointLogScreen({
   return (
     <SafeAreaView style={s.pointLogPage}>
       <StatusBar style="light" />
-      <TopBar title="포인트 내역" onBack={onBack} />
+      <Build108TopBar title="포인트 내역" onBack={onBack} />
       {loading ? (
         <View style={s.centerState}>
           <ActivityIndicator color={colors.mint700} />
@@ -14175,7 +14175,7 @@ function ItemShopScreen({
   return (
     <SafeAreaView style={[s.safe, darkTheme && { backgroundColor: "#222222" }]}>
       <StatusBar style="light" />
-      <TopBar title="아이템샵" onBack={onBack} />
+      <Build108TopBar title="아이템샵" onBack={onBack} />
       <ScrollView
         contentContainerStyle={[
           s.itemShopPage,
@@ -16400,6 +16400,33 @@ function TopBar({
           </RNPressable>
         </RNView>
       </RNView>
+    </>
+  );
+}
+function Build108TopBar({ title, onBack }: { title: string; onBack: () => void }) {
+  const theme = useAppTheme();
+  const foreground = themeForeground(theme);
+  return (
+    <>
+      <EdgeBackLayer onBack={onBack} />
+      <LinearGradient
+        colors={["#82B9C1", "#5DBB8C"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={s.topBar}
+      >
+        <IconButton name="chevron-back" color={foreground} onPress={onBack} />
+        <View style={s.topCenter}>
+          <View style={s.topTitleLine}>
+            <Text numberOfLines={1} style={[s.topTitle, { color: foreground }]}>
+              {title}
+            </Text>
+          </View>
+        </View>
+        <View style={s.topActions}>
+          <View style={s.topSide} />
+        </View>
+      </LinearGradient>
     </>
   );
 }
