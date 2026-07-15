@@ -9239,6 +9239,7 @@ function ChatRoom({
             opacity: chatReady ? 1 : 0,
           }}
           contentContainerStyle={s.messages}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           onLayout={(event) => {
@@ -9964,7 +9965,7 @@ function ChatRoom({
                   </LinearGradient>
                 </Pressable>
                 </View>
-                {chatKeyboardVisible && !adsDisabled && (
+                {!adsDisabled && (
                   <InlineBannerAd
                     placement="chat"
                     dark={appTheme.id === "dark"}
@@ -12518,7 +12519,6 @@ function MemberProfile({
   onReport?: () => void | Promise<void>;
   availablePoints?: number;
 }) {
-  useAndroidHardwareBack(onBack);
   const [photoOpen, setPhotoOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [name, setName] = useState(member.name);
@@ -12577,11 +12577,7 @@ function MemberProfile({
   };
   const pick = async () => {
     if (!editable || !editMode) {
-      const currentAvatarUri = avatarRemoved
-        ? undefined
-        : (avatar?.uri ?? member.avatarUri);
-      if (typeof currentAvatarUri === "string" && currentAvatarUri.trim().length > 0)
-        setPhotoOpen(true);
+      setPhotoOpen(true);
       return;
     }
     const source = await promptImageSource({
@@ -12792,30 +12788,6 @@ function MemberProfile({
       return;
     }
     if (label === "채팅 금지") {
-      if (Platform.OS === "android") {
-        void showAndroidActionList("채팅 금지 기간 선택", [
-          { label: "10초", value: "10" },
-          { label: "30초", value: "30" },
-          { label: "1분", value: "60" },
-          { label: "5분", value: "300" },
-          { label: "10분", value: "600" },
-          { label: "1시간", value: "3600" },
-          { label: "취소", value: null },
-        ]).then((selected) => {
-          if (!selected) return;
-          const seconds = Number(selected);
-          const labels: Record<number, string> = {
-            10: "10초",
-            30: "30초",
-            60: "1분",
-            300: "5분",
-            600: "10분",
-            3600: "1시간",
-          };
-          void applyMute(seconds, labels[seconds]);
-        });
-        return;
-      }
       Alert.alert("채팅 금지 기간 선택", undefined, [
         { text: "10초", onPress: () => applyMute(10, "10초") },
         { text: "30초", onPress: () => applyMute(30, "30초") },
@@ -12830,10 +12802,6 @@ function MemberProfile({
   const displayedAvatarUri = avatarRemoved
     ? undefined
     : (avatar?.uri ?? member.avatarUri);
-  const safeDisplayedAvatarUri =
-    typeof displayedAvatarUri === "string" && displayedAvatarUri.trim().length > 0
-      ? displayedAvatarUri.trim()
-      : undefined;
   return (
     <SafeAreaView style={s.safe}>
       <EdgeBackLayer onBack={onBack} />
@@ -12893,7 +12861,7 @@ function MemberProfile({
             }
             onPress={pick}
           >
-            <Avatar uri={safeDisplayedAvatarUri} size={96} />
+            <Avatar uri={displayedAvatarUri} size={96} />
           </Pressable>
           {editable && !editMode ? (
             <>
@@ -13028,14 +12996,15 @@ function MemberProfile({
             onPress={() => setPhotoOpen(false)}
             style={s.photoViewerDim}
           />
-          {safeDisplayedAvatarUri ? (
-            <ExpoImage
-              source={{ uri: safeDisplayedAvatarUri }}
-              contentFit="cover"
-              onError={() => setPhotoOpen(false)}
-              style={s.photoViewerImage}
-            />
-          ) : null}
+          <ExpoImage
+            source={
+              displayedAvatarUri
+                ? { uri: displayedAvatarUri }
+                : require("./assets/default-profile.png")
+            }
+            contentFit="cover"
+            style={s.photoViewerImage}
+          />
         </View>
       )}
       {quickAction && (
@@ -13045,7 +13014,10 @@ function MemberProfile({
             onPress={closeQuickAction}
             style={s.sheetDim}
           />
-          <KeyboardSafeBottomSheet>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={s.sheetKeyboard}
+          >
             <View style={s.pointSendSheet}>
               <View style={s.sheetHandle} />
               <Text style={s.pointSendTitle}>
@@ -13110,7 +13082,7 @@ function MemberProfile({
                 </Pressable>
               </View>
             </View>
-          </KeyboardSafeBottomSheet>
+          </KeyboardAvoidingView>
         </View>
       )}
     </SafeAreaView>
@@ -13733,7 +13705,7 @@ function PointLogScreen({
   return (
     <SafeAreaView style={s.pointLogPage}>
       <StatusBar style="light" />
-      <TopBar title="포인트 내역" onBack={onBack} />
+      <TopBar title="포인트 내역" onBack={onBack} foregroundColor="#FFFFFF" />
       {loading ? (
         <View style={s.centerState}>
           <ActivityIndicator color={colors.mint700} />
@@ -13977,7 +13949,7 @@ function ItemShopScreen({
   return (
     <SafeAreaView style={[s.safe, darkTheme && { backgroundColor: "#222222" }]}>
       <StatusBar style="light" />
-      <TopBar title="아이템샵" onBack={onBack} />
+      <TopBar title="아이템샵" onBack={onBack} foregroundColor="#FFFFFF" />
       <ScrollView
         contentContainerStyle={[
           s.itemShopPage,
@@ -16124,6 +16096,7 @@ function TopBar({
   onSecondaryTrailingPress,
   trailing,
   onTrailingPress,
+  foregroundColor,
 }: {
   title: string;
   subtitle?: string;
@@ -16134,9 +16107,10 @@ function TopBar({
   onSecondaryTrailingPress?: () => void;
   trailing?: IconName;
   onTrailingPress?: () => void;
+  foregroundColor?: string;
 }) {
   const theme = useAppTheme();
-  const foreground = themeForeground(theme);
+  const foreground = foregroundColor ?? themeForeground(theme);
   return (
     <>
       {edgeBackEnabled && <EdgeBackLayer onBack={onBack} />}
@@ -17207,7 +17181,11 @@ function MemberActionSheet({
         onPress={onClose}
         style={s.sheetDim}
       />
-      <KeyboardSafeBottomSheet>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={0}
+        style={s.sheetKeyboard}
+      >
         <View style={s.memberSheet}>
           <View style={s.sheetHandle} />
           <Pressable
@@ -17298,7 +17276,7 @@ function MemberActionSheet({
             </View>
           )}
         </View>
-      </KeyboardSafeBottomSheet>
+      </KeyboardAvoidingView>
     </View>
   );
 }
