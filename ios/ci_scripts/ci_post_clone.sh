@@ -85,11 +85,11 @@ echo "Installing CocoaPods dependencies."
 # Rebuild the sandbox and synchronize all path-based Expo pods in one pass.
 rm -rf Pods
 
-# React Native's Hermes podspec downloads Debug and Release archives while
-# CocoaPods is resolving the pod. Xcode Cloud occasionally drops those Maven
-# connections, and CocoaPods then exits before our post-install repair can run.
-# Pre-warm the exact cache files the podspec checks so pod update does not need
-# to perform the fragile download itself.
+# React Native's Hermes podspec normally downloads Debug and Release archives
+# while CocoaPods is resolving the pod. Xcode Cloud occasionally drops those
+# Maven connections, and CocoaPods then exits before Xcode can archive.
+# Download the artifacts ourselves with retries, then force the Hermes podspec
+# to resolve from the local Release tarball via HERMES_ENGINE_TARBALL_PATH.
 HERMES_VERSION="$(sed -n 's/^  - hermes-engine (\([^)]*\)).*/\1/p' Podfile.lock | head -n 1)"
 if [ -z "$HERMES_VERSION" ]; then
   HERMES_VERSION="$(sed -n 's/^HERMES_V1_VERSION_NAME=//p' "$REPOSITORY_PATH/node_modules/react-native/sdks/hermes-engine/version.properties" | head -n 1)"
@@ -135,12 +135,14 @@ download_hermes_archive() {
 download_hermes_archive debug
 download_hermes_archive release
 
+HERMES_ENGINE_TARBALL_PATH="$HERMES_ARTIFACT_DIR/hermes-ios-${HERMES_VERSION}-release.tar.gz"
+export HERMES_ENGINE_TARBALL_PATH
+echo "Using local Hermes tarball for CocoaPods: $HERMES_ENGINE_TARBALL_PATH"
+
 pod update --no-repo-update --verbose
 
-# React Native downloads both Debug and Release Hermes archives while resolving
-# the podspec. Its upstream helper does not fail the pod install when one curl
-# request is interrupted, which leaves Xcode archive builds without the Release
-# xcframework. Validate and repair that artifact after CocoaPods finishes.
+# Keep validating both archives after CocoaPods finishes so archive builds fail
+# early if a local artifact is missing or corrupt.
 download_hermes_archive debug
 download_hermes_archive release
 
