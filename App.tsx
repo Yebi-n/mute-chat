@@ -1166,7 +1166,10 @@ function KeyboardSafeBottomSheet({ children }: { children: React.ReactNode }) {
     <RNView
       style={
         Platform.OS === "android" && androidKeyboardInset > 0
-          ? { paddingBottom: androidKeyboardInset }
+          ? {
+              paddingBottom: androidKeyboardInset,
+              transform: [{ translateY: androidKeyboardInset }],
+            }
           : Platform.OS === "android" && !keyboardVisible
             ? { paddingBottom: androidSystemBottomInset(insets.bottom) }
           : undefined
@@ -5585,6 +5588,8 @@ function MainScreen({
   const [storyQuery, setStoryQuery] = useState("");
   const appTheme = useAppTheme();
   const mainInsets = useSafeAreaInsets();
+  const mainAndroidBottomInset =
+    Platform.OS === "android" ? androidSystemBottomInset(mainInsets.bottom) : 0;
   const primaryForeground = themeForeground(appTheme);
   useEffect(() => {
     setNow(Date.now());
@@ -6063,7 +6068,19 @@ function MainScreen({
         />
       )}
       {(bottomTab === "discover" || bottomTab === "myRooms") && (
-        <Pressable onPress={onCreate} style={[s.fab, adsDisabled && s.fabNoAd]}>
+        <Pressable
+          onPress={onCreate}
+          style={[
+            s.fab,
+            adsDisabled && s.fabNoAd,
+            mainAndroidBottomInset
+              ? {
+                  bottom:
+                    (adsDisabled ? 126 : 176) + mainAndroidBottomInset,
+                }
+              : null,
+          ]}
+        >
           <LinearGradient
             colors={["#82B9C1", "#5DBB8C"]}
             start={{ x: 0, y: 0 }}
@@ -6075,7 +6092,18 @@ function MainScreen({
         </Pressable>
       )}
       {!storyDetailOpen && !profileSubpageOpen && (
-        <View style={[s.mainBottomDock, adsDisabled && s.mainBottomDockNoAd]}>
+        <View
+          style={[
+            s.mainBottomDock,
+            adsDisabled && s.mainBottomDockNoAd,
+            mainAndroidBottomInset
+              ? {
+                  height:
+                    (adsDisabled ? 112 : 162) + mainAndroidBottomInset,
+                }
+              : null,
+          ]}
+        >
           {!adsDisabled && (
             <View
               pointerEvents="box-none"
@@ -7138,6 +7166,15 @@ function ChatRoom({
       : chatKeyboardVisible
         ? androidKeyboardInset
         : androidSystemBottomInset(safeAreaInsets.bottom);
+  const androidChatBottomStyle =
+    Platform.OS === "android" && androidChatBottomInset
+      ? chatKeyboardVisible
+        ? {
+            paddingBottom: androidChatBottomInset,
+            transform: [{ translateY: androidChatBottomInset }],
+          }
+        : { paddingBottom: androidChatBottomInset }
+      : undefined;
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
     isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
   );
@@ -10181,11 +10218,7 @@ function ChatRoom({
             )}
             {!readOnly && (
               <View
-                style={
-                  androidChatBottomInset
-                    ? { paddingBottom: androidChatBottomInset }
-                    : undefined
-                }
+                style={androidChatBottomStyle}
                 onLayout={() => {
                   if (!keyboardOpenedAtBottomRef.current) return;
                   requestAnimationFrame(() => scrollToLatestRef.current(false));
