@@ -43,6 +43,7 @@ yarn-error.*
 
 # local credentials and bootstrap artifacts
 /.local/
+credentials.json
 
 # local diagnostics and generated review assets
 artifacts/*.log
