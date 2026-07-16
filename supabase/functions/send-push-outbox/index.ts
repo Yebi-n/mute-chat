@@ -9,10 +9,15 @@ const supabase = createClient(supabaseUrl, serviceRoleKey, {
 type PushJob = {
   id: number;
   recipient_user_id: string;
+  event_type: string;
   title: string;
   body: string;
-  data: Record<string, unknown>;
+  data: Record<string, unknown> | null;
   attempt_count: number;
+};
+
+type DeliveryJob = PushJob & {
+  sourceJobIds: number[];
 };
 
 function chunks<T>(items: T[], size: number) {
@@ -20,6 +25,64 @@ function chunks<T>(items: T[], size: number) {
   for (let index = 0; index < items.length; index += size)
     result.push(items.slice(index, index + size));
   return result;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === 'string' ? value : '';
+}
+
+function chatAggregationKey(job: PushJob) {
+  if (job.event_type !== 'chat_message') return '';
+  const data = job.data ?? {};
+  if (data.type !== 'chat') return '';
+  const roomId = stringValue(data.roomId);
+  if (!roomId) return '';
+  return `${job.recipient_user_id}:${roomId}`;
+}
+
+function aggregatePushJobs(jobs: PushJob[]): DeliveryJob[] {
+  const orderedKeys: string[] = [];
+  const groups = new Map<string, PushJob[]>();
+  const passthrough: DeliveryJob[] = [];
+
+  for (const job of jobs) {
+    const key = chatAggregationKey(job);
+    if (!key) {
+      passthrough.push({ ...job, sourceJobIds: [job.id] });
+      continue;
+    }
+    if (!groups.has(key)) orderedKeys.push(key);
+    const group = groups.get(key) ?? [];
+    group.push(job);
+    groups.set(key, group);
+  }
+
+  const aggregated = orderedKeys.map((key) => {
+    const group = groups.get(key) ?? [];
+    const latest = group[group.length - 1];
+    if (group.length <= 1) return { ...latest, sourceJobIds: [latest.id] };
+    const data = latest.data ?? {};
+    const roomName = stringValue(data.roomName) || latest.title;
+    return {
+      ...latest,
+      title: roomName,
+      body: `+${group.length}개의 새로운 메시지가 있습니다.`,
+      data: {
+        ...data,
+        notificationId: latest.id,
+        notificationIds: group.map((job) => job.id),
+        aggregatedCount: group.length,
+        aggregationType: 'chat_message_batch',
+      },
+      sourceJobIds: group.map((job) => job.id),
+    };
+  });
+
+  return [...passthrough, ...aggregated];
+}
+
+function addJobIds(target: Set<number>, ids: number[]) {
+  ids.forEach((id) => target.add(id));
 }
 
 async function authenticate(request: Request) {
@@ -42,6 +105,7 @@ Deno.serve(async (request) => {
   if (claimError) return new Response(claimError.message, { status: 500 });
   const jobs = (claimed ?? []) as PushJob[];
   if (!jobs.length) return Response.json({ processed: 0 });
+  const deliveryJobs = aggregatePushJobs(jobs);
 
   const userIds = [...new Set(jobs.map((job) => job.recipient_user_id))];
   const { data: devices, error: devicesError } = await supabase
@@ -94,18 +158,19 @@ Deno.serve(async (request) => {
 
   const noDeviceIds: number[] = [];
   const envelopes: Array<{
-    jobId: number;
+    jobIds: number[];
     token: string;
     message: Record<string, unknown>;
   }> = [];
-  for (const job of jobs) {
+  for (const job of deliveryJobs) {
     const tokens = tokensByUser.get(job.recipient_user_id) ?? [];
     if (!tokens.length) {
-      noDeviceIds.push(job.id);
+      noDeviceIds.push(...job.sourceJobIds);
       continue;
     }
-    const avatarPath = job.data?.senderAvatarPath;
-    const coverPath = job.data?.roomCoverPath;
+    const data = job.data ?? {};
+    const avatarPath = data.senderAvatarPath;
+    const coverPath = data.roomCoverPath;
     const notificationImage =
       typeof avatarPath === 'string'
         ? signedByKey.get(`profile-avatars:${avatarPath}`)
@@ -114,7 +179,7 @@ Deno.serve(async (request) => {
           : undefined;
     tokens.forEach((to) =>
       envelopes.push({
-        jobId: job.id,
+        jobIds: job.sourceJobIds,
         token: to,
         message: {
           to,
@@ -124,7 +189,7 @@ Deno.serve(async (request) => {
           title: job.title,
           body: job.body,
           data: {
-            ...job.data,
+            ...data,
             notificationId: job.id,
             notificationImageUrl: notificationImage,
           },
@@ -147,7 +212,7 @@ Deno.serve(async (request) => {
         body: JSON.stringify(batch.map((item) => item.message)),
       });
       if (!response.ok) {
-        batch.forEach((item) => failedJobIds.add(item.jobId));
+        batch.forEach((item) => addJobIds(failedJobIds, item.jobIds));
         continue;
       }
       const payload = await response.json().catch(() => null) as {
@@ -158,21 +223,21 @@ Deno.serve(async (request) => {
       } | null;
       const tickets = Array.isArray(payload?.data) ? payload.data : [];
       if (tickets.length !== batch.length) {
-        batch.forEach((item) => failedJobIds.add(item.jobId));
+        batch.forEach((item) => addJobIds(failedJobIds, item.jobIds));
         continue;
       }
       tickets.forEach((ticket, index) => {
         const envelope = batch[index];
         if (ticket?.status === 'ok') {
-          successfulJobIds.add(envelope.jobId);
+          addJobIds(successfulJobIds, envelope.jobIds);
           return;
         }
         if (ticket?.details?.error === 'DeviceNotRegistered')
           invalidTokens.add(envelope.token);
-        failedJobIds.add(envelope.jobId);
+        addJobIds(failedJobIds, envelope.jobIds);
       });
     } catch {
-      batch.forEach((item) => failedJobIds.add(item.jobId));
+      batch.forEach((item) => addJobIds(failedJobIds, item.jobIds));
     }
   }
 
@@ -219,6 +284,7 @@ Deno.serve(async (request) => {
 
   return Response.json({
     processed: jobs.length,
+    deliveredNotifications: deliveryJobs.length,
     delivered: deliveredIds.length,
     retrying: retryIds.length,
     failed: noDeviceIds.length + terminalFailureIds.length,

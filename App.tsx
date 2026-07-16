@@ -1202,8 +1202,8 @@ function useAndroidHardwareBack(onBack: () => void, enabled = true) {
     const subscription = BackHandler.addEventListener(
       "hardwareBackPress",
       () => {
-        Keyboard.dismiss();
         onBackRef.current();
+        Keyboard.dismiss();
         return true;
       },
     );
@@ -7188,6 +7188,7 @@ function ChatRoom({
     productId: string;
   } | null>(null);
   const [message, setMessage] = useState("");
+  const suppressComposerSubmitRef = useRef(false);
   const [secretDraft, setSecretDraft] = useState("");
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
   const [pointTarget, setPointTarget] = useState<string | null>(null);
@@ -8115,6 +8116,12 @@ function ChatRoom({
   };
   useEffect(() => {
     initialScrollDone.current = false;
+    suppressComposerSubmitRef.current = true;
+    setMessage("");
+    setReplyTo(null);
+    requestAnimationFrame(() => {
+      suppressComposerSubmitRef.current = false;
+    });
     requestAnimationFrame(() => setTimeout(() => scrollToLatest(false), 80));
   }, [room.id]);
   const submitTextMessage = async (
@@ -8153,6 +8160,7 @@ function ChatRoom({
   const pendingTextSeq = useRef(0);
   const textSendQueueRef = useRef<Promise<void>>(Promise.resolve());
   const send = () => {
+    if (suppressComposerSubmitRef.current) return;
     const text = message.trim();
     if (!text) return;
     const createdAt = new Date().toISOString();
@@ -9080,7 +9088,13 @@ function ChatRoom({
     if (profileMember) return setProfileMember(null);
     if (selectedMember) return setSelectedMember(null);
     if (panel) return closePanel();
+    suppressComposerSubmitRef.current = true;
+    setMessage("");
+    setReplyTo(null);
     onBack();
+    setTimeout(() => {
+      suppressComposerSubmitRef.current = false;
+    }, 250);
   };
   useAndroidHardwareBack(handleChatBack);
   if (imageEditorAssets)
