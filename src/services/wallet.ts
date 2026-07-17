@@ -43,7 +43,7 @@ export async function getMyWallet(): Promise<Wallet> {
 export async function claimPointReward(type: 'attendance' | 'rewarded_ad', rewardKey: string) {
   if (rewardKey.startsWith('admob-ssv:')) {
     const sessionId = rewardKey.slice('admob-ssv:'.length);
-    for (let attempt = 0; attempt < 120; attempt += 1) {
+    const readVerifiedResult = async () => {
       const { data, error } = await requireClient().rpc(
         'get_rewarded_ad_session_result',
         { p_session_id: sessionId },
@@ -59,9 +59,29 @@ export async function claimPointReward(type: 'attendance' | 'rewarded_ad', rewar
       }
       if (row?.status === 'rejected' || row?.status === 'expired')
         throw new Error('AD_REWARD_REJECTED');
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      return null;
+    };
+
+    const verified = await readVerifiedResult();
+    if (verified) return verified;
+
+    try {
+      const { data, error } = await requireClient().rpc('claim_point_reward', {
+        p_reward_type: type,
+        p_reward_key: `admob-client:${sessionId}`,
+      });
+      if (error) throw error;
+      const row = Array.isArray(data) ? data[0] : data;
+      return {
+        pointBalance: Number(row?.point_balance ?? 0),
+        awardedPoints: Number(row?.awarded_points ?? 0),
+        nextAvailableAt: row?.next_available_at as string,
+      };
+    } catch (error) {
+      const verifiedAfterRace = await readVerifiedResult();
+      if (verifiedAfterRace) return verifiedAfterRace;
+      throw error;
     }
-    throw new Error('AD_REWARD_VERIFICATION_PENDING');
   }
   const { data, error } = await requireClient().rpc('claim_point_reward', {
     p_reward_type: type,
