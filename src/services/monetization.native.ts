@@ -122,10 +122,22 @@ export async function showRewardedAd(
   return new Promise((resolve, reject) => {
     let earned = false;
     let settled = false;
+    let loadTimeout: ReturnType<typeof setTimeout> | null = null;
+    let showTimeout: ReturnType<typeof setTimeout> | null = null;
+    const clearTimers = () => {
+      if (loadTimeout) {
+        clearTimeout(loadTimeout);
+        loadTimeout = null;
+      }
+      if (showTimeout) {
+        clearTimeout(showTimeout);
+        showTimeout = null;
+      }
+    };
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      clearTimers();
       unsubscribeLoaded();
       unsubscribeEarned();
       unsubscribeClosed();
@@ -135,7 +147,18 @@ export async function showRewardedAd(
     const unsubscribeLoaded = rewarded.addAdEventListener(
       RewardedAdEventType.LOADED,
       () => {
+        if (loadTimeout) {
+          clearTimeout(loadTimeout);
+          loadTimeout = null;
+        }
         setRewardedAdChrome(true);
+        showTimeout = setTimeout(
+          () => finish(() => {
+            setRewardedAdChrome(false);
+            reject(new Error('REWARDED_AD_SHOW_TIMEOUT'));
+          }),
+          5 * 60 * 1000,
+        );
         rewarded.show().catch((error) => finish(() => {
           setRewardedAdChrome(false);
           reject(error);
@@ -155,9 +178,9 @@ export async function showRewardedAd(
         reject(error);
       });
     });
-    const timeout = setTimeout(
+    loadTimeout = setTimeout(
       () => finish(() => reject(new Error('REWARDED_AD_LOAD_TIMEOUT'))),
-      15000,
+      30000,
     );
     rewarded.load();
   });
