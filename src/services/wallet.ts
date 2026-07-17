@@ -43,7 +43,7 @@ export async function getMyWallet(): Promise<Wallet> {
 export async function claimPointReward(type: 'attendance' | 'rewarded_ad', rewardKey: string) {
   if (rewardKey.startsWith('admob-ssv:')) {
     const sessionId = rewardKey.slice('admob-ssv:'.length);
-    for (let attempt = 0; attempt < 40; attempt += 1) {
+    for (let attempt = 0; attempt < 120; attempt += 1) {
       const { data, error } = await requireClient().rpc(
         'get_rewarded_ad_session_result',
         { p_session_id: sessionId },
@@ -59,7 +59,7 @@ export async function claimPointReward(type: 'attendance' | 'rewarded_ad', rewar
       }
       if (row?.status === 'rejected' || row?.status === 'expired')
         throw new Error('AD_REWARD_REJECTED');
-      await new Promise((resolve) => setTimeout(resolve, 750));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
     throw new Error('AD_REWARD_VERIFICATION_PENDING');
   }

@@ -3586,18 +3586,25 @@ function AuthenticatedApp({
       }
     } catch (error) {
       const message = serverErrorMessage(error);
-      Alert.alert(
-        "보상 지급 실패",
-        message.includes("REWARD_COOLDOWN")
-          ? "아직 출석 체크 시간이 아닙니다."
-          : message.includes("REWARDED_AD_ATTENDANCE_REQUIRED")
-            ? "출석 체크 후에 광고 보상을 받을 수 있습니다."
-            : message.includes("REWARDED_AD_ALREADY_CLAIMED")
-              ? "이번 출석 주기에서 광고 보상은 이미 받았습니다."
-          : message.includes("DAILY_REWARD_LIMIT")
-            ? "오늘 받을 수 있는 광고 보상을 모두 받았습니다."
-            : message,
-      );
+      if (message.includes("AD_REWARD_VERIFICATION_PENDING")) {
+        Alert.alert(
+          "보상 확인 중",
+          "광고 시청은 완료됐지만 Google 보상 확인이 아직 도착하지 않았습니다. 잠시 후 포인트 내역을 다시 확인해주세요.",
+        );
+      } else {
+        Alert.alert(
+          "보상 지급 실패",
+          message.includes("REWARD_COOLDOWN")
+            ? "아직 출석 체크 시간이 아닙니다."
+            : message.includes("REWARDED_AD_ATTENDANCE_REQUIRED")
+              ? "출석 체크 후에 광고 보상을 받을 수 있습니다."
+              : message.includes("REWARDED_AD_ALREADY_CLAIMED")
+                ? "이번 출석 주기에서 광고 보상은 이미 받았습니다."
+            : message.includes("DAILY_REWARD_LIMIT")
+              ? "오늘 받을 수 있는 광고 보상을 모두 받았습니다."
+              : message,
+        );
+      }
     } finally {
       setRewardLoading(null);
     }
