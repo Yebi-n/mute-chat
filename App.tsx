@@ -1739,6 +1739,20 @@ function formatStoryTime(value: string) {
     : new Date(timestamp).toLocaleDateString("ko-KR");
 }
 
+function formatProfileLastChatTime(value?: string) {
+  if (!value) return "";
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "";
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+  if (minutes < 1) return "방금 전";
+  if (minutes < 60) return `${minutes}분 전`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}일 전`;
+  return `${Math.floor(days / 30)}달 전`;
+}
+
 function formatDateLine(value?: number | string) {
   const timestamp = typeof value === "number" ? value : Date.parse(value ?? "");
   const date = Number.isFinite(timestamp) ? new Date(timestamp) : new Date();
@@ -3835,7 +3849,7 @@ function AuthenticatedApp({
           />
         )}
       </AppStack.Screen>
-      <AppStack.Screen name="Chat" options={{ gestureEnabled: false }}>
+      <AppStack.Screen name="Chat" options={{ gestureEnabled: true }}>
         {({ navigation }) => (
           <ChatRoom
             room={selectedRoom}
@@ -5002,7 +5016,7 @@ function PhoneAuthScreenV2({
               <Animated.View
                 style={[
                   s.authSignupReveal,
-                  Platform.OS === "android"
+                  Platform.OS === "android" || signupPhoneVerified
                     ? { opacity: 1 }
                     : {
                         opacity: signupReveal,
@@ -5813,7 +5827,7 @@ function MainScreen({
   const topRoom =
     bottomTab === "discover"
       ? activeTopSpaces.find((room) =>
-          filtered.some((item) => item.id === room.id),
+          category === "adult" ? !!room.isAdult : !room.isAdult,
         )
       : undefined;
   return (
@@ -9083,6 +9097,20 @@ function ChatRoom({
     onBack();
   };
   useAndroidHardwareBack(handleChatBack);
+  const profileMemberLastChatAt = useMemo(() => {
+    if (!profileMember) return undefined;
+    let latest = 0;
+    for (const item of messages) {
+      if (item.kind === "system" || !item.createdAt) continue;
+      const sameMember = profileMember.userId
+        ? item.userId === profileMember.userId
+        : item.name === profileMember.name;
+      if (!sameMember) continue;
+      const timestamp = Date.parse(item.createdAt);
+      if (Number.isFinite(timestamp) && timestamp > latest) latest = timestamp;
+    }
+    return latest ? new Date(latest).toISOString() : undefined;
+  }, [messages, profileMember]);
   if (imageEditorAssets)
     return (
       <ChatImageEditor
@@ -9106,6 +9134,7 @@ function ChatRoom({
       <MemberProfile
         member={profileMember}
         room={room}
+        lastChatAt={profileMemberLastChatAt}
         viewerRole={myRole}
         editable={Boolean(profileMember.mine)}
         startEditMode={profileEditOnOpen}
@@ -12817,6 +12846,7 @@ function MemberCard({
 function MemberProfile({
   member,
   room,
+  lastChatAt,
   viewerRole = null,
   editable = false,
   startEditMode = false,
@@ -12830,6 +12860,7 @@ function MemberProfile({
 }: {
   member: RoomMember;
   room: Room;
+  lastChatAt?: string;
   viewerRole?: "owner" | "cohost" | "member" | null;
   editable?: boolean;
   startEditMode?: boolean;
@@ -13198,6 +13229,11 @@ function MemberProfile({
               <Text style={s.memberProfileRoom}>
                 {room.name}에서 사용하는 프로필
               </Text>
+              {lastChatAt ? (
+                <Text style={s.memberProfileLastChat}>
+                  {formatProfileLastChatTime(lastChatAt)}
+                </Text>
+              ) : null}
               <View style={s.memberProfileCard}>
                 <Text style={s.memberProfileLabel}>자기 소개</Text>
                 <Text style={s.memberProfileIntro}>{member.intro}</Text>
@@ -13268,6 +13304,11 @@ function MemberProfile({
               <Text style={s.memberProfileRoom}>
                 {room.name}에서 사용하는 프로필
               </Text>
+              {lastChatAt ? (
+                <Text style={s.memberProfileLastChat}>
+                  {formatProfileLastChatTime(lastChatAt)}
+                </Text>
+              ) : null}
               <View style={s.memberProfileCard}>
                 <Text style={s.memberProfileLabel}>자기 소개</Text>
                 <Text style={s.memberProfileIntro}>{member.intro}</Text>
@@ -21648,6 +21689,11 @@ const s = StyleSheet.create({
   },
   memberProfileName: { color: colors.text, fontSize: 20, fontWeight: "800" },
   memberProfileRoom: { color: colors.textMuted, fontSize: 10, marginTop: 7 },
+  memberProfileLastChat: {
+    color: colors.textMuted,
+    fontSize: 10,
+    marginTop: 4,
+  },
   memberProfileCard: {
     alignSelf: "stretch",
     backgroundColor: "#FFF",
