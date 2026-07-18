@@ -125,6 +125,23 @@ export async function listMutedRoomNotificationIds() {
   return (data ?? []).map((row) => row.room_id as string);
 }
 
+export async function listRoomNotificationPreferences(roomIds: string[]) {
+  const uniqueRoomIds = [...new Set(roomIds)].filter(Boolean);
+  if (!uniqueRoomIds.length) return {} as Record<string, boolean>;
+  const { data, error } = await requireClient()
+    .from('room_user_preferences')
+    .select('room_id,notifications_enabled')
+    .in('room_id', uniqueRoomIds);
+  if (error) throw error;
+  return Object.fromEntries(
+    (data ?? []).map((row) => [
+      row.room_id as string,
+      row.notifications_enabled !== false,
+    ]),
+  ) as Record<string, boolean>;
+}
+
+
 export async function leaveRoom(roomId:string) {
   const { error } = await requireClient().rpc('leave_room', { p_room_id: roomId });
   if (error) throw error;

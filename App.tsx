@@ -132,6 +132,7 @@ import {
   listDepartedRoomMembers,
   listMutedRoomNotificationIds,
   listPinnedRoomIds,
+  listRoomNotificationPreferences,
   setRoomMemberMute,
   setRoomMemberRole,
   setRoomNotificationsEnabled,
@@ -221,6 +222,7 @@ import {
 const ANDROID_STATUS_BAR_HEIGHT =
   Platform.OS === "android" ? RNStatusBar.currentHeight ?? 0 : 0;
 const ANDROID_NAV_BAR_FALLBACK_HEIGHT = 34;
+const ANDROID_BOTTOM_DOCK_MAX_EXTRA_INSET = 18;
 
 function androidSystemBottomInset(insetBottom = 0) {
   if (Platform.OS !== "android") return 0;
@@ -234,6 +236,14 @@ function androidSystemBottomInset(insetBottom = 0) {
     insetBottom,
     estimatedNavBar,
     ANDROID_NAV_BAR_FALLBACK_HEIGHT,
+  );
+}
+
+function androidBottomDockInset(insetBottom = 0) {
+  if (Platform.OS !== "android") return 0;
+  return Math.min(
+    androidSystemBottomInset(insetBottom),
+    ANDROID_BOTTOM_DOCK_MAX_EXTRA_INSET,
   );
 }
 
@@ -467,6 +477,8 @@ type StoryBlock =
       uploadId?: string;
       storagePath?: string;
       mimeType?: string;
+      width?: number;
+      height?: number;
     };
 type StoryComment = {
   id: string;
@@ -1172,7 +1184,7 @@ function KeyboardSafeBottomSheet({ children }: { children: React.ReactNode }) {
           ? { paddingBottom: androidKeyboardInset }
           : Platform.OS === "android" && !keyboardVisible
             ? { paddingBottom: androidSystemBottomInset(insets.bottom) }
-          : undefined
+            : undefined
       }
     >
       {children}
@@ -2739,6 +2751,10 @@ function AuthenticatedApp({
     Record<string, number>
   >({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const [roomNotificationPrefs, setRoomNotificationPrefs] = useState<Record<string, boolean>>({});
+  const updateRoomNotificationPreference = useCallback((roomId: string, enabled: boolean) => {
+    setRoomNotificationPrefs((prefs) => ({ ...prefs, [roomId]: enabled }));
+  }, []);
   const [roomSummaries, setRoomSummaries] = useState<
     Record<string, { lastMessage?: string; updatedAt?: number }>
   >({});
@@ -2984,6 +3000,7 @@ function AuthenticatedApp({
       const joined = screenshotDemoRooms.map((room) => room.id);
       setRoomData(screenshotDemoRooms);
       setJoinedIds(joined);
+      setRoomNotificationPrefs(Object.fromEntries(joined.map((id) => [id, true])));
       setOwnedRoomIds([DEMO_ROOM_ID]);
       setUnreadCounts(screenshotDemoUnreadCounts);
       setRoomSummaries(
@@ -3001,6 +3018,7 @@ function AuthenticatedApp({
     if (!isSupabaseConfigured) {
       setRoomData([]);
       setJoinedIds([]);
+      setRoomNotificationPrefs({});
       setReportedRoomIds([]);
       setRoomDataLoaded(true);
       return;
@@ -3051,8 +3069,17 @@ function AuthenticatedApp({
         );
         setRoomDataLoaded(true);
       }
-      if (activeIdsResult.status === "fulfilled")
-        setJoinedIds([...new Set(activeIdsResult.value)]);
+      if (activeIdsResult.status === "fulfilled") {
+        const activeIds = [...new Set(activeIdsResult.value)];
+        setJoinedIds(activeIds);
+        void listRoomNotificationPreferences(activeIds)
+          .then((prefs) => {
+            setRoomNotificationPrefs(
+              Object.fromEntries(activeIds.map((id) => [id, prefs[id] ?? true])),
+            );
+          })
+          .catch(() => undefined);
+      }
       if (ownedIdsResult.status === "fulfilled")
         setOwnedRoomIds([...new Set(ownedIdsResult.value)]);
       if (pendingIdsResult.status === "fulfilled")
@@ -3113,8 +3140,17 @@ function AuthenticatedApp({
       Promise.all([listMyActiveRoomIds(), listMyOwnedRoomIds()])
         .then(([ids, ownerIds]) => {
           if (!active) return;
-          setJoinedIds([...new Set(ids)]);
+          const activeIds = [...new Set(ids)];
+          setJoinedIds(activeIds);
           setOwnedRoomIds([...new Set(ownerIds)]);
+          void listRoomNotificationPreferences(activeIds)
+            .then((prefs) => {
+              if (!active) return;
+              setRoomNotificationPrefs(
+                Object.fromEntries(activeIds.map((id) => [id, prefs[id] ?? true])),
+              );
+            })
+            .catch(() => undefined);
         })
         .catch(() => undefined);
     const scheduleReload = () => {
@@ -3818,6 +3854,7 @@ function AuthenticatedApp({
                 rewardLoading,
                 promotionTimestamps,
                 unreadCounts,
+                roomNotificationPrefs,
                 dataRefreshing,
                 dataLoaded: roomDataLoaded,
                 currentUserId: session?.user.id,
@@ -3835,6 +3872,7 @@ function AuthenticatedApp({
               notificationDrawerSignal={notificationDrawerSignal}
               onRanking={() => navigation.navigate("Ranking")}
               onPointBalanceChange={setPoints}
+              onRoomNotificationPreferenceChange={updateRoomNotificationPreference}
               onSearch={() => navigation.navigate("Search")}
               onSettings={() => navigation.navigate("Settings")}
               onCreate={() => navigation.navigate("Create")}
@@ -3975,6 +4013,8 @@ function AuthenticatedApp({
             onRead={(roomId) => {
               setUnreadCounts((counts) => ({ ...counts, [roomId]: 0 }));
             }}
+            roomNotificationsEnabled={roomNotificationPrefs[selectedRoom.id] ?? true}
+            onRoomNotificationPreferenceChange={updateRoomNotificationPreference}
             onBack={() => {
               setReturnToNotifications(false);
               setChatInitialPanel(null);
@@ -5606,6 +5646,7 @@ function MainScreen({
   rewardLoading,
   promotionTimestamps,
   unreadCounts,
+  roomNotificationPrefs,
   dataRefreshing = false,
   dataLoaded = true,
   currentUserId,
@@ -5623,6 +5664,7 @@ function MainScreen({
   onSettings,
   onCreate,
   onPointBalanceChange,
+  onRoomNotificationPreferenceChange,
 }: {
   bottomTab: BottomTab;
   setBottomTab: (v: BottomTab) => void;
@@ -5638,6 +5680,7 @@ function MainScreen({
   canSeeAdultRooms: boolean;
   promotionTimestamps: Record<string, number>;
   unreadCounts: Record<string, number>;
+  roomNotificationPrefs: Record<string, boolean>;
   dataRefreshing?: boolean;
   dataLoaded?: boolean;
   currentUserId?: string;
@@ -5654,6 +5697,7 @@ function MainScreen({
   onSettings: () => void;
   onCreate: () => void;
   onPointBalanceChange: (value: number) => void;
+  onRoomNotificationPreferenceChange: (roomId: string, enabled: boolean) => void;
   points: number;
   attendanceAvailableAt: number;
   rewardedAdAvailable: boolean;
@@ -5740,7 +5784,8 @@ function MainScreen({
         active = false;
       };
     }
-    const channel = supabase
+    const client = supabase;
+    const channel = client
       .channel(`main-room-notification-preferences-${currentUserId}`)
       .on(
         "postgres_changes",
@@ -5755,7 +5800,7 @@ function MainScreen({
       .subscribe();
     return () => {
       active = false;
-      supabase.removeChannel(channel);
+      client.removeChannel(channel);
     };
   }, [currentUserId]);
   const toggleRoomPin = async (room: Room) => {
@@ -5768,6 +5813,18 @@ function MainScreen({
       );
     } catch (error) {
       Alert.alert("고정 설정 실패", serverErrorMessage(error));
+    }
+  };
+  const toggleRoomNotificationsFromList = async (room: Room) => {
+    if (!isUuid(room.id)) return;
+    const previous = roomNotificationPrefs[room.id] ?? true;
+    const next = !previous;
+    onRoomNotificationPreferenceChange(room.id, next);
+    try {
+      await setRoomNotificationsEnabled(room.id, next);
+    } catch (error) {
+      onRoomNotificationPreferenceChange(room.id, previous);
+      Alert.alert("알림 설정 실패", serverErrorMessage(error));
     }
   };
   const leaveJoinedRoom = (room: Room, report = false) =>
@@ -5826,11 +5883,14 @@ function MainScreen({
     const pinLabel = pinnedRoomIds.includes(room.id)
       ? "상단 고정 해제"
       : "상단에 고정";
+    const notificationsEnabled = roomNotificationPrefs[room.id] ?? true;
+    const notificationLabel = notificationsEnabled ? "알림 끄기" : "알림 켜기";
     if (Platform.OS === "android") {
       const selected = await showAndroidActionList(room.name, [
         ...(bottomTab === "myRooms"
           ? [
               { label: pinLabel, value: "pin" },
+              { label: notificationLabel, value: "notifications" },
               { label: "나가기", value: "leave", destructive: true },
             ]
           : []),
@@ -5843,6 +5903,7 @@ function MainScreen({
         { label: "취소", value: null },
       ]);
       if (selected === "pin") void toggleRoomPin(room);
+      else if (selected === "notifications") void toggleRoomNotificationsFromList(room);
       else if (selected === "leave") leaveJoinedRoom(room);
       else if (selected === "admin-report") onAdminReportRoom(room);
       else if (selected === "report") void reportVisibleRoom(room);
@@ -5854,6 +5915,10 @@ function MainScreen({
             {
               text: pinLabel,
               onPress: () => toggleRoomPin(room),
+            },
+            {
+              text: notificationLabel,
+              onPress: () => toggleRoomNotificationsFromList(room),
             },
             {
               text: "나가기",
@@ -6116,7 +6181,8 @@ function MainScreen({
                 pinned={bottomTab === "myRooms" && pinnedRoomIds.includes(item.id)}
                 mutedNotifications={
                   bottomTab === "myRooms" &&
-                  mutedRoomNotificationIds.includes(item.id)
+                  (mutedRoomNotificationIds.includes(item.id) ||
+                    roomNotificationPrefs[item.id] === false)
                 }
                 onLongPress={() => void openRoomActionMenu(item)}
                 onPress={() => openRoom(item)}
@@ -7232,6 +7298,8 @@ function ChatRoom({
   onDeleted,
   onRead,
   onApplicationsBack,
+  roomNotificationsEnabled = true,
+  onRoomNotificationPreferenceChange,
   onBack,
 }: {
   room: Room;
@@ -7257,6 +7325,8 @@ function ChatRoom({
   onDeleted?: (roomId: string) => void;
   onRead?: (roomId: string) => void;
   onApplicationsBack?: () => void;
+  roomNotificationsEnabled?: boolean;
+  onRoomNotificationPreferenceChange?: (roomId: string, enabled: boolean) => void;
   onBack: () => void;
 }) {
   const initialMessageLimit = 24;
@@ -7264,7 +7334,6 @@ function ChatRoom({
   const appTheme = useAppTheme();
   const adsDisabled = useAdFree();
   const safeAreaInsets = useSafeAreaInsets();
-  const androidKeyboardInset = useAndroidKeyboardCompensation();
   const [chatKeyboardVisible, setChatKeyboardVisible] = useState(false);
   const [chatBannerHeight, setChatBannerHeight] = useState(0);
   useEffect(() => {
@@ -7274,7 +7343,7 @@ function ChatRoom({
     Platform.OS !== "android"
       ? 0
       : chatKeyboardVisible
-        ? androidKeyboardInset
+        ? 0
         : androidSystemBottomInset(safeAreaInsets.bottom);
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
     isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
@@ -8243,7 +8312,9 @@ function ChatRoom({
       nearBottomRef.current || distanceFromBottom <= 180;
     composerFocusPreparedRef.current = true;
     // Reserve the banner slot before iOS starts its keyboard transition.
-    setChatKeyboardVisible(true);
+    // On Android, moving the bottom dock during onPressIn can cancel the
+    // TextInput focus. Wait for the real keyboard event instead.
+    if (Platform.OS === "ios") setChatKeyboardVisible(true);
     if (keyboardOpenedAtBottomRef.current) {
       requestAnimationFrame(() => scrollToLatestRef.current(false));
       setTimeout(() => scrollToLatestRef.current(false), 20);
@@ -10734,6 +10805,8 @@ function ChatRoom({
       <ChatDrawer
         open={drawerOpen}
         roomId={room.id}
+        notificationsEnabled={roomNotificationsEnabled}
+        onNotificationPreferenceChange={onRoomNotificationPreferenceChange}
         profile={myProfile}
         isOwner={isOwner}
         isStaff={isStaff}
@@ -11019,6 +11092,8 @@ function mapServerStory(story: ServerStory, currentUserId?: string): StoryItem {
             uri: block.uri,
             storagePath: block.storagePath,
             mimeType: block.mimeType,
+            width: block.width,
+            height: block.height,
           },
     ),
     comments: story.comments.map((comment) => ({
@@ -11892,7 +11967,13 @@ function StoryDetail({
               key={block.id}
               source={{ uri: block.uri }}
               contentFit="cover"
-              style={[s.storyDetailImage, index === 0 && s.storyFirstImage]}
+              style={[
+                s.storyDetailImage,
+                block.width && block.height
+                  ? { aspectRatio: block.width / block.height }
+                  : null,
+                index === 0 && s.storyFirstImage,
+              ]}
             />
           ),
         )}
@@ -12077,6 +12158,8 @@ function StoryEditor({
           uri: optimized.uri,
           uploadId,
           mimeType: "image/jpeg",
+          width: optimized.width ?? 1200,
+          height: optimized.height ?? 900,
         });
       }
       setBlocks((items) => [
@@ -12116,6 +12199,8 @@ function StoryEditor({
               storagePath: block.storagePath,
               mimeType: block.mimeType,
               uri: block.uri,
+              width: block.width,
+              height: block.height,
             },
       );
       let id = initial?.id ?? `story-${Date.now()}`;
@@ -12264,7 +12349,12 @@ function StoryEditor({
               <ExpoImage
                 source={{ uri: block.uri }}
                 contentFit="cover"
-                style={s.storyEditorImage}
+                style={[
+                  s.storyEditorImage,
+                  block.width && block.height
+                    ? { aspectRatio: block.width / block.height }
+                    : null,
+                ]}
               />
               <Pressable
                 onPress={() =>
@@ -16564,7 +16654,7 @@ function BottomNav({
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const androidBottomInset =
-    Platform.OS === "android" ? androidSystemBottomInset(insets.bottom) : 0;
+    Platform.OS === "android" ? androidBottomDockInset(insets.bottom) : 0;
   const items: [BottomTab, IconName, IconName, string][] = [
     ["myRooms", "chatbubbles-outline", "chatbubbles", "내 채팅"],
     ["discover", "home-outline", "home", "홈"],
@@ -16577,8 +16667,8 @@ function BottomNav({
         s.bottomNav,
         androidBottomInset
           ? {
-              height: 112 + androidBottomInset,
-              paddingBottom: 28 + androidBottomInset,
+              height: 104 + androidBottomInset,
+              paddingBottom: 20 + androidBottomInset,
             }
           : null,
         docked && s.bottomNavDocked,
@@ -18258,6 +18348,8 @@ function TopSpaceSheet({
 function ChatDrawer({
   open,
   roomId,
+  notificationsEnabled = true,
+  onNotificationPreferenceChange,
   profile,
   isOwner,
   isStaff,
@@ -18276,6 +18368,8 @@ function ChatDrawer({
 }: {
   open: boolean;
   roomId: string;
+  notificationsEnabled?: boolean;
+  onNotificationPreferenceChange?: (roomId: string, enabled: boolean) => void;
   profile?: RoomMember;
   isOwner: boolean;
   isStaff: boolean;
@@ -18304,20 +18398,28 @@ function ChatDrawer({
     onClose();
   };
   useEffect(() => {
+    if (open) setNotifications(notificationsEnabled);
+  }, [open, notificationsEnabled]);
+  useEffect(() => {
     if (open && isUuid(roomId))
       getRoomNotificationsEnabled(roomId)
-        .then(setNotifications)
+        .then((enabled) => {
+          setNotifications(enabled);
+          onNotificationPreferenceChange?.(roomId, enabled);
+        })
         .catch(() => undefined);
-  }, [open, roomId]);
+  }, [open, roomId, onNotificationPreferenceChange]);
   const toggleNotifications = async (value: boolean) => {
     if (notificationSaving) return;
     const previous = notifications;
     setNotifications(value);
+    onNotificationPreferenceChange?.(roomId, value);
     setNotificationSaving(true);
     try {
       if (isUuid(roomId)) await setRoomNotificationsEnabled(roomId, value);
     } catch (error) {
       setNotifications(previous);
+      onNotificationPreferenceChange?.(roomId, previous);
       Alert.alert("알림 설정 실패", serverErrorMessage(error));
     } finally {
       setNotificationSaving(false);

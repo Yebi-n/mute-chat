@@ -4,7 +4,7 @@ import { getCachedSignedUrls } from './signedUrls';
 
 export type StoryBlockInput =
   | { type: 'text'; text: string }
-  | { type: 'image'; uploadId?: string; storagePath?: string; mimeType?: string; uri?: string };
+  | { type: 'image'; uploadId?: string; storagePath?: string; mimeType?: string; uri?: string; width?: number; height?: number };
 
 export type ServerStory = {
   id: string;
@@ -20,7 +20,7 @@ export type ServerStory = {
   viewCount: number;
   heartCount: number;
   liked: boolean;
-  blocks: ({ type: 'text'; text: string } | { type: 'image'; uri: string; storagePath: string; mimeType: string })[];
+  blocks: ({ type: 'text'; text: string } | { type: 'image'; uri: string; storagePath: string; mimeType: string; width?: number; height?: number })[];
   comments: { id: string; author: string; authorAvatarUrl?: string; authorUserId: string | null; body: string; createdAt: string }[];
 };
 
@@ -136,7 +136,7 @@ export async function listStories(input: { roomId?: string; storyId?: string; pu
     { data: profileRows, error: profileError },
     { data: likeRows },
   ] = await Promise.all([
-    client.from('story_blocks').select('story_id,block_type,text_content,storage_path,mime_type,position').in('story_id', storyIds).order('position').limit(1000),
+    client.from('story_blocks').select('story_id,block_type,text_content,storage_path,mime_type,image_width,image_height,position').in('story_id', storyIds).order('position').limit(1000),
     client.from('story_comments').select('id,story_id,author_user_id,body,created_at,author_name,author_avatar_asset_path').in('story_id', storyIds).is('deleted_at', null).order('created_at').limit(500),
     client.from('rooms').select('id,name,description,category,region,max_members,visibility,cover_asset_path,created_at,updated_at').in('id', roomIds),
     client.from('room_profiles').select('room_id,user_id,display_name,avatar_asset_path').in('room_id', roomIds),
@@ -207,6 +207,8 @@ export async function listStories(input: { roomId?: string; storyId?: string; pu
               uri: signedByPath.get(block.storage_path ?? '') ?? '',
               storagePath: block.storage_path ?? '',
               mimeType: block.mime_type ?? 'image/jpeg',
+              width: typeof block.image_width === 'number' ? block.image_width : undefined,
+              height: typeof block.image_height === 'number' ? block.image_height : undefined,
             }),
       comments: (commentRows ?? []).filter((comment) => comment.story_id === story.id).map((comment) => ({
         id: comment.id,
