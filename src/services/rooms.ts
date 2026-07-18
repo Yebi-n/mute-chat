@@ -279,6 +279,28 @@ export async function requestRoomJoinWithAvatar(roomId: string, name: string, in
   schedulePendingPushDispatch();
 }
 
+export async function cancelRoomJoinRequest(roomId: string) {
+  const { error } = await requireClient().rpc('cancel_room_join_request', {
+    p_room_id: roomId,
+  });
+  if (error) throw error;
+  schedulePendingPushDispatch();
+}
+
+export async function listMyPendingRoomJoinIds() {
+  const client = requireClient();
+  const { data: authData, error: authError } = await client.auth.getUser();
+  if (authError) throw authError;
+  if (!authData.user) throw new Error('AUTH_REQUIRED');
+  const { data, error } = await client
+    .from('room_join_requests')
+    .select('room_id')
+    .eq('user_id', authData.user.id)
+    .eq('status', 'pending');
+  if (error) throw error;
+  return (data ?? []).map((item) => item.room_id as string);
+}
+
 export async function joinRoomAsSystemAdmin(roomId: string) {
   const { error } = await requireClient().rpc('admin_join_room', {
     p_room_id: roomId,

@@ -116,6 +116,15 @@ export async function listPinnedRoomIds() {
   return (data ?? []).map((row) => row.room_id as string);
 }
 
+export async function listMutedRoomNotificationIds() {
+  const { data, error } = await requireClient()
+    .from('room_user_preferences')
+    .select('room_id')
+    .eq('notifications_enabled', false);
+  if (error) throw error;
+  return (data ?? []).map((row) => row.room_id as string);
+}
+
 export async function leaveRoom(roomId:string) {
   const { error } = await requireClient().rpc('leave_room', { p_room_id: roomId });
   if (error) throw error;

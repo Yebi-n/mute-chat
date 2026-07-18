@@ -15,6 +15,7 @@ export type ServerNotice = {
 
 const ROOM_SCOPED_INBOX_EVENT_TYPES = new Set([
   'join_request',
+  'join_request_cancelled',
   'join_approved',
   'join_rejected',
   'story',

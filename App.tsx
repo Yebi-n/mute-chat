@@ -85,11 +85,13 @@ import {
 import {
   clearRoomCover,
   clearRoomProfileAvatar,
+  cancelRoomJoinRequest,
   createRoom,
   decideRoomJoin,
   getRoomById,
   listMyActiveRoomIds,
   listMyOwnedRoomIds,
+  listMyPendingRoomJoinIds,
   listPendingRoomJoinRequests,
   listPendingRoomJoinRequestsWithAvatars,
   listRoomMembersVisible,
@@ -128,6 +130,7 @@ import {
   leaveRoom,
   listBlockedRoomMembers,
   listDepartedRoomMembers,
+  listMutedRoomNotificationIds,
   listPinnedRoomIds,
   setRoomMemberMute,
   setRoomMemberRole,
@@ -3009,11 +3012,20 @@ function AuthenticatedApp({
     lastAppDataReloadAtRef.current = reloadStartedAt;
     if (showSpinner) setDataRefreshing(true);
     try {
-      const [roomsResult, activeIdsResult, ownedIdsResult, verificationResult, promotionsResult, reportedRoomsResult] =
+      const [
+        roomsResult,
+        activeIdsResult,
+        ownedIdsResult,
+        pendingIdsResult,
+        verificationResult,
+        promotionsResult,
+        reportedRoomsResult,
+      ] =
         await Promise.allSettled([
           listRooms(),
           listMyActiveRoomIds(),
           listMyOwnedRoomIds(),
+          listMyPendingRoomJoinIds(),
           getVerificationStatus(),
           listRoomPromotions(),
           listReportedRoomIds(),
@@ -3043,6 +3055,8 @@ function AuthenticatedApp({
         setJoinedIds([...new Set(activeIdsResult.value)]);
       if (ownedIdsResult.status === "fulfilled")
         setOwnedRoomIds([...new Set(ownedIdsResult.value)]);
+      if (pendingIdsResult.status === "fulfilled")
+        setPendingIds([...new Set(pendingIdsResult.value)]);
       if (reportedRoomsResult.status === "fulfilled")
         setReportedRoomIds(reportedRoomsResult.value);
       if (verificationResult.status === "fulfilled") {
@@ -3115,6 +3129,42 @@ function AuthenticatedApp({
           event: "*",
           schema: "public",
           table: "room_memberships",
+          filter: `user_id=eq.${session.user.id}`,
+        },
+        scheduleReload,
+      )
+      .subscribe();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+      client.removeChannel(channel);
+    };
+  }, [session?.user.id]);
+  useEffect(() => {
+    if (SCREENSHOT_DEMO_ENABLED) return;
+    if (!supabase || !isSupabaseConfigured || !session?.user.id) return;
+    const client = supabase;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const reloadPending = () =>
+      listMyPendingRoomJoinIds()
+        .then((ids) => {
+          if (active) setPendingIds([...new Set(ids)]);
+        })
+        .catch(() => undefined);
+    const scheduleReload = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void reloadPending(), 120);
+    };
+    void reloadPending();
+    const channel = client
+      .channel(`my-room-join-requests-${session.user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "room_join_requests",
           filter: `user_id=eq.${session.user.id}`,
         },
         scheduleReload,
@@ -3408,7 +3458,12 @@ function AuthenticatedApp({
         typeof data?.storyId === "string" ? data.storyId : undefined;
       return {
         id: `push-${Date.now()}`,
-        icon: type === "join_request" ? "person-add-outline" : "chatbubble-outline",
+        icon:
+          type === "join_request"
+            ? "person-add-outline"
+            : type === "join_request_cancelled"
+              ? "close-circle-outline"
+              : "chatbubble-outline",
         title: String(data?.roomName ?? ""),
         body: "",
         time: "지금",
@@ -3830,6 +3885,18 @@ function AuthenticatedApp({
             pending={pendingIds.includes(selectedRoom.id)}
             onBack={() => navigation.goBack()}
             onApply={() => navigation.navigate("Apply")}
+            onCancelApply={async () => {
+              try {
+                if (isSupabaseConfigured && isUuid(selectedRoom.id))
+                  await cancelRoomJoinRequest(selectedRoom.id);
+                setPendingIds((ids) =>
+                  ids.filter((id) => id !== selectedRoom.id),
+                );
+                void reloadAppData(false, true);
+              } catch (error) {
+                Alert.alert("가입신청 취소 실패", serverErrorMessage(error));
+              }
+            }}
             onEnterChat={() => navigation.navigate("Chat")}
             onEdit={() => navigation.navigate("EditRoom")}
           />
@@ -5600,6 +5667,7 @@ function MainScreen({
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
   const [toast, setToast] = useState("");
   const [pinnedRoomIds, setPinnedRoomIds] = useState<string[]>([]);
+  const [mutedRoomNotificationIds, setMutedRoomNotificationIds] = useState<string[]>([]);
   const [storyDetailOpen, setStoryDetailOpen] = useState(false);
   const [profileSubpageOpen, setProfileSubpageOpen] = useState(false);
   const [storySearchOpen, setStorySearchOpen] = useState(false);
@@ -5657,6 +5725,39 @@ function MainScreen({
       active = false;
     };
   }, []);
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    let active = true;
+    const reload = () =>
+      listMutedRoomNotificationIds()
+        .then((ids) => {
+          if (active) setMutedRoomNotificationIds(ids);
+        })
+        .catch(() => undefined);
+    reload();
+    if (!supabase || !currentUserId) {
+      return () => {
+        active = false;
+      };
+    }
+    const channel = supabase
+      .channel(`main-room-notification-preferences-${currentUserId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "room_user_preferences",
+          filter: `user_id=eq.${currentUserId}`,
+        },
+        reload,
+      )
+      .subscribe();
+    return () => {
+      active = false;
+      supabase.removeChannel(channel);
+    };
+  }, [currentUserId]);
   const toggleRoomPin = async (room: Room) => {
     const pinned = !pinnedRoomIds.includes(room.id);
     try {
@@ -6013,6 +6114,10 @@ function MainScreen({
                     (category === "promotion" && Boolean(item.isAdult)))
                 }
                 pinned={bottomTab === "myRooms" && pinnedRoomIds.includes(item.id)}
+                mutedNotifications={
+                  bottomTab === "myRooms" &&
+                  mutedRoomNotificationIds.includes(item.id)
+                }
                 onLongPress={() => void openRoomActionMenu(item)}
                 onPress={() => openRoom(item)}
                 onDescriptionPress={
@@ -6288,6 +6393,7 @@ function RoomRow({
   joined,
   blurAdult = false,
   pinned = false,
+  mutedNotifications = false,
   onLongPress,
   onPress,
   onDescriptionPress,
@@ -6301,6 +6407,7 @@ function RoomRow({
   joined: boolean;
   blurAdult?: boolean;
   pinned?: boolean;
+  mutedNotifications?: boolean;
   onLongPress?: () => void;
   onPress: () => void;
   onDescriptionPress?: () => void;
@@ -6343,6 +6450,14 @@ function RoomRow({
               source={PIN_ICON_SOURCE}
               style={s.pinnedIconImage}
               tintColor={colors.textMuted}
+            />
+          )}
+          {mutedNotifications && (
+            <Ionicons
+              name="notifications-off-outline"
+              size={13}
+              color={colors.textMuted}
+              style={s.mutedRoomNotificationIcon}
             />
           )}
         </View>
@@ -6407,6 +6522,7 @@ function RoomDetail({
   pending,
   onBack,
   onApply,
+  onCancelApply,
   onEnterChat,
   onEdit,
   enterLabel = "채팅방 바로가기",
@@ -6420,6 +6536,7 @@ function RoomDetail({
   pending: boolean;
   onBack: () => void;
   onApply: () => void;
+  onCancelApply: () => void;
   onEnterChat: () => void;
   onEdit?: () => void;
   enterLabel?: string;
@@ -6888,14 +7005,14 @@ function RoomDetail({
               </LinearGradient>
             </Pressable>
           ) : pending ? (
-            <View style={s.pendingButton}>
+            <Pressable onPress={onCancelApply} style={s.pendingButton}>
               <Ionicons
-                name="time-outline"
+                name="close-circle-outline"
                 size={17}
                 color={colors.textMuted}
               />
-              <Text style={s.pendingText}>가입 승인 대기 중</Text>
-            </View>
+              <Text style={s.pendingText}>가입신청 취소하기</Text>
+            </Pressable>
           ) : (
             <Pressable onPress={openApply} style={s.detailJoinButton}>
               <LinearGradient
@@ -7259,6 +7376,7 @@ function ChatRoom({
   const initialScrollDone = useRef(false);
   const nearBottomRef = useRef(true);
   const lastObservedLatestMessageIdRef = useRef<string | null>(null);
+  const lastContentSizeMessageCountRef = useRef(0);
   const lastSyncedServerMessageIdRef = useRef<string | null>(null);
   const latestReadableMessageIdRef = useRef<string | null>(null);
   const unreadFocusDoneRef = useRef(false);
@@ -8136,6 +8254,7 @@ function ChatRoom({
   };
   useEffect(() => {
     initialScrollDone.current = false;
+    lastContentSizeMessageCountRef.current = 0;
     requestAnimationFrame(() => setTimeout(() => scrollToLatest(false), 80));
   }, [room.id]);
   const submitTextMessage = async (
@@ -9259,6 +9378,7 @@ function ChatRoom({
         pending={false}
         onBack={closePanel}
         onApply={closePanel}
+        onCancelApply={closePanel}
         onEnterChat={closePanel}
         onEdit={onEditRoom}
         enterLabel="채팅방으로 돌아가기"
@@ -9611,6 +9731,9 @@ function ChatRoom({
           }}
           onContentSizeChange={(width, height) => {
             if (!initialMessagesLoaded) return;
+            const messageCountChanged =
+              lastContentSizeMessageCountRef.current !== visibleMessages.length;
+            lastContentSizeMessageCountRef.current = visibleMessages.length;
             if (prependHeightRef.current !== null) {
               const previousHeight = prependHeightRef.current;
               const previousOffset =
@@ -9650,7 +9773,8 @@ function ChatRoom({
               restoreScrollAfterPanelRef.current = false;
               chatScrollRef.current?.scrollToEnd({ animated: false });
               requestAnimationFrame(() => setChatReady(true));
-            } else if (nearBottomRef.current) scrollToLatest(false);
+            } else if (nearBottomRef.current && messageCountChanged)
+              scrollToLatest(false);
           }}
         >
           {visibleMessages.map((item, index) => {
@@ -18398,6 +18522,8 @@ function mapServerNotice(row: ServerNotice): Notice {
     icon:
       type === "join_request"
         ? "person-add-outline"
+        : type === "join_request_cancelled"
+          ? "close-circle-outline"
         : type === "join_approved"
           ? "checkmark-circle-outline"
           : type === "join_rejected"
@@ -22988,6 +23114,10 @@ const s = StyleSheet.create({
     height: 11,
     marginHorizontal: 4,
     transform: [{ rotate: "-20deg" }],
+  },
+  mutedRoomNotificationIcon: {
+    marginLeft: 1,
+    marginRight: 3,
   },
   notificationBadgeDot: {
     minWidth: 9,
