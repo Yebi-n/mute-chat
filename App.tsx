@@ -11887,6 +11887,10 @@ function StoryEditor({
   );
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const [imageEditorAssets, setImageEditorAssets] = useState<
+    ChatImageAsset[] | null
+  >(null);
+  const [imageAdding, setImageAdding] = useState(false);
   const updateText = (id: string, text: string) =>
     setBlocks((items) =>
       items.map((item) =>
@@ -11907,46 +11911,59 @@ function StoryEditor({
     }
     const source = await promptImageSource();
     if (!source || source === "remove") return;
-    const asset = await pickSingleImage({
-      source,
-      aspect: [4, 3],
-      quality: 0.8,
-    });
-    if (!asset || asset.mimeType === "image/gif") return;
-    const width = asset.width ?? 1440;
-    const height = asset.height ?? 1440;
-    const scale = Math.min(1, 1200 / Math.max(width, height));
-    const outputWidth = Math.max(1, Math.round(width * scale));
-    const outputHeight = Math.max(1, Math.round(height * scale));
-    const optimized = await ImageManipulator.manipulateAsync(
-      asset.uri,
-      [{ resize: { width: outputWidth, height: outputHeight } }],
-      { compress: 0.72, format: ImageManipulator.SaveFormat.JPEG },
+    const selected = (await pickChatImages(source)).slice(0, remaining);
+    const hasGif = selected.some(
+      (asset) =>
+        asset.mimeType === "image/gif" || asset.uri.toLowerCase().endsWith(".gif"),
     );
-    let uploadId: string | undefined;
-    if (isSupabaseConfigured && isUuid(room.id)) {
-      const bytes = await (await fetch(optimized.uri)).arrayBuffer();
-      const uploaded = await uploadValidatedImage({
-        uri: optimized.uri,
-        mimeType: "image/jpeg",
-        fileSize: bytes.byteLength,
-        width: outputWidth,
-        height: outputHeight,
-        purpose: "story",
-        roomId: room.id,
-      });
-      uploadId = uploaded.uploadId;
+    if (hasGif) {
+      Alert.alert("GIF 첨부 불가", "스토리에는 일반 사진만 올릴 수 있습니다.");
+      return;
     }
-    setBlocks((items) => [
-      ...items,
-      {
-        id: `image-${Date.now()}`,
-        type: "image",
-        uri: optimized.uri,
-        uploadId,
-        mimeType: "image/jpeg",
-      },
-    ]);
+    if (selected.length) setImageEditorAssets(selected);
+  };
+  const appendStoryImages = async (assets: ChatImageAsset[]) => {
+    if (imageAdding) return;
+    const remaining =
+      10 - blocks.filter((block) => block.type === "image").length;
+    const selected = assets.slice(0, remaining);
+    if (!selected.length) return;
+    setImageAdding(true);
+    try {
+      const nextBlocks: StoryBlock[] = [];
+      for (let index = 0; index < selected.length; index += 1) {
+        const optimized = await prepareChatImage(selected[index], 1200, 0.72);
+        let uploadId: string | undefined;
+        if (isSupabaseConfigured && isUuid(room.id)) {
+          const bytes = await (await fetch(optimized.uri)).arrayBuffer();
+          const uploaded = await uploadValidatedImage({
+            uri: optimized.uri,
+            mimeType: "image/jpeg",
+            fileSize: bytes.byteLength,
+            width: optimized.width ?? 1200,
+            height: optimized.height ?? 900,
+            purpose: "story",
+            roomId: room.id,
+          });
+          uploadId = uploaded.uploadId;
+        }
+        nextBlocks.push({
+          id: `image-${Date.now()}-${index}`,
+          type: "image",
+          uri: optimized.uri,
+          uploadId,
+          mimeType: "image/jpeg",
+        });
+      }
+      setBlocks((items) => [
+        ...items,
+        ...nextBlocks,
+      ]);
+    } catch (error) {
+      Alert.alert("스토리 사진 첨부 실패", serverErrorMessage(error));
+    } finally {
+      setImageAdding(false);
+    }
   };
   const save = async () => {
     if (savingRef.current) return;
@@ -12139,7 +12156,11 @@ function StoryEditor({
           ),
         )}
         <View style={s.storyEditorToolbar}>
-          <Pressable onPress={addImages} style={s.storyToolbarButton}>
+          <Pressable
+            disabled={imageAdding}
+            onPress={addImages}
+            style={[s.storyToolbarButton, imageAdding && s.disabled]}
+          >
             <Ionicons
               name="images-outline"
               size={21}
@@ -12185,6 +12206,17 @@ function StoryEditor({
       </ScrollView>
     </KeyboardAvoidingView>
   );
+  if (imageEditorAssets)
+    return (
+      <ChatImageEditor
+        assets={imageEditorAssets}
+        onBack={() => setImageEditorAssets(null)}
+        onSend={(assets) => {
+          setImageEditorAssets(null);
+          void appendStoryImages(assets);
+        }}
+      />
+    );
   return embedded ? (
     <View style={s.safe}>{content}</View>
   ) : (
@@ -14695,13 +14727,6 @@ function Profile({
           </Pressable>
         </View>
       </ScrollView>
-      {rewardLoading && (
-        <View pointerEvents="none" style={s.toast}>
-          <Text style={s.toastText}>
-            광고가 로드되는 중입니다. 잠시만 기다려주세요
-          </Text>
-        </View>
-      )}
       {shopOpen && (
         <View style={s.chargeLayer}>
           <Pressable

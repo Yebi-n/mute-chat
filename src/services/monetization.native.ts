@@ -167,10 +167,21 @@ export async function showRewardedAd(
     );
     const unsubscribeEarned = rewarded.addAdEventListener(RewardedAdEventType.EARNED_REWARD, () => { earned = true; });
     const unsubscribeClosed = rewarded.addAdEventListener(AdEventType.CLOSED, () => {
-      finish(() => {
-        setRewardedAdChrome(false);
-        resolve({ completed: earned, rewardKey });
-      });
+      // Some iOS rewarded creatives dispatch CLOSED before EARNED_REWARD when
+      // the user presses the available close/skip control after the reward
+      // threshold. Give the reward callback a short chance to arrive before
+      // deciding the ad was not completed.
+      const completeAfterRewardGrace = () => {
+        finish(() => {
+          setRewardedAdChrome(false);
+          resolve({ completed: earned, rewardKey });
+        });
+      };
+      if (earned) {
+        completeAfterRewardGrace();
+        return;
+      }
+      setTimeout(completeAfterRewardGrace, 1500);
     });
     const unsubscribeError = rewarded.addAdEventListener(AdEventType.ERROR, (error) => {
       finish(() => {
