@@ -1,0 +1,3 @@
+-- Placeholder for a migration that was already applied to the remote database.
+-- Kept locally so Supabase migration history can remain consistent without
+-- rewriting the remote migration table.
