@@ -2763,13 +2763,8 @@ function AuthenticatedApp({
   const [adultVerified, setAdultVerified] = useState(false);
   const [adultContentWebOptedIn, setAdultContentWebOptedIn] = useState(false);
   const [iosAdultContentEnabled, setIosAdultContentEnabled] = useState(false);
-  const showAdultTab =
-    !IOS_HIDE_ADULT_UI ||
-    isSuperAdmin ||
-    (adultVerified && iosAdultContentEnabled);
-  const canSeeAdultRooms =
-    isSuperAdmin ||
-    (adultVerified && (!IOS_HIDE_ADULT_UI || iosAdultContentEnabled));
+  const showAdultTab = isSuperAdmin || adultVerified;
+  const canSeeAdultRooms = isSuperAdmin || adultVerified;
   const canUseAdultFeatures = isSuperAdmin || adultVerified;
   const [chatInitialPanel, setChatInitialPanel] = useState<ChatPanel>(null);
   const [chatInitialStoryId, setChatInitialStoryId] = useState<string | null>(
@@ -4029,6 +4024,7 @@ function AuthenticatedApp({
         {({ navigation }) => (
           <EditRoom
             room={selectedRoom}
+            adultVerified={canUseAdultFeatures}
             onBack={() => navigation.goBack()}
             onUpdated={(updated) => {
               setSelectedRoom(updated);
@@ -4054,12 +4050,16 @@ function AuthenticatedApp({
       <AppStack.Screen name="AdultVerification">
         {({ navigation }) =>
           IOS_HIDE_ADULT_UI ? (
-            <Settings
-              adultVerified={adultVerified}
-              isSuperAdmin={isSuperAdmin}
-              onAdultVerification={() => navigation.navigate("AdultVerification")}
+            <AdultVerificationScreen
+              verified={adultVerified}
               onBack={() => navigation.goBack()}
-              onSignedOut={onSignedOut}
+              onRefresh={async () => {
+                const status = await getVerificationStatus();
+                setAdultVerified(status.adultVerified);
+                setAdultContentWebOptedIn(status.adultContentWebOptedIn);
+                setIosAdultContentEnabled(status.iosAdultContentEnabled);
+                return status.adultVerified;
+              }}
             />
           ) : (
             <AdultVerificationScreen
@@ -4068,6 +4068,8 @@ function AuthenticatedApp({
               onRefresh={async () => {
                 const status = await getVerificationStatus();
                 setAdultVerified(status.adultVerified);
+                setAdultContentWebOptedIn(status.adultContentWebOptedIn);
+                setIosAdultContentEnabled(status.iosAdultContentEnabled);
                 return status.adultVerified;
               }}
             />
@@ -15071,10 +15073,12 @@ function StoreCard({
 
 function EditRoom({
   room,
+  adultVerified,
   onBack,
   onUpdated,
 }: {
   room: Room;
+  adultVerified: boolean;
   onBack: () => void;
   onUpdated: (room: Room) => void;
 }) {
@@ -15286,9 +15290,9 @@ function EditRoom({
                    ["region", "지역별", false, undefined],
                   [
                     "adult",
-                    "인증 필요",
-                    true,
-                    "성인 인증이 필요합니다.",
+                    adultVerified ? "성인" : "인증 필요",
+                    !adultVerified,
+                    adultVerified ? undefined : "성인 인증이 필요합니다.",
                   ],
                  ] as const
               ).map(([value, label, typeDisabled, disabledReason]) => (

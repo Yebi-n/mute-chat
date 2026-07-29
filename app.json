@@ -3,7 +3,7 @@
     "name": "뮤트",
     "slug": "mute-chat",
     "scheme": "mute",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/mute-app-icon.png",
     "userInterfaceStyle": "light",
@@ -21,6 +21,7 @@
       }
     },
     "android": {
+      "versionCode": 121,
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/mute-app-icon.png",
