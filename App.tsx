@@ -143,18 +143,29 @@ import {
 } from "./src/services/roomFeatures";
 import {
   announceStoryCreated,
+  adjustMafiaPhaseTime,
+  cancelMafiaJoin,
+  forceEndMafiaGame,
+  getMafiaGameState,
   getLatestRoomMessageCursor,
   getRoomMessageCreatedAt,
   getRoomReadReceipt,
+  joinMafiaGame,
   listRoomMessages,
   listRoomReadReceipts,
   markRoomRead,
   searchRoomMessages,
+  sendMafiaScopedMessage,
   sendSecretMessage,
   softDeleteMyMessage,
+  startMafiaLobby,
+  submitMafiaNightAction,
   sendSystemMessage,
   sendTextMessage,
   ServerRoomMessage,
+  tickMafiaGame,
+  voteMafiaGame,
+  MafiaGameState,
 } from "./src/services/chat";
 import { sendUploadedImages, uploadValidatedImage } from "./src/services/media";
 import {
@@ -515,6 +526,8 @@ type ChatBase = {
   bubbleColor?: string;
   textColor?: string;
   pendingUploadAssets?: ChatImageAsset[];
+  mafiaGameId?: string | null;
+  mafiaVisibility?: "public" | "private" | "spectator" | "mafia" | "lover";
 };
 type ChatMessage =
   | (ChatBase & {
@@ -1911,6 +1924,36 @@ function replyLabel(name: string, myDisplayName: string) {
   return name === myDisplayName ? "나에게 답장" : `${name}님에게 답장`;
 }
 
+function displayMafiaSystemText(body: string) {
+  if (!body.startsWith("[MAFIA_")) return body;
+  const mafiaNameOverride = new RegExp("name=([^\\s]+)").exec(body)?.[1];
+  if (body.startsWith("[MAFIA_CANCELLED]")) return "-참여 인원이 부족하여 마피아 게임이 취소되었습니다-";
+  if (body.startsWith("[MAFIA_EXECUTION_REJECTED]")) return "-찬성이 과반을 넘지 않아 아무도 처형되지 않았습니다-";
+  if (body.startsWith("[MAFIA_NIGHT_KILL]")) return `-${mafiaNameOverride ?? "대상"}님이 마피아의 총에 맞아 사망했습니다-`;
+  if (body.startsWith("[MAFIA_FORCE_ENDED]")) return `-${mafiaNameOverride ?? "진행자"}님이 게임을 강제 종료하였습니다-`;
+  const get = (key: string) => new RegExp(`${key}=([^\\s]+)`).exec(body)?.[1];
+  const name = get("name") ?? undefined;
+  if (body.startsWith("[MAFIA_LOBBY]")) return "마피아 게임에 참여하시겠습니까? 1분 후 시작됩니다.";
+  if (body.startsWith("[MAFIA_CANCEL_JOIN]")) return `${name ?? "멤버"}님이 마피아 게임 참여를 취소했습니다.`;
+  if (body.startsWith("[MAFIA_CANCELLED]")) return "참여 인원이 부족해 마피아 게임이 취소되었습니다.";
+  if (body.startsWith("[MAFIA_DAY_START]")) return `-${get("day") ?? "1"}일 차 낮이 되었습니다-`;
+  if (body.startsWith("[MAFIA_DAY_VOTE_START]")) return "-투표를 시작합니다-";
+  if (body.startsWith("[MAFIA_NO_EXECUTION]")) return "-투표 결과 처형 없이 밤이 되었습니다-";
+  if (body.startsWith("[MAFIA_FINAL_DEFENSE]")) return `-${name ?? "대상"}님이 최후의 반론을 시작합니다-`;
+  if (body.startsWith("[MAFIA_FINAL_VOTE_START]")) return "-찬반 투표를 시작합니다-";
+  if (body.startsWith("[MAFIA_EXECUTED]")) {
+    const role = get("role");
+    return `-${name ?? "대상"}님이 사망하셨습니다. ${name ?? "대상"}님은 ${role === "mafia" ? "마피아였습니다" : "마피아가 아니었습니다"}-`;
+  }
+  if (body.startsWith("[MAFIA_EXECUTION_REJECTED]")) return "-처형이 부결되었습니다-";
+  if (body.startsWith("[MAFIA_NIGHT_START]")) return `-${get("day") ?? "1"}일 차 밤이 되었습니다-`;
+  if (body.startsWith("[MAFIA_NIGHT_KILL]")) return `-${name ?? "대상"}님이 밤에 사망했습니다-`;
+  if (body.startsWith("[MAFIA_NIGHT_NO_DEATH]")) return "-밤사이 아무도 사망하지 않았습니다-";
+  if (body.startsWith("[MAFIA_GAME_END]")) return get("winner") === "mafia" ? "-마피아가 승리했습니다-" : "-시민이 승리했습니다-";
+  if (body.startsWith("[MAFIA_INSPECT_RESULT]")) return `-조사 결과: ${name ?? "대상"}님은 ${get("isMafia") === "true" ? "마피아입니다" : "마피아가 아닙니다"}-`;
+  return body;
+}
+
 function mapServerChatMessage(
   message: ServerRoomMessage,
   currentUserId?: string,
@@ -1933,6 +1976,8 @@ function mapServerChatMessage(
       createdAt: message.createdAt,
       bubbleColor: message.bubbleColor,
       textColor: message.textColor,
+      mafiaGameId: message.mafiaGameId,
+      mafiaVisibility: message.mafiaVisibility ?? "public",
     };
   }
   const replyTo = message.replyToBody
@@ -1956,6 +2001,8 @@ function mapServerChatMessage(
       replyTo,
       bubbleColor: message.bubbleColor,
       textColor: message.textColor,
+      mafiaGameId: message.mafiaGameId,
+      mafiaVisibility: message.mafiaVisibility ?? "public",
     };
   }
   if (message.kind === "story") {
@@ -1972,6 +2019,8 @@ function mapServerChatMessage(
       imageUri: message.storyImageUri,
       time: formatChatClock(message.createdAt),
       createdAt: message.createdAt,
+      mafiaGameId: message.mafiaGameId,
+      mafiaVisibility: message.mafiaVisibility ?? "public",
     };
   }
   if (message.kind === "secret") {
@@ -1989,9 +2038,12 @@ function mapServerChatMessage(
       replyTo: deletedText ? undefined : replyTo,
       bubbleColor: message.bubbleColor,
       textColor: message.textColor,
+      mafiaGameId: message.mafiaGameId,
+      mafiaVisibility: message.mafiaVisibility ?? "public",
     };
   }
   if (message.kind === "system") {
+    const systemText = displayMafiaSystemText(message.body);
     const event: Extract<ChatMessage, { kind: "system" }>["event"] =
       message.body.includes("하트")
         ? "heart"
@@ -2009,8 +2061,10 @@ function mapServerChatMessage(
       id: message.id,
       kind: "system",
       event,
-      text: message.body,
+      text: systemText,
       createdAt: message.createdAt,
+      mafiaGameId: message.mafiaGameId,
+      mafiaVisibility: message.mafiaVisibility ?? "public",
     };
   }
   return {
@@ -2026,6 +2080,8 @@ function mapServerChatMessage(
     replyTo: deletedText ? undefined : replyTo,
     bubbleColor: message.bubbleColor,
     textColor: message.textColor,
+    mafiaGameId: message.mafiaGameId,
+    mafiaVisibility: message.mafiaVisibility ?? "public",
   };
 }
 
@@ -7751,9 +7807,58 @@ function ChatRoom({
             time: "오후 9:28",
             createdAt: "2026-06-12T09:28:00.000Z",
           },
-        ]
-      : [],
+      ]
+    : [],
   );
+  const [mafiaGame, setMafiaGame] = useState<MafiaGameState | null>(null);
+  const [mafiaBusy, setMafiaBusy] = useState(false);
+  const [mafiaCapacityPickerOpen, setMafiaCapacityPickerOpen] = useState(false);
+  const [mafiaCapacityDraft, setMafiaCapacityDraft] = useState(5);
+  const mafiaGameRunning = mafiaGame?.status === "running";
+  const canForceEndMafiaGame =
+    Boolean(mafiaGame && currentUserId && mafiaGame.hostUserId === currentUserId) || isStaff;
+  const blockMafiaRestrictedFeature = useCallback(() => {
+    if (!mafiaGameRunning) return false;
+    setToast("마피아게임 중에는 해당 기능을 이용할 수 없습니다");
+    setTimeout(() => setToast(""), 1800);
+    return true;
+  }, [mafiaGameRunning]);
+  const refreshMafiaGame = useCallback(async () => {
+    if (!isSupabaseConfigured || !isUuid(room.id)) {
+      setMafiaGame(null);
+      return null;
+    }
+    try {
+      const state = await getMafiaGameState(room.id);
+      if (mountedRef.current) setMafiaGame(state);
+      return state;
+    } catch (error) {
+      console.warn("mafia state refresh failed", error);
+      return null;
+    }
+  }, [room.id]);
+
+  useEffect(() => {
+    void refreshMafiaGame();
+  }, [refreshMafiaGame]);
+
+  useEffect(() => {
+    if (!mafiaGame || mafiaGame.status === "ended" || mafiaGame.status === "cancelled") return;
+    const timer = setInterval(() => {
+      const gameId = mafiaGame.id;
+      const due = Date.parse(mafiaGame.endsAt);
+      if (Number.isFinite(due) && Date.now() >= due) {
+        tickMafiaGame(gameId)
+          .then((state) => {
+            if (mountedRef.current) setMafiaGame(state);
+          })
+          .catch((error) => console.warn("mafia tick failed", error));
+      } else {
+        void refreshMafiaGame();
+      }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [mafiaGame?.id, mafiaGame?.endsAt, mafiaGame?.status, refreshMafiaGame]);
   const rememberScrollPosition = () => {
     ROOM_SCROLL_STATE.set(room.id, {
       offsetY: scrollMetrics.current.offsetY,
@@ -8099,6 +8204,7 @@ function ChatRoom({
           if (eventType === "INSERT" && row) {
             const id = typeof row.id === "string" ? row.id : "";
             const body = typeof row.body === "string" ? row.body : "";
+            if (body.startsWith("[MAFIA_")) void refreshMafiaGame();
             const createdAt =
               typeof row.created_at === "string"
                 ? row.created_at
@@ -8138,6 +8244,17 @@ function ChatRoom({
                       : sender?.name,
                   senderAvatarUrl: sender?.avatarUri,
                   recipientName: recipient?.name,
+                  mafiaGameId:
+                    typeof row.mafia_game_id === "string"
+                      ? row.mafia_game_id
+                      : null,
+                  mafiaVisibility:
+                    row.mafia_visibility === "private" ||
+                    row.mafia_visibility === "spectator" ||
+                    row.mafia_visibility === "mafia" ||
+                    row.mafia_visibility === "lover"
+                      ? row.mafia_visibility
+                      : "public",
                 },
                 currentUserId,
               );
@@ -8450,9 +8567,233 @@ function ChatRoom({
   };
   const pendingTextSeq = useRef(0);
   const textSendQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const chooseMafiaPlayer = useCallback(
+    async (title: string, players: MafiaGameState["players"]) => {
+      const options = players
+        .filter((player) => player.joined && player.alive)
+        .map((player) => ({ label: player.name, value: player.userId }));
+      if (!options.length) return null;
+      if (Platform.OS === "android") {
+        return (await showAndroidActionList(title, [
+          ...options,
+          { label: "취소", value: null },
+        ])) as string | null;
+      }
+      return await new Promise<string | null>((resolve) => {
+        Alert.alert(
+          title,
+          undefined,
+          [
+            ...options.slice(0, 12).map((option) => ({
+              text: option.label,
+              onPress: () => resolve(option.value),
+            })),
+            { text: "취소", style: "cancel" as const, onPress: () => resolve(null) },
+          ],
+          { cancelable: true, onDismiss: () => resolve(null) },
+        );
+      });
+    },
+    [],
+  );
+  const startMafiaWithCapacity = useCallback(
+    async (capacity: number) => {
+      if (!isSupabaseConfigured || !isUuid(room.id)) {
+        setToast("서버 방에서만 사용할 수 있습니다.");
+        setTimeout(() => setToast(""), 1600);
+        return;
+      }
+      if (mafiaBusy) return;
+      try {
+        setMafiaBusy(true);
+        setMafiaCapacityPickerOpen(false);
+        setMafiaGame(await startMafiaLobby({ roomId: room.id, capacity }));
+      } catch (error) {
+        Alert.alert("마피아 게임 시작 실패", serverErrorMessage(error));
+      } finally {
+        setMafiaBusy(false);
+        setTool(null);
+      }
+    },
+    [mafiaBusy, room.id],
+  );
+  const handleMafiaMenu = useCallback(async () => {
+    if (!isSupabaseConfigured || !isUuid(room.id)) {
+      setToast("서버 방에서만 사용할 수 있습니다.");
+      setTimeout(() => setToast(""), 1600);
+      return;
+    }
+    if (mafiaBusy) return;
+    try {
+      setMafiaBusy(true);
+      const latest = (await refreshMafiaGame()) ?? mafiaGame;
+      if (!latest) {
+        setMafiaCapacityDraft(5);
+        setMafiaCapacityPickerOpen(true);
+        return;
+        const capacities = [6, 8, 10, 12, 15, 20];
+        const selected =
+          Platform.OS === "android"
+            ? ((await showAndroidActionList("마피아 게임 인원", [
+                ...capacities.map((value) => ({ label: `${value}명`, value: String(value) })),
+                { label: "취소", value: null },
+              ])) as string | null)
+            : await new Promise<number | null>((resolve) => {
+                Alert.alert(
+                  "마피아 게임 인원",
+                  "참여 가능한 최대 인원을 선택해주세요.",
+                  [
+                    ...capacities.map((value) => ({
+                      text: `${value}명`,
+                      onPress: () => resolve(value),
+                    })),
+                    { text: "취소", style: "cancel", onPress: () => resolve(null) },
+                  ],
+                  { cancelable: true, onDismiss: () => resolve(null) },
+                );
+              });
+        if (!selected) return;
+        setMafiaGame(await startMafiaLobby({ roomId: room.id, capacity: Number(selected) }));
+        return;
+      }
+      if (latest.status === "waiting") {
+        if (canForceEndMafiaGame) {
+          const confirmed = await new Promise<boolean>((resolve) => {
+            Alert.alert(
+              "마피아 게임 강제 종료",
+              "정말로 진행 중인 게임을 강제 종료하시겠습니까? 진행 중인 게임은 저장되지 않습니다",
+              [
+                { text: "취소", style: "cancel", onPress: () => resolve(false) },
+                { text: "강제 종료", style: "destructive", onPress: () => resolve(true) },
+              ],
+              { cancelable: true, onDismiss: () => resolve(false) },
+            );
+          });
+          if (confirmed) setMafiaGame(await forceEndMafiaGame(latest.id));
+          return;
+        }
+        if (latest.me?.joined) setMafiaGame(await cancelMafiaJoin(latest.id));
+        else setMafiaGame(await joinMafiaGame(latest.id));
+        return;
+      }
+      if (latest.status === "running" && canForceEndMafiaGame) {
+        const confirmed = await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            "마피아 게임 강제 종료",
+            "정말로 진행 중인 게임을 강제 종료하시겠습니까? 진행 중인 게임은 저장되지 않습니다",
+            [
+              { text: "취소", style: "cancel", onPress: () => resolve(false) },
+              { text: "강제 종료", style: "destructive", onPress: () => resolve(true) },
+            ],
+            { cancelable: true, onDismiss: () => resolve(false) },
+          );
+        });
+        if (confirmed) setMafiaGame(await forceEndMafiaGame(latest.id));
+        return;
+      }
+      const me = latest.me;
+      if (!me?.joined || !me.alive) {
+        setToast("관전 중입니다.");
+        setTimeout(() => setToast(""), 1600);
+        return;
+      }
+      if (latest.phase === "day_discussion") {
+        const action =
+          Platform.OS === "android"
+            ? ((await showAndroidActionList("마피아 게임", [
+                { label: "시간 15초 단축", value: "shorten" },
+                { label: "시간 15초 연장", value: "extend" },
+                { label: "취소", value: null },
+              ])) as "shorten" | "extend" | null)
+            : await new Promise<"shorten" | "extend" | null>((resolve) => {
+                Alert.alert(
+                  "마피아 게임",
+                  undefined,
+                  [
+                    { text: "시간 15초 단축", onPress: () => resolve("shorten") },
+                    { text: "시간 15초 연장", onPress: () => resolve("extend") },
+                    { text: "취소", style: "cancel", onPress: () => resolve(null) },
+                  ],
+                  { cancelable: true, onDismiss: () => resolve(null) },
+                );
+              });
+        if (!action) return;
+        setMafiaGame(await adjustMafiaPhaseTime({ gameId: latest.id, deltaSeconds: action === "extend" ? 15 : -15 }));
+        return;
+      }
+      if (latest.phase === "day_vote") {
+        const target = await chooseMafiaPlayer("투표할 사람", latest.players);
+        if (target) setMafiaGame(await voteMafiaGame({ gameId: latest.id, targetUserId: target, voteType: "execute" }));
+        return;
+      }
+      if (latest.phase === "final_vote") {
+        const vote =
+          Platform.OS === "android"
+            ? ((await showAndroidActionList("최종 투표", [
+                { label: "찬성", value: "approve" },
+                { label: "반대", value: "reject" },
+                { label: "취소", value: null },
+              ])) as "approve" | "reject" | null)
+            : await new Promise<"approve" | "reject" | null>((resolve) => {
+                Alert.alert(
+                  "최종 투표",
+                  undefined,
+                  [
+                    { text: "찬성", onPress: () => resolve("approve") },
+                    { text: "반대", onPress: () => resolve("reject") },
+                    { text: "취소", style: "cancel", onPress: () => resolve(null) },
+                  ],
+                  { cancelable: true, onDismiss: () => resolve(null) },
+                );
+              });
+        if (vote) setMafiaGame(await voteMafiaGame({ gameId: latest.id, voteType: vote }));
+        return;
+      }
+      if (latest.phase === "night") {
+        const actionType =
+          me.role === "mafia"
+            ? "kill"
+            : me.role === "doctor"
+              ? "save"
+              : me.role === "police"
+                ? "inspect"
+                : null;
+        if (!actionType) {
+          setToast(me.role === "lover" ? "연인 전용 채팅을 보낼 수 있습니다." : "밤 행동이 없는 역할입니다.");
+          setTimeout(() => setToast(""), 1600);
+          return;
+        }
+        const title = actionType === "kill" ? "마피아 지목" : actionType === "save" ? "의사 보호" : "경찰 조사";
+        const target = await chooseMafiaPlayer(title, latest.players);
+        if (target) setMafiaGame(await submitMafiaNightAction({ gameId: latest.id, targetUserId: target, actionType }));
+        return;
+      }
+      setMafiaGame(await tickMafiaGame(latest.id));
+    } catch (error) {
+      Alert.alert("마피아 게임 실패", serverErrorMessage(error));
+    } finally {
+      setMafiaBusy(false);
+      setTool(null);
+    }
+  }, [canForceEndMafiaGame, chooseMafiaPlayer, mafiaBusy, mafiaGame, refreshMafiaGame, room.id]);
   const send = () => {
     const text = message.trim();
     if (!text) return;
+    const activeMafia = mafiaGame?.status === "running" ? mafiaGame : null;
+    const myMafia = activeMafia?.me;
+    const mafiaNightVisibility =
+      activeMafia?.phase === "night" && myMafia?.alive && myMafia.joined
+        ? myMafia.role === "mafia"
+          ? "mafia"
+          : myMafia.role === "lover"
+            ? "lover"
+            : null
+        : null;
+    if (activeMafia?.phase === "night" && myMafia?.alive && myMafia.joined && !mafiaNightVisibility) {
+      setToast("밤에는 역할 행동만 할 수 있습니다.");
+      setTimeout(() => setToast(""), 1600);
+      return;
+    }
     const createdAt = new Date().toISOString();
     pendingTextSeq.current += 1;
     const localId = `pending-text-${Date.now()}-${pendingTextSeq.current}`;
@@ -8472,6 +8813,8 @@ function ChatRoom({
         delivery: "sending",
         bubbleColor,
         textColor,
+        mafiaGameId: activeMafia?.id ?? null,
+        mafiaVisibility: mafiaNightVisibility ?? "public",
       },
     ]);
     setMessage("");
@@ -8480,10 +8823,33 @@ function ChatRoom({
     setTimeout(() => scrollToLatestRef.current(false), 40);
     setTimeout(() => scrollToLatestRef.current(false), 140);
     textSendQueueRef.current = textSendQueueRef.current
-      .then(() => submitTextMessage(localId, text, reply))
+      .then(async () => {
+        if (activeMafia?.id && mafiaNightVisibility) {
+          const id = await sendMafiaScopedMessage({
+            gameId: activeMafia.id,
+            body: text,
+            visibility: mafiaNightVisibility,
+          });
+          setMessages((items) =>
+            items.map((item) =>
+              item.id === localId
+                ? {
+                    ...item,
+                    id,
+                    delivery: "sent" as const,
+                    time: formatChatClock(new Date().toISOString()),
+                  }
+                : item,
+            ),
+          );
+          return;
+        }
+        await submitTextMessage(localId, text, reply);
+      })
       .catch(() => undefined);
   };
   const sendRanking = () => {
+    if (blockMafiaRestrictedFeature()) return;
     const text = buildChatRankingMessage(
       myDisplayName,
       roomMembersRef.current,
@@ -8516,6 +8882,7 @@ function ChatRoom({
       .catch(() => undefined);
   };
   const sendDraw = () => {
+    if (blockMafiaRestrictedFeature()) return;
     const text = buildChatDrawMessage(myDisplayName, roomMembersRef.current);
     const createdAt = new Date().toISOString();
     pendingTextSeq.current += 1;
@@ -8546,6 +8913,7 @@ function ChatRoom({
   };
   scrollToLatestRef.current = scrollToLatest;
   const sendHeart = async (targetNameOverride?: string): Promise<boolean> => {
+    if (blockMafiaRestrictedFeature()) return false;
     const createdAt = new Date().toISOString();
     const targetName = targetNameOverride ?? selectedMember ?? "느린준";
     const body = `${myDisplayName}님이 ${targetName}님에게 하트를 보냈습니다.`;
@@ -8568,6 +8936,7 @@ function ChatRoom({
     target: RoomMember | undefined,
     draft: string,
   ): Promise<boolean> => {
+    if (blockMafiaRestrictedFeature()) return false;
     const text = draft.trim();
     if (!text) return false;
     const createdAt = new Date().toISOString();
@@ -8620,6 +8989,7 @@ function ChatRoom({
     target: RoomMember | undefined,
     rawAmount: string,
   ): Promise<boolean> => {
+    if (blockMafiaRestrictedFeature()) return false;
     if (pointSendingRef.current) return false;
     const normalizedAmount = rawAmount.trim();
     if (!/^[0-9]+$/.test(normalizedAmount)) {
@@ -9735,6 +10105,7 @@ function ChatRoom({
     }
   };
   const muteSelectedMember=(seconds:number,label:string)=>{
+    if (blockMafiaRestrictedFeature()) return;
     if(!selectedRoomMember?.userId)return;
     setRoomMemberMute(room.id,selectedRoomMember.userId,seconds).then((until)=>{setRoomMembers((items)=>items.map((item)=>item.userId===selectedRoomMember.userId?{...item,mutedUntil:until}:item));setSelectedMember(null);setToast(`${selectedRoomMember.name}님을 ${label} 동안 채팅 금지했습니다.`);setTimeout(()=>setToast(""),1800);}).catch((error)=>Alert.alert("채팅 금지 실패",serverErrorMessage(error)));
   };
@@ -10148,6 +10519,24 @@ function ChatRoom({
                   </View>
                 </View>
               );
+            const mafiaVisibility =
+              "mafiaVisibility" in item ? item.mafiaVisibility ?? "public" : "public";
+            const mafiaScoped = mafiaVisibility !== "public";
+            const mafiaStyleMuted = mafiaGameRunning && !mafiaScoped;
+            const mafiaBubbleOverride =
+              mafiaVisibility === "mafia"
+                ? "#211417"
+                : mafiaVisibility === "lover"
+                  ? "#FFE8F1"
+                  : mafiaVisibility === "spectator"
+                    ? "#F4F4F4"
+                    : undefined;
+            const mafiaTextOverride =
+              mafiaVisibility === "mafia"
+                ? "#FF6B78"
+                : mafiaVisibility === "lover"
+                  ? "#D9487D"
+                  : undefined;
             const previous = visibleMessages[index - 1];
             const continuous = Boolean(
               previous &&
@@ -10267,9 +10656,12 @@ function ChatRoom({
                           jumpHighlightId === item.id && s.searchBubbleActive,
                           {
                             backgroundColor:
+                              mafiaBubbleOverride ??
+                              (mafiaStyleMuted ? "#F5F5F5" : undefined) ??
                               item.bubbleColor ??
                               (item.mine ? bubbleColor : "#F5F5F5"),
                           },
+                          mafiaScoped && s.mafiaScopedBubble,
                           !cardPayload && item.mine
                             ? { borderBottomRightRadius: 4 }
                             : !cardPayload
@@ -10286,7 +10678,10 @@ function ChatRoom({
                               {
                                 borderLeftColor:
                                   chatAccentColor(
-                                    item.textColor ?? (item.mine ? textColor : undefined),
+                                    mafiaTextOverride ??
+                                      (mafiaStyleMuted ? colors.text : undefined) ??
+                                      item.textColor ??
+                                      (item.mine ? textColor : undefined),
                                   ),
                               },
                             ]}
@@ -10297,7 +10692,10 @@ function ChatRoom({
                                 {
                                   color:
                                     chatAccentColor(
-                                      item.textColor ?? (item.mine ? textColor : undefined),
+                                      mafiaTextOverride ??
+                                        (mafiaStyleMuted ? colors.text : undefined) ??
+                                        item.textColor ??
+                                        (item.mine ? textColor : undefined),
                                     ),
                                 },
                               ]}
@@ -10350,6 +10748,8 @@ function ChatRoom({
                                 s.messageText,
                                 {
                                   color:
+                                    mafiaTextOverride ??
+                                    (mafiaStyleMuted ? colors.text : undefined) ??
                                     item.textColor ??
                                     (item.mine ? textColor : colors.text),
                                 },
@@ -10364,6 +10764,8 @@ function ChatRoom({
                             drawerName={item.name}
                             ranking={rankingPayload}
                             textColor={
+                              mafiaTextOverride ??
+                              (mafiaStyleMuted ? colors.text : undefined) ??
                               item.textColor ??
                               (item.mine ? textColor : colors.text)
                             }
@@ -10378,6 +10780,8 @@ function ChatRoom({
                             }
                             title={drawPayload.title}
                             textColor={
+                              mafiaTextOverride ??
+                              (mafiaStyleMuted ? colors.text : undefined) ??
                               item.textColor ??
                               (item.mine ? textColor : colors.text)
                             }
@@ -10407,6 +10811,8 @@ function ChatRoom({
                                   s.messageText,
                                   {
                                     color:
+                                      mafiaTextOverride ??
+                                      (mafiaStyleMuted ? colors.text : undefined) ??
                                       item.textColor ??
                                       (item.mine ? textColor : colors.text),
                                   },
@@ -10526,6 +10932,13 @@ function ChatRoom({
         )}
         {!chatSearchOpen && (
           <>
+            {!readOnly && mafiaGame && (
+              <MafiaGameBar
+                state={mafiaGame}
+                busy={mafiaBusy}
+                onPress={handleMafiaMenu}
+              />
+            )}
             {!readOnly && (
               <ComposerPanel
                 tool={tool}
@@ -10548,6 +10961,12 @@ function ChatRoom({
                 }}
                 onRanking={sendRanking}
                 onDraw={sendDraw}
+                onMafia={handleMafiaMenu}
+                mafiaLabel={
+                  mafiaGameRunning && canForceEndMafiaGame
+                    ? "마피아 게임 강제 종료"
+                    : "마피아 게임"
+                }
                 onComingSoon={(label) => {
                   setTool(null);
                   setToast("아직 준비 중인 기능입니다.");
@@ -10724,12 +11143,22 @@ function ChatRoom({
           setSelectedMember(null);
         }}
         onPoint={() => {
+          if (blockMafiaRestrictedFeature()) {
+            setSelectedMember(null);
+            return;
+          }
           setPointTarget(selectedMember);
           setPointTargetMember(selectedRoomMember ?? null);
           setPointDraft("");
           setSelectedMember(null);
         }}
-        onSecret={() => setTool("secret")}
+        onSecret={() => {
+          if (blockMafiaRestrictedFeature()) {
+            setSelectedMember(null);
+            return;
+          }
+          setTool("secret");
+        }}
         onProfile={() => {
           const found = selectedRoomMember ?? {
             name: selectedMember ?? "멤버",
@@ -10775,6 +11204,54 @@ function ChatRoom({
           setSelectedMember(null);
         }}
       />
+      {mafiaCapacityPickerOpen && (
+        <View style={s.sheetLayer}>
+          <Pressable
+            accessibilityLabel="마피아 게임 인원 선택 닫기"
+            onPress={() => setMafiaCapacityPickerOpen(false)}
+            style={s.sheetDim}
+          />
+          <View style={s.mafiaCapacitySheet}>
+            <View style={s.sheetHandle} />
+            <Text style={s.mafiaCapacityTitle}>마피아 게임 인원</Text>
+            <Text style={s.mafiaCapacityBody}>
+              5명 이상부터 시작할 수 있습니다. 참여 가능 최대 인원을 정해주세요.
+            </Text>
+            <View style={s.mafiaCapacityStepper}>
+              <Pressable
+                disabled={mafiaCapacityDraft <= 5}
+                onPress={() => setMafiaCapacityDraft((value) => Math.max(5, value - 1))}
+                style={[s.mafiaCapacityStepButton, mafiaCapacityDraft <= 5 && s.disabledSoft]}
+              >
+                <Text style={s.mafiaCapacityStepText}>−</Text>
+              </Pressable>
+              <Text style={s.mafiaCapacityValue}>{mafiaCapacityDraft}명</Text>
+              <Pressable
+                disabled={mafiaCapacityDraft >= 20}
+                onPress={() => setMafiaCapacityDraft((value) => Math.min(20, value + 1))}
+                style={[s.mafiaCapacityStepButton, mafiaCapacityDraft >= 20 && s.disabledSoft]}
+              >
+                <Text style={s.mafiaCapacityStepText}>＋</Text>
+              </Pressable>
+            </View>
+            <View style={s.mafiaCapacityActions}>
+              <Pressable
+                onPress={() => setMafiaCapacityPickerOpen(false)}
+                style={s.mafiaCapacityCancel}
+              >
+                <Text style={s.mafiaCapacityCancelText}>취소</Text>
+              </Pressable>
+              <Pressable
+                disabled={mafiaBusy}
+                onPress={() => startMafiaWithCapacity(mafiaCapacityDraft)}
+                style={[s.mafiaCapacityStart, mafiaBusy && s.disabled]}
+              >
+                <Text style={s.primaryText}>{mafiaBusy ? "시작 중..." : "시작하기"}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      )}
       {pointTarget && (
         <View style={s.sheetLayer}>
           <Pressable
@@ -17634,6 +18111,56 @@ function ChatDeliveryMeta({
   ) : null;
 }
 
+function mafiaPhaseLabel(state: MafiaGameState) {
+  const remainingSeconds = Math.max(
+    0,
+    Math.ceil((Date.parse(state.endsAt) - Date.now()) / 1000),
+  );
+  const suffix = remainingSeconds > 0 ? ` · ${remainingSeconds}초` : "";
+  if (state.status === "waiting")
+    return `마피아 모집 중 ${state.players.filter((p) => p.joined).length}/${state.capacity}${suffix}`;
+  if (state.phase === "day_discussion") return `${state.dayNumber}일 차 낮${suffix}`;
+  if (state.phase === "day_vote") return `투표하기${suffix}`;
+  if (state.phase === "final_defense") return `최후의 반론${suffix}`;
+  if (state.phase === "final_vote") return `찬반 투표${suffix}`;
+  if (state.phase === "night") return `${state.dayNumber}일 차 밤${suffix}`;
+  return "마피아 게임";
+}
+
+function MafiaGameBar({
+  state,
+  busy,
+  onPress,
+}: {
+  state: MafiaGameState;
+  busy: boolean;
+  onPress: () => void;
+}) {
+  const me = state.me;
+  const sub =
+    state.status === "waiting"
+      ? me?.joined
+        ? "참여 중 · 누르면 참여 취소"
+        : "누르면 참여"
+      : me?.role
+        ? `내 역할: ${me.role}`
+        : "관전 중";
+  return (
+    <Pressable
+      disabled={busy}
+      onPress={onPress}
+      style={[s.mafiaGameBar, busy && s.disabledSoft]}
+    >
+      <Ionicons name="people-circle-outline" size={18} color={colors.mint700} />
+      <View style={s.flex}>
+        <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabel(state)}</Text>
+        <Text style={s.mafiaGameBarSub}>{sub}</Text>
+      </View>
+      <Ionicons name="chevron-up" size={16} color={colors.textMuted} />
+    </Pressable>
+  );
+}
+
 function RankingMessageCard({
   avatarUri,
   drawerName,
@@ -17788,6 +18315,8 @@ function ComposerPanel({
   onNewStory,
   onRanking,
   onDraw,
+  onMafia,
+  mafiaLabel = "마피아 게임",
   onComingSoon,
   showPromotion,
   bubbleColor,
@@ -17812,6 +18341,8 @@ function ComposerPanel({
   onNewStory: () => void;
   onRanking: () => void;
   onDraw: () => void;
+  onMafia: () => void;
+  mafiaLabel?: string;
   onComingSoon: (label: string) => void;
   showPromotion: boolean;
   secretDraft: string;
@@ -17928,8 +18459,8 @@ function ComposerPanel({
             />
             <ToolAction
               icon="people-circle-outline"
-              label="마피아 게임"
-              onPress={() => onComingSoon("마피아 게임")}
+              label={mafiaLabel}
+              onPress={onMafia}
             />
           </View>
         </ScrollView>
@@ -19765,6 +20296,108 @@ const s = StyleSheet.create({
   },
   replyComposerName: { color: colors.mint700, fontSize: 11, fontWeight: "800" },
   replyComposerText: { color: colors.textMuted, fontSize: 11, marginTop: 3 },
+  mafiaGameBar: {
+    minHeight: 54,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: "#F7FCFA",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  mafiaGameBarTitle: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  mafiaGameBarSub: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  mafiaCapacitySheet: {
+    position: "absolute",
+    left: 18,
+    right: 18,
+    bottom: 34,
+    borderRadius: 26,
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 22,
+    paddingTop: 14,
+    paddingBottom: 20,
+  },
+  mafiaCapacityTitle: {
+    marginTop: 12,
+    fontSize: 18,
+    fontWeight: "800",
+    color: colors.text,
+  },
+  mafiaCapacityBody: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.textMuted,
+  },
+  mafiaCapacityStepper: {
+    marginTop: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 18,
+  },
+  mafiaCapacityStepButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.mint050,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mafiaCapacityStepText: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: colors.mint700,
+  },
+  mafiaCapacityValue: {
+    minWidth: 88,
+    textAlign: "center",
+    fontSize: 28,
+    fontWeight: "900",
+    color: colors.text,
+  },
+  mafiaCapacityActions: {
+    marginTop: 22,
+    flexDirection: "row",
+    gap: 10,
+  },
+  mafiaCapacityCancel: {
+    flex: 1,
+    height: 50,
+    borderRadius: 16,
+    backgroundColor: "#F2F2F2",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mafiaCapacityCancelText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: colors.textMuted,
+  },
+  mafiaCapacityStart: {
+    flex: 1.4,
+    height: 50,
+    borderRadius: 16,
+    backgroundColor: colors.mint700,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mafiaScopedBubble: {
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: "rgba(30,30,30,.22)",
+  },
   sheetKeyboard: { ...StyleSheet.absoluteFill, justifyContent: "flex-end" },
   pointSendSheet: {
     marginHorizontal: 18,
