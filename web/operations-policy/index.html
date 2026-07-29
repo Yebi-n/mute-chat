@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>뮤트 운영정책</title>
+    <title>뮤트 성인인증</title>
     <script src="./config.js"></script>
     <script src="https://cdn.portone.io/v2/browser-sdk.js"></script>
     <style>
@@ -12,7 +12,7 @@
         --bg: #f6f8f7;
         --card: #ffffff;
         --line: #e6ece9;
-        --text: #1c1c1c;
+        --text: #1f2933;
         --sub: #6f7774;
         --mint-a: #82b9c1;
         --mint-b: #5dbb8c;
@@ -22,41 +22,45 @@
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
-        background: var(--bg);
+        font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(130, 185, 193, .22), transparent 34%),
+          radial-gradient(circle at top right, rgba(93, 187, 140, .18), transparent 32%),
+          var(--bg);
         color: var(--text);
       }
       .wrap {
         max-width: 760px;
         margin: 0 auto;
-        padding: 24px 16px 56px;
+        padding: max(24px, env(safe-area-inset-top)) 16px max(56px, env(safe-area-inset-bottom));
       }
       .hero,
       .card {
-        background: var(--card);
+        background: rgba(255, 255, 255, .94);
         border: 1px solid var(--line);
-        border-radius: 22px;
-        padding: 18px 16px;
-      }
-      .hero {
         border-radius: 24px;
         padding: 22px 20px;
-      }
-      h1, h2, p { margin: 0; }
-      .hero h1,
-      .card h2 {
-        font-size: 13px;
-        font-weight: 600;
-      }
-      .hero p,
-      .card p,
-      .card li {
-        margin-top: 10px;
-        font-size: 13px;
-        line-height: 1.6;
-        color: var(--sub);
+        box-shadow: 0 20px 56px rgba(31, 41, 51, .08);
       }
       .card { margin-top: 16px; }
+      h1, h2, p { margin: 0; }
+      h1 {
+        font-size: 28px;
+        line-height: 1.18;
+        letter-spacing: -.04em;
+      }
+      h2 {
+        font-size: 18px;
+        line-height: 1.35;
+        letter-spacing: -.02em;
+      }
+      p,
+      li {
+        margin-top: 10px;
+        font-size: 14px;
+        line-height: 1.65;
+        color: var(--sub);
+      }
       .field { margin-top: 12px; }
       .label {
         display: block;
@@ -69,17 +73,22 @@
         border: 1px solid var(--line);
         border-radius: 14px;
         padding: 14px 15px;
-        font-size: 13px;
+        font-size: 15px;
         color: var(--text);
         background: #fff;
+        outline: none;
+      }
+      .input:focus {
+        border-color: var(--mint-b);
+        box-shadow: 0 0 0 3px rgba(93, 187, 140, .15);
       }
       .button {
         width: 100%;
         border: 0;
         border-radius: 16px;
         padding: 14px 16px;
-        font-size: 13px;
-        font-weight: 600;
+        font-size: 15px;
+        font-weight: 700;
         color: #fff;
         cursor: pointer;
         background: linear-gradient(90deg, var(--mint-a), var(--mint-b));
@@ -97,21 +106,16 @@
         flex-direction: column;
         gap: 10px;
       }
-      .hint {
-        margin-top: 10px;
-        font-size: 13px;
-        color: var(--sub);
-      }
-      .error {
-        margin-top: 10px;
-        color: var(--danger);
-        font-size: 13px;
-      }
+      .hint,
+      .error,
       .ok {
         margin-top: 10px;
-        color: #338863;
         font-size: 13px;
+        line-height: 1.55;
       }
+      .hint { color: var(--sub); }
+      .error { color: var(--danger); }
+      .ok { color: #338863; }
       .status { display: none; }
       .status.visible { display: block; }
       .pill {
@@ -123,12 +127,12 @@
         background: var(--mint-soft);
         color: #338863;
         font-size: 13px;
-        font-weight: 600;
+        font-weight: 700;
       }
       .muted {
         color: var(--sub);
         font-size: 13px;
-        line-height: 1.6;
+        line-height: 1.65;
       }
       .divider {
         height: 1px;
@@ -139,27 +143,45 @@
         padding-left: 18px;
         margin: 0;
       }
+      .notice {
+        margin-top: 12px;
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: #fbfdfc;
+        border: 1px solid var(--line);
+        color: var(--sub);
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      @media (max-width: 480px) {
+        h1 { font-size: 24px; }
+        .hero, .card { padding: 20px 16px; }
+      }
     </style>
   </head>
   <body>
     <div class="wrap">
       <section class="hero">
-        <h1>뮤트 운영정책</h1>
+        <h1>뮤트 성인인증</h1>
         <p>
-          성인 카테고리 접근 상태와 운영정책을 확인하는 페이지입니다.
-          성인인증할 계정의 로그인 정보를 입력해주세요.
+          성인 카테고리는 만 19세 이상 본인인증을 완료한 계정만 이용할 수 있습니다.
+          인증 결과는 인증한 전화번호와 가입 계정을 기준으로 서버에 반영됩니다.
         </p>
+        <div class="notice">
+          iPhone에서 Safari로 인증을 진행해도, 인증한 전화번호가 뮤트 가입 전화번호와 일치하면 해당 계정의 성인인증이 활성화됩니다.
+        </div>
       </section>
 
       <section id="login-card" class="card">
         <h2>로그인</h2>
+        <p>성인인증을 시작하려면 뮤트에 가입한 전화번호와 비밀번호로 먼저 로그인해주세요.</p>
         <div class="field">
           <label class="label" for="phone">전화번호</label>
-          <input id="phone" class="input" type="tel" inputmode="numeric" placeholder="01012345678" />
+          <input id="phone" class="input" type="tel" inputmode="numeric" autocomplete="tel" placeholder="01012345678" />
         </div>
         <div class="field">
           <label class="label" for="password">비밀번호</label>
-          <input id="password" class="input" type="password" placeholder="비밀번호" />
+          <input id="password" class="input" type="password" autocomplete="current-password" placeholder="비밀번호" />
         </div>
         <div class="field">
           <button id="login" class="button">로그인</button>
@@ -170,8 +192,8 @@
       <section id="status-card" class="card status">
         <h2>성인 카테고리 접근</h2>
         <div class="stack">
-          <div id="adult-badge" class="pill">로그인 확인 중</div>
-          <div id="adult-copy" class="muted">현재 계정 상태를 확인하고 있습니다.</div>
+          <div id="adult-badge" class="pill">계정 상태 확인 중</div>
+          <div id="adult-copy" class="muted">현재 계정의 인증 상태를 확인하고 있습니다.</div>
         </div>
         <div class="divider"></div>
         <div class="stack">
@@ -183,11 +205,12 @@
       </section>
 
       <section class="card">
-        <h2>운영 규칙</h2>
+        <h2>안내</h2>
         <ul>
-          <li>성인 카테고리는 신고, 차단, 금칙어 필터링 및 운영자 검토 기반으로 운영됩니다.</li>
-          <li>불법 촬영물, 아동·청소년 대상 성착취물, 개인정보 노출 콘텐츠는 즉시 제한 대상이며, 성폭력범죄의 처벌 등에 관한 특례법 및 아동·청소년의 성보호에 관한 법률 등에 따라 처벌될 수 있습니다.</li>
-          <li>성인 카테고리 접근은 성인인증 완료 계정에 한해서만 허용됩니다.</li>
+          <li>인증 결과의 생년월일이 만 19세 이상일 때만 성인인증이 완료됩니다.</li>
+          <li>인증한 전화번호와 뮤트 가입 전화번호가 다르면 성인인증이 반영되지 않습니다.</li>
+          <li>성인인증 결과만 저장하며, 주민등록번호 등 민감한 원문 정보는 뮤트 서버에 저장하지 않습니다.</li>
+          <li>성인 카테고리는 신고, 차단, 운영자 검토 기준에 따라 관리됩니다.</li>
         </ul>
       </section>
     </div>
@@ -200,9 +223,10 @@
       const START_URL = `${SUPABASE_URL}/functions/v1/start-adult-verification`;
       const COMPLETE_URL = `${SUPABASE_URL}/functions/v1/complete-adult-verification`;
       const RETURN_URL = `${window.location.origin}${window.location.pathname}`;
+      const params = new URLSearchParams(window.location.search);
 
       if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-        document.body.innerHTML = '<div style="padding:24px;font-family:sans-serif;color:#1c1c1c">서비스 설정을 불러오지 못했습니다.</div>';
+        document.body.innerHTML = '<div style="padding:24px;font-family:sans-serif;color:#1c1c1c">서비스 설정을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.</div>';
         throw new Error('Missing Supabase configuration');
       }
 
@@ -224,15 +248,18 @@
       const refreshStatusButton = document.getElementById('refresh-status');
 
       const errorMessages = {
-        PROVIDER_NOT_CONFIGURED: '본인인증 계약 승인을 기다리고 있습니다.',
-        VERIFICATION_ATTEMPT_NOT_FOUND: '인증 요청을 찾을 수 없습니다. 다시 시작해주세요.',
-        VERIFICATION_ATTEMPT_EXPIRED: '인증 시간이 만료되었습니다. 다시 시작해주세요.',
+        PROVIDER_NOT_CONFIGURED: '성인인증 서비스가 아직 준비 중입니다. 잠시 후 다시 시도해주세요.',
+        ADULT_VERIFICATION_PROVIDER_NOT_CONFIGURED: '성인인증 서비스가 아직 준비 중입니다. 잠시 후 다시 시도해주세요.',
+        VERIFICATION_ATTEMPT_NOT_FOUND: '인증 요청을 찾을 수 없습니다. 다시 성인인증을 시작해주세요.',
+        VERIFICATION_ATTEMPT_EXPIRED: '인증 시간이 만료되었습니다. 다시 성인인증을 시작해주세요.',
         VERIFICATION_ATTEMPT_INVALID: '이미 처리되었거나 사용할 수 없는 인증 요청입니다.',
         NOT_VERIFIED: '본인인증이 완료되지 않았습니다.',
-        UNDER_AGE: '성인인증 대상 연령이 아닙니다.',
-        PHONE_MISMATCH: '계정 전화번호와 본인인증 전화번호가 일치하지 않습니다.',
-        IDENTITY_ALREADY_USED: '이미 다른 계정에서 사용한 본인정보입니다.',
-        PORTONE_LOOKUP_FAILED: '인증 결과 확인이 지연되고 있습니다. 잠시 후 다시 시도해주세요.',
+        UNDER_AGE: '만 19세 이상 계정만 성인 카테고리를 이용할 수 있습니다.',
+        PHONE_MISMATCH: '인증한 전화번호와 로그인한 계정의 전화번호가 일치하지 않습니다.',
+        PHONE_ACCOUNT_NOT_FOUND: '인증한 전화번호로 가입된 뮤트 계정을 찾을 수 없습니다. 뮤트에 가입한 전화번호로 인증해주세요.',
+        IDENTITY_ALREADY_USED: '이미 다른 계정에서 사용된 본인인증 정보입니다.',
+        PORTONE_LOOKUP_FAILED: '인증 결과 확인이 지연되고 있습니다. 잠시 후 상태 새로고침을 눌러주세요.',
+        UNAUTHORIZED: '로그인이 필요합니다. 다시 로그인해주세요.',
       };
 
       function normalizePhone(value) {
@@ -243,9 +270,13 @@
         return '+82' + digits;
       }
 
-      function errorText(error, fallback) {
-        const code = error?.context?.body?.error || error?.error || error?.code || error?.message;
-        return errorMessages[code] || fallback;
+      function messageFrom(error, fallback) {
+        const code =
+          error?.context?.body?.error ||
+          error?.error ||
+          error?.code ||
+          error?.message;
+        return errorMessages[code] || fallback || '처리 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.';
       }
 
       function setMessage(target, text, type = 'hint') {
@@ -258,21 +289,22 @@
         statusCard.classList.add('visible');
       }
 
-      async function accessToken() {
+      async function currentToken() {
         const { data } = await supabase.auth.getSession();
-        const token = data.session?.access_token;
-        if (!token) throw new Error('로그인이 필요합니다.');
-        return token;
+        return data.session?.access_token || null;
       }
 
-      async function callFunction(url, body) {
+      async function callFunction(url, body, { requireAuth = true } = {}) {
+        const token = await currentToken();
+        if (requireAuth && !token) throw { error: 'UNAUTHORIZED' };
+        const headers = {
+          apikey: SUPABASE_ANON_KEY,
+          'Content-Type': 'application/json',
+        };
+        if (token) headers.Authorization = `Bearer ${token}`;
         const response = await fetch(url, {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${await accessToken()}`,
-            apikey: SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json',
-          },
+          headers,
           body: JSON.stringify(body),
         });
         const payload = await response.json().catch(() => ({}));
@@ -298,7 +330,7 @@
           adultBadge.textContent = '성인인증 완료';
           adultCopy.textContent = webOptedIn
             ? 'iOS 성인 카테고리 접근이 아직 비활성화되어 있습니다.'
-            : '아래 버튼을 눌러 iOS 성인 카테고리 접근을 허용할 수 있습니다.';
+            : '아래 버튼을 눌러 iOS 성인 카테고리 접근을 허용해주세요.';
           startVerifyButton.style.display = 'none';
           enableIosButton.style.display = 'block';
         } else {
@@ -309,26 +341,44 @@
         }
 
         if (announce) {
-          setMessage(statusMessage, adultVerified ? '인증 상태를 확인했습니다.' : '성인인증이 필요합니다.', adultVerified ? 'ok' : 'hint');
+          setMessage(
+            statusMessage,
+            adultVerified ? '인증 상태를 확인했습니다.' : '아직 성인인증이 필요합니다.',
+            adultVerified ? 'ok' : 'hint',
+          );
         }
       }
 
       async function completeVerification(identityVerificationId) {
         showAuthenticated();
         adultBadge.textContent = '인증 결과 확인 중';
-        adultCopy.textContent = '본인인증 결과를 안전하게 확인하고 있습니다.';
+        adultCopy.textContent = '본인인증 결과를 서버에서 확인하고 있습니다.';
         setMessage(statusMessage, '잠시만 기다려주세요.');
-        await callFunction(COMPLETE_URL, { identityVerificationId });
+
+        await callFunction(
+          COMPLETE_URL,
+          { identityVerificationId },
+          { requireAuth: false },
+        );
         history.replaceState({}, '', RETURN_URL);
-        await loadStatus();
-        setMessage(statusMessage, '성인인증이 완료되었습니다.', 'ok');
+
+        if (await currentToken()) {
+          await loadStatus();
+          setMessage(statusMessage, '성인인증이 완료되었습니다.', 'ok');
+        } else {
+          adultBadge.textContent = '성인인증 완료';
+          adultCopy.textContent = '인증한 전화번호와 일치하는 뮤트 계정에 성인인증이 반영되었습니다. 앱을 다시 열거나 로그인 후 상태를 확인해주세요.';
+          startVerifyButton.style.display = 'none';
+          enableIosButton.style.display = 'none';
+          setMessage(statusMessage, '성인인증이 완료되었습니다.', 'ok');
+        }
       }
 
       async function startAdultVerification() {
         setMessage(statusMessage, '인증 창을 여는 중입니다...');
-        const payload = await callFunction(START_URL, { returnUrl: RETURN_URL });
+        const payload = await callFunction(START_URL, { returnUrl: RETURN_URL }, { requireAuth: true });
         if (payload.mode === 'portone') {
-          if (!window.PortOne) throw new Error('본인인증 모듈을 불러오지 못했습니다.');
+          if (!window.PortOne) throw new Error('본인인증 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
           const response = await window.PortOne.requestIdentityVerification({
             storeId: payload.storeId,
             channelKey: payload.channelKey,
@@ -339,21 +389,26 @@
           await completeVerification(response?.identityVerificationId || payload.identityVerificationId);
           return;
         }
-        if (!payload.url) throw new Error('본인인증 계약 승인을 기다리고 있습니다.');
+        if (!payload.url) throw new Error('성인인증 서비스가 아직 준비 중입니다.');
         window.location.href = payload.url;
       }
 
       async function login() {
         const phone = normalizePhone(phoneInput.value);
         const password = passwordInput.value;
-        if (!/^\+8210\d{8}$/.test(phone)) return setMessage(loginMessage, '전화번호 형식을 확인해주세요.', 'error');
-        if (!password) return setMessage(loginMessage, '비밀번호를 입력해주세요.', 'error');
+        if (!/^\+8210\d{8}$/.test(phone)) {
+          return setMessage(loginMessage, '전화번호 형식을 확인해주세요. 예: 01012345678', 'error');
+        }
+        if (!password) {
+          return setMessage(loginMessage, '비밀번호를 입력해주세요.', 'error');
+        }
 
         loginButton.disabled = true;
         setMessage(loginMessage, '로그인 중입니다...');
         try {
           const { error } = await supabase.auth.signInWithPassword({ phone, password });
           if (error) throw error;
+          setMessage(loginMessage, '');
           await loadStatus();
         } catch {
           setMessage(loginMessage, '전화번호 또는 비밀번호가 일치하지 않습니다.', 'error');
@@ -371,7 +426,8 @@
         try {
           await startAdultVerification();
         } catch (error) {
-          setMessage(statusMessage, errorText(error, error?.message || '성인인증을 시작하지 못했습니다.'), 'error');
+          setMessage(statusMessage, messageFrom(error, error?.message || '성인인증을 시작하지 못했습니다.'), 'error');
+        } finally {
           startVerifyButton.disabled = false;
         }
       });
@@ -383,7 +439,7 @@
           await loadStatus();
           setMessage(statusMessage, 'iOS 성인 카테고리 접근을 허용했습니다.', 'ok');
         } catch {
-          setMessage(statusMessage, '접근 설정을 변경하지 못했습니다.', 'error');
+          setMessage(statusMessage, '접근 설정을 변경하지 못했습니다. 잠시 후 다시 시도해주세요.', 'error');
         } finally {
           enableIosButton.disabled = false;
         }
@@ -393,21 +449,28 @@
         try {
           await loadStatus({ announce: true });
         } catch {
-          setMessage(statusMessage, '인증 상태를 불러오지 못했습니다.', 'error');
+          setMessage(statusMessage, '인증 상태를 불러오지 못했습니다. 다시 로그인해주세요.', 'error');
         } finally {
           refreshStatusButton.disabled = false;
         }
       });
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (sessionData.session) {
-        const verificationId = new URLSearchParams(location.search).get('identityVerificationId');
+      const verificationId = params.get('identityVerificationId');
+      if (verificationId) {
         try {
-          if (verificationId) await completeVerification(verificationId);
-          else await loadStatus();
+          await completeVerification(verificationId);
         } catch (error) {
           showAuthenticated();
-          setMessage(statusMessage, errorText(error, '인증 결과를 확인하지 못했습니다.'), 'error');
+          setMessage(statusMessage, messageFrom(error, '인증 결과를 확인하지 못했습니다. 다시 성인인증을 시작해주세요.'), 'error');
+        }
+      } else {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData.session) {
+          try {
+            await loadStatus();
+          } catch {
+            setMessage(statusMessage, '인증 상태를 불러오지 못했습니다. 다시 로그인해주세요.', 'error');
+          }
         }
       }
     </script>
