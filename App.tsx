@@ -1932,30 +1932,27 @@ function replyLabel(name: string, myDisplayName: string) {
 function displayMafiaSystemText(body: string) {
   if (!body.startsWith("[MAFIA_")) return body;
   const mafiaNameOverride = new RegExp("name=([^\\s]+)").exec(body)?.[1];
-  if (body.startsWith("[MAFIA_CANCELLED]")) return "-참여 인원이 부족하여 마피아 게임이 취소되었습니다-";
-  if (body.startsWith("[MAFIA_EXECUTION_REJECTED]")) return "-찬성이 과반을 넘지 않아 아무도 처형되지 않았습니다-";
-  if (body.startsWith("[MAFIA_NIGHT_KILL]")) return `-${mafiaNameOverride ?? "대상"}님이 마피아의 총에 맞아 사망했습니다-`;
-  if (body.startsWith("[MAFIA_FORCE_ENDED]")) return `-${mafiaNameOverride ?? "진행자"}님이 게임을 강제 종료하였습니다-`;
+  if (body.startsWith("[MAFIA_CANCELLED")) return "참여 인원이 부족하여 마피아 게임이 취소되었습니다";
+  if (body.startsWith("[MAFIA_EXECUTION_REJECTED")) return "찬성이 과반을 넘지 않아 아무도 처형되지 않았습니다";
+  if (body.startsWith("[MAFIA_NIGHT_KILL")) return `${mafiaNameOverride ?? "대상"}님이 마피아의 총에 맞아 사망했습니다`;
+  if (body.startsWith("[MAFIA_FORCE_ENDED")) return `${mafiaNameOverride ?? "진행자"}님이 게임을 강제 종료하였습니다`;
   const get = (key: string) => new RegExp(`${key}=([^\\s]+)`).exec(body)?.[1];
   const name = get("name") ?? undefined;
-  if (body.startsWith("[MAFIA_LOBBY]")) return "마피아 게임에 참여하시겠습니까? 1분 후 시작됩니다.";
-  if (body.startsWith("[MAFIA_CANCEL_JOIN]")) return `${name ?? "멤버"}님이 마피아 게임 참여를 취소했습니다.`;
-  if (body.startsWith("[MAFIA_CANCELLED]")) return "참여 인원이 부족해 마피아 게임이 취소되었습니다.";
-  if (body.startsWith("[MAFIA_DAY_START]")) return `-${get("day") ?? "1"}일 차 낮이 되었습니다-`;
-  if (body.startsWith("[MAFIA_DAY_VOTE_START]")) return "-투표를 시작합니다-";
-  if (body.startsWith("[MAFIA_NO_EXECUTION]")) return "-투표 결과 처형 없이 밤이 되었습니다-";
-  if (body.startsWith("[MAFIA_FINAL_DEFENSE]")) return `-${name ?? "대상"}님이 최후의 반론을 시작합니다-`;
-  if (body.startsWith("[MAFIA_FINAL_VOTE_START]")) return "-찬반 투표를 시작합니다-";
-  if (body.startsWith("[MAFIA_EXECUTED]")) {
+  if (body.startsWith("[MAFIA_LOBBY")) return "마피아 게임에 참여하시겠습니까? 1분 후 시작됩니다.";
+  if (body.startsWith("[MAFIA_CANCEL_JOIN")) return `${name ?? "멤버"}님이 마피아 게임 참여를 취소했습니다.`;
+  if (body.startsWith("[MAFIA_DAY_START")) return `${get("day") ?? "1"}일 차 낮이 되었습니다`;
+  if (body.startsWith("[MAFIA_DAY_VOTE_START")) return "투표를 시작합니다";
+  if (body.startsWith("[MAFIA_NO_EXECUTION")) return "투표 결과 처형 없이 밤이 되었습니다";
+  if (body.startsWith("[MAFIA_FINAL_DEFENSE")) return `${name ?? "대상"}님이 최후의 반론을 시작합니다`;
+  if (body.startsWith("[MAFIA_FINAL_VOTE_START")) return "찬반 투표를 시작합니다";
+  if (body.startsWith("[MAFIA_EXECUTED")) {
     const role = get("role");
-    return `-${name ?? "대상"}님이 사망하셨습니다. ${name ?? "대상"}님은 ${role === "mafia" ? "마피아였습니다" : "마피아가 아니었습니다"}-`;
+    return `${name ?? "대상"}님이 사망하셨습니다. ${name ?? "대상"}님은 ${role === "mafia" ? "마피아였습니다" : "마피아가 아니었습니다"}`;
   }
-  if (body.startsWith("[MAFIA_EXECUTION_REJECTED]")) return "-처형이 부결되었습니다-";
-  if (body.startsWith("[MAFIA_NIGHT_START]")) return `-${get("day") ?? "1"}일 차 밤이 되었습니다-`;
-  if (body.startsWith("[MAFIA_NIGHT_KILL]")) return `-${name ?? "대상"}님이 밤에 사망했습니다-`;
-  if (body.startsWith("[MAFIA_NIGHT_NO_DEATH]")) return "-밤사이 아무도 사망하지 않았습니다-";
-  if (body.startsWith("[MAFIA_GAME_END]")) return get("winner") === "mafia" ? "-마피아가 승리했습니다-" : "-시민이 승리했습니다-";
-  if (body.startsWith("[MAFIA_INSPECT_RESULT]")) return `-조사 결과: ${name ?? "대상"}님은 ${get("isMafia") === "true" ? "마피아입니다" : "마피아가 아닙니다"}-`;
+  if (body.startsWith("[MAFIA_NIGHT_START")) return `${get("day") ?? "1"}일 차 밤이 되었습니다`;
+  if (body.startsWith("[MAFIA_NIGHT_NO_DEATH")) return "밤사이 아무도 사망하지 않았습니다";
+  if (body.startsWith("[MAFIA_GAME_END")) return get("winner") === "mafia" ? "마피아가 승리했습니다" : "시민이 승리했습니다";
+  if (body.startsWith("[MAFIA_INSPECT_RESULT")) return `조사 결과: ${name ?? "대상"}님은 ${get("isMafia") === "true" ? "마피아입니다" : "마피아가 아닙니다"}`;
   return body;
 }
 
@@ -11296,17 +11293,31 @@ function ChatRoom({
               <Pressable
                 disabled={mafiaCapacityDraft <= 5}
                 onPress={() => setMafiaCapacityDraft((value) => Math.max(5, value - 1))}
-                style={[s.mafiaCapacityStepButton, mafiaCapacityDraft <= 5 && s.disabledSoft]}
+                style={[s.mafiaCapacityStepButtonWrap, mafiaCapacityDraft <= 5 && s.disabledSoft]}
               >
-                <Text style={s.mafiaCapacityStepText}>−</Text>
+                <LinearGradient
+                  colors={["#82B9C1", "#5DBB8C"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={s.mafiaCapacityStepButton}
+                >
+                  <Text style={s.mafiaCapacityStepText}>−</Text>
+                </LinearGradient>
               </Pressable>
               <Text style={s.mafiaCapacityValue}>{mafiaCapacityDraft}명</Text>
               <Pressable
                 disabled={mafiaCapacityDraft >= 20}
                 onPress={() => setMafiaCapacityDraft((value) => Math.min(20, value + 1))}
-                style={[s.mafiaCapacityStepButton, mafiaCapacityDraft >= 20 && s.disabledSoft]}
+                style={[s.mafiaCapacityStepButtonWrap, mafiaCapacityDraft >= 20 && s.disabledSoft]}
               >
-                <Text style={s.mafiaCapacityStepText}>＋</Text>
+                <LinearGradient
+                  colors={["#82B9C1", "#5DBB8C"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={s.mafiaCapacityStepButton}
+                >
+                  <Text style={s.mafiaCapacityStepText}>＋</Text>
+                </LinearGradient>
               </Pressable>
             </View>
             <View style={s.mafiaCapacityActions}>
@@ -11321,7 +11332,14 @@ function ChatRoom({
                 onPress={() => startMafiaWithCapacity(mafiaCapacityDraft)}
                 style={[s.mafiaCapacityStart, mafiaBusy && s.disabled]}
               >
-                <Text style={s.primaryText}>{mafiaBusy ? "시작 중..." : "시작하기"}</Text>
+                <LinearGradient
+                  colors={["#82B9C1", "#5DBB8C"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={s.mafiaCapacityStartGradient}
+                >
+                  <Text style={s.primaryText}>{mafiaBusy ? "시작 중..." : "시작하기"}</Text>
+                </LinearGradient>
               </Pressable>
             </View>
           </View>
@@ -18224,14 +18242,21 @@ function MafiaGameBar({
     <Pressable
       disabled={busy}
       onPress={onPress}
-      style={[s.mafiaGameBar, busy && s.disabledSoft]}
+      style={[s.mafiaGameBarWrap, busy && s.disabledSoft]}
     >
-      <Ionicons name="people-circle-outline" size={18} color={colors.mint700} />
-      <View style={s.flex}>
-        <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabel(state)}</Text>
-        <Text style={s.mafiaGameBarSub}>{sub}</Text>
-      </View>
-      <Ionicons name="chevron-up" size={16} color={colors.textMuted} />
+      <LinearGradient
+        colors={["#82B9C1", "#5DBB8C"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={s.mafiaGameBar}
+      >
+        <Ionicons name="people-circle-outline" size={18} color="#FFFFFF" />
+        <View style={s.flex}>
+          <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabel(state)}</Text>
+          <Text style={s.mafiaGameBarSub}>{sub}</Text>
+        </View>
+        <Ionicons name="chevron-up" size={16} color="#FFFFFF" />
+      </LinearGradient>
     </Pressable>
   );
 }
@@ -20371,6 +20396,13 @@ const s = StyleSheet.create({
   },
   replyComposerName: { color: colors.mint700, fontSize: 11, fontWeight: "800" },
   replyComposerText: { color: colors.textMuted, fontSize: 11, marginTop: 3 },
+  mafiaGameBarWrap: {
+    marginHorizontal: 10,
+    marginVertical: 6,
+    borderRadius: 16,
+    overflow: "hidden",
+    ...shadows.soft,
+  },
   mafiaGameBar: {
     minHeight: 54,
     flexDirection: "row",
@@ -20378,17 +20410,14 @@ const s = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: "#F7FCFA",
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
   },
   mafiaGameBarTitle: {
-    color: colors.text,
+    color: "#FFFFFF",
     fontSize: 13,
-    fontWeight: "800",
+    fontWeight: "700",
   },
   mafiaGameBarSub: {
-    color: colors.textMuted,
+    color: "rgba(255,255,255,.86)",
     fontSize: 11,
     marginTop: 2,
   },
@@ -20416,30 +20445,33 @@ const s = StyleSheet.create({
     color: colors.textMuted,
   },
   mafiaCapacityStepper: {
-    marginTop: 18,
+    marginTop: 14,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 18,
+    gap: 12,
+  },
+  mafiaCapacityStepButtonWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    overflow: "hidden",
   },
   mafiaCapacityStepButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.mint050,
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
   },
   mafiaCapacityStepText: {
-    fontSize: 28,
-    fontWeight: "800",
-    color: colors.mint700,
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#FFFFFF",
   },
   mafiaCapacityValue: {
-    minWidth: 88,
+    minWidth: 62,
     textAlign: "center",
-    fontSize: 28,
-    fontWeight: "900",
+    fontSize: 20,
+    fontWeight: "700",
     color: colors.text,
   },
   mafiaCapacityActions: {
@@ -20464,7 +20496,13 @@ const s = StyleSheet.create({
     flex: 1.4,
     height: 50,
     borderRadius: 16,
-    backgroundColor: colors.mint700,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mafiaCapacityStartGradient: {
+    flex: 1,
+    alignSelf: "stretch",
     alignItems: "center",
     justifyContent: "center",
   },
