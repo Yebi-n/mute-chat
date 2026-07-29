@@ -579,8 +579,15 @@ type ChatRankingPayload = {
   entries: ChatRankingEntry[];
 };
 
+type ChatDrawPayload = {
+  title: string;
+  selectedName: string;
+};
+
 const CHAT_RANKING_TITLE_RE = /^(.+)님이 랭킹을 뽑았습니다\.$/;
 const CHAT_RANKING_ENTRY_RE = /^(\d+)위\s+(.+)$/;
+const CHAT_DRAW_TITLE_RE = /^(.+)님이 제비를 뽑았습니다\.$/;
+const CHAT_DRAW_SELECTED_RE = /^당첨\s+(.+)$/;
 
 function shuffleRoomMembersForRanking(members: RoomMember[], fallbackName: string) {
   const unique = new Map<string, string>();
@@ -624,6 +631,26 @@ function parseChatRankingMessage(text: string): ChatRankingPayload | null {
   return {
     title: lines[0],
     entries: entries.filter(Boolean) as ChatRankingEntry[],
+  };
+}
+
+function buildChatDrawMessage(drawerName: string, members: RoomMember[]) {
+  const safeDrawerName = drawerName.trim() || "나";
+  const selectedName = shuffleRoomMembersForRanking(members, safeDrawerName)[0];
+  return `${safeDrawerName}님이 제비를 뽑았습니다.\n당첨 ${selectedName}`;
+}
+
+function parseChatDrawMessage(text: string): ChatDrawPayload | null {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length !== 2 || !CHAT_DRAW_TITLE_RE.test(lines[0])) return null;
+  const selected = lines[1].match(CHAT_DRAW_SELECTED_RE);
+  if (!selected?.[1]?.trim()) return null;
+  return {
+    title: lines[0],
+    selectedName: selected[1].trim(),
   };
 }
 
@@ -8488,6 +8515,35 @@ function ChatRoom({
       .then(() => submitTextMessage(localId, text))
       .catch(() => undefined);
   };
+  const sendDraw = () => {
+    const text = buildChatDrawMessage(myDisplayName, roomMembersRef.current);
+    const createdAt = new Date().toISOString();
+    pendingTextSeq.current += 1;
+    const localId = `pending-draw-${Date.now()}-${pendingTextSeq.current}`;
+    setTool(null);
+    setMessages((items) => [
+      ...items,
+      {
+        id: localId,
+        kind: "text",
+        mine: true,
+        name: myDisplayName,
+        avatarUri: myProfile?.avatarUri,
+        text,
+        time: "지금",
+        createdAt,
+        delivery: "sending",
+        bubbleColor,
+        textColor,
+      },
+    ]);
+    requestAnimationFrame(() => scrollToLatestRef.current(false));
+    setTimeout(() => scrollToLatestRef.current(false), 40);
+    setTimeout(() => scrollToLatestRef.current(false), 140);
+    textSendQueueRef.current = textSendQueueRef.current
+      .then(() => submitTextMessage(localId, text))
+      .catch(() => undefined);
+  };
   scrollToLatestRef.current = scrollToLatest;
   const sendHeart = async (targetNameOverride?: string): Promise<boolean> => {
     const createdAt = new Date().toISOString();
@@ -10113,9 +10169,12 @@ function ChatRoom({
             const expanded = expandedMessages.includes(item.id);
             const rankingPayload =
               item.kind === "text" ? parseChatRankingMessage(item.text) : null;
+            const drawPayload =
+              item.kind === "text" ? parseChatDrawMessage(item.text) : null;
+            const cardPayload = rankingPayload || drawPayload;
             const shouldCollapse =
               item.kind === "text" &&
-              !rankingPayload &&
+              !cardPayload &&
               item.text.length >= CHAT_COLLAPSE_CHAR_THRESHOLD;
             const deliveryMeta = (
               <ChatDeliveryMeta
@@ -10149,10 +10208,10 @@ function ChatRoom({
                     s.messageRow,
                     item.mine && s.mineRow,
                     continuous && s.continuousRow,
-                    rankingPayload && s.rankingMessageRow,
+                    cardPayload && s.rankingMessageRow,
                   ]}
                 >
-                  {!item.mine && !rankingPayload ? (
+                  {!item.mine && !cardPayload ? (
                     !continuous ? (
                       <Pressable
                         accessibilityLabel={`${item.name} 프로필 메뉴`}
@@ -10170,10 +10229,10 @@ function ChatRoom({
                     style={[
                       s.messageBlock,
                       item.mine && s.mineMessageBlock,
-                      rankingPayload && s.rankingMessageBlock,
+                      cardPayload && s.rankingMessageBlock,
                     ]}
                   >
-                    {!continuous && !rankingPayload && (
+                    {!continuous && !cardPayload && (
                       <Text style={[s.sender, item.mine && s.mineSender]}>
                         {item.name}
                       </Text>
@@ -10183,10 +10242,10 @@ function ChatRoom({
                         s.bubbleLine,
                         s.tightBubbleLine,
                         item.mine && s.mineBubbleLine,
-                        rankingPayload && s.rankingBubbleLine,
+                        cardPayload && s.rankingBubbleLine,
                       ]}
                     >
-                      {item.mine && !rankingPayload && deliveryMeta}
+                      {item.mine && !cardPayload && deliveryMeta}
                       <Pressable
                         preserveTheme
                         onLongPress={() =>
@@ -10201,7 +10260,7 @@ function ChatRoom({
                         }
                         style={[
                           s.bubble,
-                          rankingPayload && s.rankingBubble,
+                          cardPayload && s.rankingBubble,
                           item.kind === "image" && s.imageBubble,
                           activeSearchMessage?.id === item.id &&
                             s.searchBubbleActive,
@@ -10211,9 +10270,9 @@ function ChatRoom({
                               item.bubbleColor ??
                               (item.mine ? bubbleColor : "#F5F5F5"),
                           },
-                          !rankingPayload && item.mine
+                          !cardPayload && item.mine
                             ? { borderBottomRightRadius: 4 }
-                            : !rankingPayload
+                            : !cardPayload
                               ? { borderBottomLeftRadius: 4 }
                               : null,
                         ]}
@@ -10309,6 +10368,20 @@ function ChatRoom({
                               (item.mine ? textColor : colors.text)
                             }
                           />
+                        ) : drawPayload ? (
+                          <DrawMessageCard
+                            selectedName={drawPayload.selectedName}
+                            selectedAvatarUri={
+                              roomMembersRef.current.find(
+                                (member) => member.name === drawPayload.selectedName,
+                              )?.avatarUri
+                            }
+                            title={drawPayload.title}
+                            textColor={
+                              item.textColor ??
+                              (item.mine ? textColor : colors.text)
+                            }
+                          />
                         ) : (
                           <View>
                             {item.text === "삭제된 메시지입니다." ? (
@@ -10363,10 +10436,10 @@ function ChatRoom({
                           </View>
                         )}
                       </Pressable>
-                      {!item.mine && !rankingPayload && deliveryMeta}
+                      {!item.mine && !cardPayload && deliveryMeta}
                     </View>
                   </View>
-                  {item.mine && !rankingPayload ? (
+                  {item.mine && !cardPayload ? (
                     !continuous ? (
                       <Pressable
                         accessibilityLabel={`${item.name} 프로필 메뉴`}
@@ -10474,6 +10547,7 @@ function ChatRoom({
                   setPanel("stories");
                 }}
                 onRanking={sendRanking}
+                onDraw={sendDraw}
                 onComingSoon={(label) => {
                   setTool(null);
                   setToast("아직 준비 중인 기능입니다.");
@@ -17605,6 +17679,28 @@ function RankingMessageCard({
     </View>
   );
 }
+
+function DrawMessageCard({
+  selectedName,
+  selectedAvatarUri,
+  title,
+  textColor,
+}: {
+  selectedName: string;
+  selectedAvatarUri?: string;
+  title: string;
+  textColor: string;
+}) {
+  return (
+    <View style={s.drawCardContent}>
+      <RNText style={[s.drawCardTitle, { color: textColor }]}>{title}</RNText>
+      <Avatar uri={selectedAvatarUri} size={96} />
+      <RNText numberOfLines={1} style={[s.drawCardName, { color: textColor }]}>
+        {selectedName}
+      </RNText>
+    </View>
+  );
+}
 function MuteLogo({
   variant = "color",
   compact = false,
@@ -17691,6 +17787,7 @@ function ComposerPanel({
   onPromotion,
   onNewStory,
   onRanking,
+  onDraw,
   onComingSoon,
   showPromotion,
   bubbleColor,
@@ -17714,6 +17811,7 @@ function ComposerPanel({
   onPromotion: () => void;
   onNewStory: () => void;
   onRanking: () => void;
+  onDraw: () => void;
   onComingSoon: (label: string) => void;
   showPromotion: boolean;
   secretDraft: string;
@@ -17826,7 +17924,7 @@ function ComposerPanel({
             <ToolAction
               icon="shuffle-outline"
               label="제비뽑기"
-              onPress={() => onComingSoon("제비뽑기")}
+              onPress={onDraw}
             />
             <ToolAction
               icon="people-circle-outline"
@@ -20915,13 +21013,33 @@ const s = StyleSheet.create({
   rankingCardRank: {
     width: 46,
     fontSize: 18,
-    fontWeight: "900",
+    fontWeight: "700",
     textAlign: "right",
   },
   rankingCardName: {
     flex: 1,
     minWidth: 0,
     fontSize: 17,
+    fontWeight: "600",
+  },
+  drawCardContent: {
+    width: "100%",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 4,
+  },
+  drawCardTitle: {
+    alignSelf: "stretch",
+    textAlign: "left",
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+    opacity: 0.78,
+  },
+  drawCardName: {
+    alignSelf: "stretch",
+    textAlign: "center",
+    fontSize: 22,
     fontWeight: "800",
   },
   deletedMessageRow: {
