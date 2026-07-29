@@ -569,6 +569,64 @@ type ChatSearchResult = {
   text: string;
 };
 
+type ChatRankingEntry = {
+  rank: number;
+  name: string;
+};
+
+type ChatRankingPayload = {
+  title: string;
+  entries: ChatRankingEntry[];
+};
+
+const CHAT_RANKING_TITLE_RE = /^(.+)님이 랭킹을 뽑았습니다\.$/;
+const CHAT_RANKING_ENTRY_RE = /^(\d+)위\s+(.+)$/;
+
+function shuffleRoomMembersForRanking(members: RoomMember[], fallbackName: string) {
+  const unique = new Map<string, string>();
+  members.forEach((member, index) => {
+    if (member.blocked) return;
+    const name = typeof member.name === "string" ? member.name.trim() : "";
+    if (!name) return;
+    const key = member.userId || `${name}-${index}`;
+    if (!unique.has(key)) unique.set(key, name);
+  });
+  if (!unique.size) unique.set("me", fallbackName || "나");
+  const names = [...unique.values()];
+  for (let index = names.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [names[index], names[randomIndex]] = [names[randomIndex], names[index]];
+  }
+  return names;
+}
+
+function buildChatRankingMessage(drawerName: string, members: RoomMember[]) {
+  const safeDrawerName = drawerName.trim() || "나";
+  const names = shuffleRoomMembersForRanking(members, safeDrawerName);
+  return [
+    `${safeDrawerName}님이 랭킹을 뽑았습니다.`,
+    ...names.map((name, index) => `${index + 1}위 ${name}`),
+  ].join("\n");
+}
+
+function parseChatRankingMessage(text: string): ChatRankingPayload | null {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2 || !CHAT_RANKING_TITLE_RE.test(lines[0])) return null;
+  const entries = lines.slice(1).map((line) => {
+    const match = line.match(CHAT_RANKING_ENTRY_RE);
+    if (!match) return null;
+    return { rank: Number(match[1]), name: match[2].trim() };
+  });
+  if (entries.some((entry) => !entry)) return null;
+  return {
+    title: lines[0],
+    entries: entries.filter(Boolean) as ChatRankingEntry[],
+  };
+}
+
 function normalizedChatMessageId(id: string) {
   return id.startsWith("server-") ? id.slice(7) : id;
 }
@@ -8398,6 +8456,38 @@ function ChatRoom({
       .then(() => submitTextMessage(localId, text, reply))
       .catch(() => undefined);
   };
+  const sendRanking = () => {
+    const text = buildChatRankingMessage(
+      myDisplayName,
+      roomMembersRef.current,
+    );
+    const createdAt = new Date().toISOString();
+    pendingTextSeq.current += 1;
+    const localId = `pending-ranking-${Date.now()}-${pendingTextSeq.current}`;
+    setTool(null);
+    setMessages((items) => [
+      ...items,
+      {
+        id: localId,
+        kind: "text",
+        mine: true,
+        name: myDisplayName,
+        avatarUri: myProfile?.avatarUri,
+        text,
+        time: "지금",
+        createdAt,
+        delivery: "sending",
+        bubbleColor,
+        textColor,
+      },
+    ]);
+    requestAnimationFrame(() => scrollToLatestRef.current(false));
+    setTimeout(() => scrollToLatestRef.current(false), 40);
+    setTimeout(() => scrollToLatestRef.current(false), 140);
+    textSendQueueRef.current = textSendQueueRef.current
+      .then(() => submitTextMessage(localId, text))
+      .catch(() => undefined);
+  };
   scrollToLatestRef.current = scrollToLatest;
   const sendHeart = async (targetNameOverride?: string): Promise<boolean> => {
     const createdAt = new Date().toISOString();
@@ -10021,8 +10111,11 @@ function ChatRoom({
               sameChatMinute(item.createdAt, next.createdAt),
             );
             const expanded = expandedMessages.includes(item.id);
+            const rankingPayload =
+              item.kind === "text" ? parseChatRankingMessage(item.text) : null;
             const shouldCollapse =
               item.kind === "text" &&
+              !rankingPayload &&
               item.text.length >= CHAT_COLLAPSE_CHAR_THRESHOLD;
             const deliveryMeta = (
               <ChatDeliveryMeta
@@ -10056,9 +10149,10 @@ function ChatRoom({
                     s.messageRow,
                     item.mine && s.mineRow,
                     continuous && s.continuousRow,
+                    rankingPayload && s.rankingMessageRow,
                   ]}
                 >
-                  {!item.mine ? (
+                  {!item.mine && !rankingPayload ? (
                     !continuous ? (
                       <Pressable
                         accessibilityLabel={`${item.name} 프로필 메뉴`}
@@ -10073,9 +10167,13 @@ function ChatRoom({
                     )
                   ) : null}
                   <View
-                    style={[s.messageBlock, item.mine && s.mineMessageBlock]}
+                    style={[
+                      s.messageBlock,
+                      item.mine && s.mineMessageBlock,
+                      rankingPayload && s.rankingMessageBlock,
+                    ]}
                   >
-                    {!continuous && (
+                    {!continuous && !rankingPayload && (
                       <Text style={[s.sender, item.mine && s.mineSender]}>
                         {item.name}
                       </Text>
@@ -10085,9 +10183,10 @@ function ChatRoom({
                         s.bubbleLine,
                         s.tightBubbleLine,
                         item.mine && s.mineBubbleLine,
+                        rankingPayload && s.rankingBubbleLine,
                       ]}
                     >
-                      {item.mine && deliveryMeta}
+                      {item.mine && !rankingPayload && deliveryMeta}
                       <Pressable
                         preserveTheme
                         onLongPress={() =>
@@ -10102,6 +10201,7 @@ function ChatRoom({
                         }
                         style={[
                           s.bubble,
+                          rankingPayload && s.rankingBubble,
                           item.kind === "image" && s.imageBubble,
                           activeSearchMessage?.id === item.id &&
                             s.searchBubbleActive,
@@ -10111,9 +10211,11 @@ function ChatRoom({
                               item.bubbleColor ??
                               (item.mine ? bubbleColor : "#F5F5F5"),
                           },
-                          item.mine
+                          !rankingPayload && item.mine
                             ? { borderBottomRightRadius: 4 }
-                            : { borderBottomLeftRadius: 4 },
+                            : !rankingPayload
+                              ? { borderBottomLeftRadius: 4 }
+                              : null,
                         ]}
                       >
                         {item.replyTo && (
@@ -10197,6 +10299,16 @@ function ChatRoom({
                               {item.text}
                             </LinkedText>
                           </View>
+                        ) : rankingPayload ? (
+                          <RankingMessageCard
+                            avatarUri={item.avatarUri}
+                            drawerName={item.name}
+                            ranking={rankingPayload}
+                            textColor={
+                              item.textColor ??
+                              (item.mine ? textColor : colors.text)
+                            }
+                          />
                         ) : (
                           <View>
                             {item.text === "삭제된 메시지입니다." ? (
@@ -10251,10 +10363,10 @@ function ChatRoom({
                           </View>
                         )}
                       </Pressable>
-                      {!item.mine && deliveryMeta}
+                      {!item.mine && !rankingPayload && deliveryMeta}
                     </View>
                   </View>
-                  {item.mine ? (
+                  {item.mine && !rankingPayload ? (
                     !continuous ? (
                       <Pressable
                         accessibilityLabel={`${item.name} 프로필 메뉴`}
@@ -10361,6 +10473,7 @@ function ChatRoom({
                   setStoryPanelInitialWrite(true);
                   setPanel("stories");
                 }}
+                onRanking={sendRanking}
                 onComingSoon={(label) => {
                   setTool(null);
                   setToast("아직 준비 중인 기능입니다.");
@@ -17446,6 +17559,52 @@ function ChatDeliveryMeta({
     </Text>
   ) : null;
 }
+
+function RankingMessageCard({
+  avatarUri,
+  drawerName,
+  ranking,
+  textColor,
+}: {
+  avatarUri?: string;
+  drawerName: string;
+  ranking: ChatRankingPayload;
+  textColor: string;
+}) {
+  return (
+    <View style={s.rankingCardContent}>
+      <View style={s.rankingCardHeader}>
+        <Avatar uri={avatarUri} size={32} />
+        <View style={s.rankingCardHeaderText}>
+          <RNText
+            numberOfLines={1}
+            style={[s.rankingCardDrawer, { color: textColor }]}
+          >
+            {drawerName}
+          </RNText>
+          <RNText style={[s.rankingCardTitle, { color: textColor }]}>
+            {ranking.title}
+          </RNText>
+        </View>
+      </View>
+      <View style={s.rankingCardList}>
+        {ranking.entries.map((entry) => (
+          <View key={`${entry.rank}-${entry.name}`} style={s.rankingCardEntry}>
+            <RNText style={[s.rankingCardRank, { color: textColor }]}>
+              {entry.rank}위
+            </RNText>
+            <RNText
+              numberOfLines={1}
+              style={[s.rankingCardName, { color: textColor }]}
+            >
+              {entry.name}
+            </RNText>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
 function MuteLogo({
   variant = "color",
   compact = false,
@@ -17531,6 +17690,7 @@ function ComposerPanel({
   onTopSpace,
   onPromotion,
   onNewStory,
+  onRanking,
   onComingSoon,
   showPromotion,
   bubbleColor,
@@ -17553,6 +17713,7 @@ function ComposerPanel({
   onTopSpace: () => void;
   onPromotion: () => void;
   onNewStory: () => void;
+  onRanking: () => void;
   onComingSoon: (label: string) => void;
   showPromotion: boolean;
   secretDraft: string;
@@ -17660,7 +17821,7 @@ function ComposerPanel({
             <ToolAction
               icon="podium-outline"
               label="랭킹"
-              onPress={() => onComingSoon("랭킹")}
+              onPress={onRanking}
             />
             <ToolAction
               icon="shuffle-outline"
@@ -20664,6 +20825,17 @@ const s = StyleSheet.create({
     marginRight: 8,
     alignItems: "flex-end",
   },
+  rankingMessageRow: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  rankingMessageBlock: {
+    width: "86%",
+    maxWidth: "86%",
+    marginLeft: 0,
+    marginRight: 0,
+    alignItems: "center",
+  },
   sender: {
     color: colors.textSubtle,
     fontSize: 11,
@@ -20680,6 +20852,10 @@ const s = StyleSheet.create({
     flexShrink: 1,
   },
   mineBubbleLine: { justifyContent: "flex-end" },
+  rankingBubbleLine: {
+    justifyContent: "center",
+    width: "100%",
+  },
   bubble: {
     borderRadius: 12,
     paddingHorizontal: 13,
@@ -20687,6 +20863,13 @@ const s = StyleSheet.create({
     maxWidth: "100%",
     minWidth: 0,
     flexShrink: 1,
+  },
+  rankingBubble: {
+    width: "100%",
+    maxWidth: "100%",
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
   },
   imageBubble: { padding: 0, overflow: "hidden" },
   mineBubble: { backgroundColor: "#F5F5F5", borderBottomRightRadius: 4 },
@@ -20696,6 +20879,50 @@ const s = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     flexShrink: 1,
+  },
+  rankingCardContent: {
+    width: "100%",
+    gap: 14,
+  },
+  rankingCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  rankingCardHeaderText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  rankingCardDrawer: {
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  rankingCardTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+    opacity: 0.78,
+    marginTop: 2,
+  },
+  rankingCardList: {
+    gap: 8,
+  },
+  rankingCardEntry: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  rankingCardRank: {
+    width: 46,
+    fontSize: 18,
+    fontWeight: "900",
+    textAlign: "right",
+  },
+  rankingCardName: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 17,
+    fontWeight: "800",
   },
   deletedMessageRow: {
     flexDirection: "row",
