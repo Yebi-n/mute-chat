@@ -43,6 +43,7 @@ export type MafiaGamePhase =
   | 'ended';
 
 export type MafiaRole = 'mafia' | 'police' | 'doctor' | 'lover' | 'citizen';
+export type MafiaNightActionType = 'kill' | 'save' | 'inspect';
 
 export type MafiaPlayerState = {
   userId: string;
@@ -67,6 +68,15 @@ export type MafiaGameState = {
   winner?: 'mafia' | 'citizen' | null;
   me?: MafiaPlayerState | null;
   players: MafiaPlayerState[];
+  nightActions?: Partial<
+    Record<
+      MafiaNightActionType,
+      {
+        targetUserId: string;
+        targetName: string;
+      } | null
+    >
+  >;
 };
 
 function requireClient() {

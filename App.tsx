@@ -7859,6 +7859,11 @@ function ChatRoom({
   const [mafiaBusy, setMafiaBusy] = useState(false);
   const [mafiaCapacityPickerOpen, setMafiaCapacityPickerOpen] = useState(false);
   const [mafiaCapacityDraft, setMafiaCapacityDraft] = useState(5);
+  const [mafiaNightPicker, setMafiaNightPicker] = useState<{
+    actionType: "kill" | "save" | "inspect";
+    title: string;
+  } | null>(null);
+  const [mafiaNightTargetDraft, setMafiaNightTargetDraft] = useState<string | null>(null);
   const mafiaGameRunning = mafiaGame?.status === "running";
   const canForceEndMafiaGame =
     Boolean(mafiaGame && currentUserId && mafiaGame.hostUserId === currentUserId) || isStaff;
@@ -8649,6 +8654,57 @@ function ChatRoom({
     const activeCount = roomMembersRef.current.filter((member) => member.userId).length;
     return Math.max(activeCount, room.memberCount ?? 0) >= 5;
   }, [room.memberCount]);
+  const myMafiaNightActionType =
+    mafiaGame?.status === "running" &&
+    mafiaGame.phase === "night" &&
+    mafiaGame.me?.joined &&
+    mafiaGame.me.alive
+      ? mafiaGame.me.role === "mafia"
+        ? "kill"
+        : mafiaGame.me.role === "doctor"
+          ? "save"
+          : mafiaGame.me.role === "police"
+            ? "inspect"
+            : null
+      : null;
+  const mafiaNightActionLabel =
+    myMafiaNightActionType === "kill"
+      ? "희생자 정하기"
+      : myMafiaNightActionType === "save"
+        ? "살릴 사람 정하기"
+        : myMafiaNightActionType === "inspect"
+          ? "마피아 조사하기"
+          : null;
+  const mafiaNightActionSelection =
+    myMafiaNightActionType && mafiaGame?.nightActions
+      ? mafiaGame.nightActions[myMafiaNightActionType] ?? null
+      : null;
+  const openMafiaNightPicker = useCallback(() => {
+    if (!mafiaGame || !myMafiaNightActionType || !mafiaNightActionLabel) return;
+    setMafiaNightTargetDraft(mafiaNightActionSelection?.targetUserId ?? null);
+    setMafiaNightPicker({
+      actionType: myMafiaNightActionType,
+      title: mafiaNightActionLabel,
+    });
+  }, [mafiaGame, mafiaNightActionLabel, mafiaNightActionSelection?.targetUserId, myMafiaNightActionType]);
+  const submitMafiaNightTarget = useCallback(async () => {
+    if (!mafiaGame || !mafiaNightPicker || !mafiaNightTargetDraft || mafiaBusy) return;
+    try {
+      setMafiaBusy(true);
+      setMafiaGame(
+        await submitMafiaNightAction({
+          gameId: mafiaGame.id,
+          targetUserId: mafiaNightTargetDraft,
+          actionType: mafiaNightPicker.actionType,
+        }),
+      );
+      setMafiaNightPicker(null);
+    } catch (error) {
+      Alert.alert("마피아 게임 실패", serverErrorMessage(error));
+    } finally {
+      setMafiaBusy(false);
+    }
+  }, [mafiaBusy, mafiaGame, mafiaNightPicker, mafiaNightTargetDraft]);
   const startMafiaWithCapacity = useCallback(
     async (capacity: number) => {
       if (!isSupabaseConfigured || !isUuid(room.id)) {
@@ -8805,9 +8861,12 @@ function ChatRoom({
           setTimeout(() => setToast(""), 1600);
           return;
         }
-        const title = actionType === "kill" ? "마피아 지목" : actionType === "save" ? "의사 보호" : "경찰 조사";
-        const target = await chooseMafiaPlayer(title, latest.players);
-        if (target) setMafiaGame(await submitMafiaNightAction({ gameId: latest.id, targetUserId: target, actionType }));
+        setMafiaGame(latest);
+        setMafiaNightTargetDraft(latest.nightActions?.[actionType]?.targetUserId ?? null);
+        setMafiaNightPicker({
+          actionType,
+          title: actionType === "kill" ? "희생자 정하기" : actionType === "save" ? "살릴 사람 정하기" : "마피아 조사하기",
+        });
         return;
       }
       setMafiaGame(await tickMafiaGame(latest.id));
@@ -10979,6 +11038,28 @@ function ChatRoom({
                 state={mafiaGame}
                 busy={mafiaBusy}
                 onPress={handleMafiaMenu}
+                onShorten={() => {
+                  if (mafiaBusy || !mafiaGame) return;
+                  setMafiaBusy(true);
+                  adjustMafiaPhaseTime({ gameId: mafiaGame.id, deltaSeconds: -15 })
+                    .then((state) => setMafiaGame(state))
+                    .catch((error) => Alert.alert("마피아 게임 실패", serverErrorMessage(error)))
+                    .finally(() => setMafiaBusy(false));
+                }}
+                onExtend={() => {
+                  if (mafiaBusy || !mafiaGame) return;
+                  setMafiaBusy(true);
+                  adjustMafiaPhaseTime({ gameId: mafiaGame.id, deltaSeconds: 15 })
+                    .then((state) => setMafiaGame(state))
+                    .catch((error) => Alert.alert("마피아 게임 실패", serverErrorMessage(error)))
+                    .finally(() => setMafiaBusy(false));
+                }}
+                onNightAction={openMafiaNightPicker}
+                nightActionLabel={
+                  mafiaNightActionLabel
+                    ? `${mafiaNightActionLabel}${mafiaNightActionSelection?.targetName ? `: ${mafiaNightActionSelection.targetName}` : ""}`
+                    : undefined
+                }
               />
             )}
             {!readOnly && (
@@ -11309,6 +11390,66 @@ function ChatRoom({
                   style={s.mafiaCapacityStartGradient}
                 >
                   <Text style={s.primaryText}>{mafiaBusy ? "시작 중..." : "시작하기"}</Text>
+                </LinearGradient>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      )}
+      {mafiaNightPicker && (
+        <View style={s.sheetLayer}>
+          <Pressable
+            accessibilityLabel="마피아 밤 행동 선택 닫기"
+            onPress={() => setMafiaNightPicker(null)}
+            style={s.sheetDim}
+          />
+          <View style={s.mafiaCapacitySheet}>
+            <View style={s.sheetHandle} />
+            <Text style={s.mafiaCapacityTitle}>{mafiaNightPicker.title}</Text>
+            <Text style={s.mafiaCapacityBody}>
+              살아있는 멤버 중 한 명을 선택한 뒤 확인을 눌러주세요. 다시 선택하면 변경됩니다.
+            </Text>
+            <View style={s.mafiaNightRadioList}>
+              {mafiaGame?.players
+                .filter((player) => player.joined && player.alive)
+                .map((player) => {
+                  const selected = mafiaNightTargetDraft === player.userId;
+                  return (
+                    <Pressable
+                      key={player.userId}
+                      onPress={() => setMafiaNightTargetDraft(player.userId)}
+                      style={s.mafiaNightRadioRow}
+                    >
+                      <View style={[s.radioCircle, selected && s.radioCircleActive]}>
+                        {selected && <View style={s.radioDot} />}
+                      </View>
+                      <Text style={s.mafiaNightRadioText}>{player.name}</Text>
+                    </Pressable>
+                  );
+                })}
+            </View>
+            <View style={s.mafiaCapacityActions}>
+              <Pressable
+                onPress={() => setMafiaNightPicker(null)}
+                style={s.mafiaCapacityCancel}
+              >
+                <Text style={s.mafiaCapacityCancelText}>취소</Text>
+              </Pressable>
+              <Pressable
+                disabled={mafiaBusy || !mafiaNightTargetDraft}
+                onPress={() => void submitMafiaNightTarget()}
+                style={[
+                  s.mafiaCapacityStart,
+                  (mafiaBusy || !mafiaNightTargetDraft) && s.disabled,
+                ]}
+              >
+                <LinearGradient
+                  colors={["#82B9C1", "#5DBB8C"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={s.mafiaCapacityStartGradient}
+                >
+                  <Text style={s.primaryText}>{mafiaBusy ? "저장 중..." : "확인"}</Text>
                 </LinearGradient>
               </Pressable>
             </View>
@@ -18194,10 +18335,18 @@ function MafiaGameBar({
   state,
   busy,
   onPress,
+  onShorten,
+  onExtend,
+  onNightAction,
+  nightActionLabel,
 }: {
   state: MafiaGameState;
   busy: boolean;
   onPress: () => void;
+  onShorten: () => void;
+  onExtend: () => void;
+  onNightAction?: () => void;
+  nightActionLabel?: string;
 }) {
   const me = state.me;
   const sub =
@@ -18208,6 +18357,57 @@ function MafiaGameBar({
       : me?.role
         ? `내 역할: ${me.role}`
         : "관전 중";
+  if (state.status === "running" && state.phase === "day_discussion") {
+    return (
+      <View style={[s.mafiaGameBarWrap, busy && s.disabledSoft]}>
+        <LinearGradient
+          colors={["#82B9C1", "#5DBB8C"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={s.mafiaGameBarColumn}
+        >
+          <View style={s.mafiaGameBarHeader}>
+            <Ionicons name="people-circle-outline" size={18} color="#FFFFFF" />
+            <View style={s.flex}>
+              <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabel(state)}</Text>
+              <Text style={s.mafiaGameBarSub}>{sub}</Text>
+            </View>
+          </View>
+          <View style={s.mafiaGameActionRow}>
+            <Pressable disabled={busy} onPress={onShorten} style={s.mafiaGameActionChip}>
+              <Text style={s.mafiaGameActionText}>시간 단축</Text>
+            </Pressable>
+            <Pressable disabled={busy} onPress={onExtend} style={s.mafiaGameActionChip}>
+              <Text style={s.mafiaGameActionText}>시간 연장</Text>
+            </Pressable>
+          </View>
+        </LinearGradient>
+      </View>
+    );
+  }
+  if (state.status === "running" && state.phase === "night" && nightActionLabel && onNightAction) {
+    return (
+      <View style={[s.mafiaGameBarWrap, busy && s.disabledSoft]}>
+        <LinearGradient
+          colors={["#82B9C1", "#5DBB8C"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={s.mafiaGameBarColumn}
+        >
+          <View style={s.mafiaGameBarHeader}>
+            <Ionicons name="moon-outline" size={18} color="#FFFFFF" />
+            <View style={s.flex}>
+              <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabel(state)}</Text>
+              <Text style={s.mafiaGameBarSub}>{sub}</Text>
+            </View>
+          </View>
+          <Pressable disabled={busy} onPress={onNightAction} style={s.mafiaGameActionChipWide}>
+            <Text style={s.mafiaGameActionText}>{nightActionLabel}</Text>
+          </Pressable>
+        </LinearGradient>
+      </View>
+    );
+  }
   return (
     <Pressable
       disabled={busy}
@@ -20381,6 +20581,42 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
+  mafiaGameBarColumn: {
+    minHeight: 76,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 9,
+  },
+  mafiaGameBarHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  mafiaGameActionRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  mafiaGameActionChip: {
+    flex: 1,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(255,255,255,.22)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mafiaGameActionChipWide: {
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,.22)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  mafiaGameActionText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "800",
+  },
   mafiaGameBarTitle: {
     color: "#FFFFFF",
     fontSize: 13,
@@ -20448,6 +20684,28 @@ const s = StyleSheet.create({
     marginTop: 22,
     flexDirection: "row",
     gap: 10,
+  },
+  mafiaNightRadioList: {
+    marginTop: 14,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    overflow: "hidden",
+  },
+  mafiaNightRadioRow: {
+    minHeight: 48,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  mafiaNightRadioText: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "700",
   },
   mafiaCapacityCancel: {
     flex: 1,
