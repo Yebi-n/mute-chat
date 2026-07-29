@@ -4,21 +4,38 @@
 -- - Missing night actions from mafia/police/doctor are no-op.
 -- - All state transitions are server-side so older clients do not corrupt game flow.
 
-create type public.mafia_game_status as enum ('waiting', 'running', 'ended', 'cancelled');
-create type public.mafia_game_phase as enum (
-  'lobby',
-  'day_discussion',
-  'day_vote',
-  'final_defense',
-  'final_vote',
-  'night',
-  'ended'
-);
-create type public.mafia_role as enum ('mafia', 'police', 'doctor', 'lover', 'citizen');
-create type public.mafia_team as enum ('mafia', 'citizen');
-create type public.mafia_action_type as enum ('kill', 'save', 'inspect');
-create type public.mafia_vote_type as enum ('execute', 'approve', 'reject');
-create type public.mafia_message_visibility as enum ('public', 'private', 'spectator', 'mafia', 'lover');
+do $$
+begin
+  if not exists (select 1 from pg_type where typnamespace = 'public'::regnamespace and typname = 'mafia_game_status') then
+    create type public.mafia_game_status as enum ('waiting', 'running', 'ended', 'cancelled');
+  end if;
+  if not exists (select 1 from pg_type where typnamespace = 'public'::regnamespace and typname = 'mafia_game_phase') then
+    create type public.mafia_game_phase as enum (
+      'lobby',
+      'day_discussion',
+      'day_vote',
+      'final_defense',
+      'final_vote',
+      'night',
+      'ended'
+    );
+  end if;
+  if not exists (select 1 from pg_type where typnamespace = 'public'::regnamespace and typname = 'mafia_role') then
+    create type public.mafia_role as enum ('mafia', 'police', 'doctor', 'lover', 'citizen');
+  end if;
+  if not exists (select 1 from pg_type where typnamespace = 'public'::regnamespace and typname = 'mafia_team') then
+    create type public.mafia_team as enum ('mafia', 'citizen');
+  end if;
+  if not exists (select 1 from pg_type where typnamespace = 'public'::regnamespace and typname = 'mafia_action_type') then
+    create type public.mafia_action_type as enum ('kill', 'save', 'inspect');
+  end if;
+  if not exists (select 1 from pg_type where typnamespace = 'public'::regnamespace and typname = 'mafia_vote_type') then
+    create type public.mafia_vote_type as enum ('execute', 'approve', 'reject');
+  end if;
+  if not exists (select 1 from pg_type where typnamespace = 'public'::regnamespace and typname = 'mafia_message_visibility') then
+    create type public.mafia_message_visibility as enum ('public', 'private', 'spectator', 'mafia', 'lover');
+  end if;
+end $$;
 
 create table if not exists public.mafia_games (
   id uuid primary key default gen_random_uuid(),
@@ -27,7 +44,7 @@ create table if not exists public.mafia_games (
   status public.mafia_game_status not null default 'waiting',
   phase public.mafia_game_phase not null default 'lobby',
   day_number integer not null default 1,
-  selected_capacity integer not null check (selected_capacity between 6 and 20),
+  selected_capacity integer not null check (selected_capacity between 5 and 20),
   min_players integer not null default 5,
   phase_started_at timestamptz not null default now(),
   phase_ends_at timestamptz not null default now() + interval '60 seconds',
@@ -84,6 +101,22 @@ alter table public.messages
   add column if not exists mafia_game_id uuid references public.mafia_games(id) on delete set null,
   add column if not exists mafia_visibility public.mafia_message_visibility not null default 'public',
   add column if not exists mafia_recipient_user_ids uuid[] not null default '{}';
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'messages_mafia_game_id_fkey'
+      and conrelid = 'public.messages'::regclass
+  ) then
+    alter table public.messages
+      add constraint messages_mafia_game_id_fkey
+      foreign key (mafia_game_id)
+      references public.mafia_games(id)
+      on delete set null;
+  end if;
+end $$;
 
 create index if not exists mafia_games_room_status_idx on public.mafia_games(room_id, status, phase_ends_at);
 create index if not exists mafia_players_game_alive_idx on public.mafia_players(game_id, alive);
@@ -1062,8 +1095,7 @@ begin
   set status = 'cancelled',
       phase = 'ended',
       ended_at = now(),
-      phase_ends_at = now(),
-      updated_at = now()
+      phase_ends_at = now()
   where id = p_game_id;
 
   perform public.mafia_post_system_message(

@@ -208,6 +208,11 @@ import {
 } from "./src/services/payments";
 import { boostTopSpace, listTopSpaces } from "./src/services/topSpace";
 import {
+  CURRENT_APP_BUILD,
+  getAppVersionPolicy,
+  AppVersionPolicy,
+} from "./src/services/appVersion";
+import {
   listRoomPromotions,
   promoteRoomOnServer,
 } from "./src/services/promotions";
@@ -2474,11 +2479,33 @@ export default function App() {
   const [passwordRecoveryActive, setPasswordRecoveryActive] = useState(false);
   const [authReady, setAuthReady] = useState(demoMode || !isSupabaseConfigured);
   const [splashThemeReady, setSplashThemeReady] = useState(false);
+  const [versionPolicy, setVersionPolicy] = useState<AppVersionPolicy | null>(null);
+  const [versionPolicyReady, setVersionPolicyReady] = useState(demoMode || !isSupabaseConfigured);
+  const reloadVersionPolicy = useCallback(() => {
+    if (demoMode || !isSupabaseConfigured) {
+      setVersionPolicyReady(true);
+      return;
+    }
+    getAppVersionPolicy()
+      .then(setVersionPolicy)
+      .catch((error) => {
+        console.warn("app version policy load failed", error);
+        setVersionPolicy(null);
+      })
+      .finally(() => setVersionPolicyReady(true));
+  }, [demoMode]);
   useEffect(() => {
     void loadSplashTheme()
       .catch(() => applyAppTheme(APP_THEMES[0]))
       .finally(() => setSplashThemeReady(true));
   }, []);
+  useEffect(() => {
+    reloadVersionPolicy();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") reloadVersionPolicy();
+    });
+    return () => subscription.remove();
+  }, [reloadVersionPolicy]);
   useEffect(() => {
     if (demoMode || !supabase) return;
     getCurrentSession()
@@ -2494,10 +2521,22 @@ export default function App() {
   let content: React.ReactNode;
   if (!splashThemeReady) {
     content = <NativeSplashBridge />;
-  } else if (!authReady) {
+  } else if (!authReady || !versionPolicyReady) {
     content = (
       <>
         <SplashScreen />
+        <GlobalBusyOverlay />
+      </>
+    );
+  } else if (
+    versionPolicy &&
+    Number.isFinite(versionPolicy.minBuild) &&
+    CURRENT_APP_BUILD < versionPolicy.minBuild
+  ) {
+    content = (
+      <>
+        <ForceUpdateScreen policy={versionPolicy} />
+        <PersistentHomeIndicator />
         <GlobalBusyOverlay />
       </>
     );
@@ -2620,6 +2659,42 @@ function AppLockGate({
       {children}
       <PersistentHomeIndicator />
     </>
+  );
+}
+
+function ForceUpdateScreen({ policy }: { policy: AppVersionPolicy }) {
+  const message =
+    policy.forceMessage ||
+    "현재 버전에서는 일부 기능을 안정적으로 사용할 수 없습니다. 최신 버전으로 업데이트 후 이용해주세요.";
+  const openUpdate = () => {
+    const url =
+      policy.updateUrl ||
+      (Platform.OS === "ios"
+        ? "https://apps.apple.com/kr/app/%EB%AE%A4%ED%8A%B8/id6781187934"
+        : "https://play.google.com/store/apps/details?id=app.mute.chat");
+    Linking.openURL(url).catch(() => undefined);
+  };
+  return (
+    <SafeAreaView style={s.forceUpdatePage}>
+      <View style={s.forceUpdateCard}>
+        <View style={s.forceUpdateIcon}>
+          <Ionicons name="cloud-download-outline" size={30} color={colors.mint700} />
+        </View>
+        <Text style={s.forceUpdateTitle}>업데이트가 필요합니다</Text>
+        <Text style={s.forceUpdateBody}>{message}</Text>
+        <Pressable onPress={openUpdate} style={s.forceUpdateButton}>
+          <LinearGradient
+            colors={["#82B9C1", "#5DBB8C"]}
+            start={{ x: 0, y: 0.5 }}
+            end={{ x: 1, y: 0.5 }}
+            style={s.forceUpdateGradient}
+          >
+            <Text style={s.primaryText}>업데이트하기</Text>
+          </LinearGradient>
+        </Pressable>
+        <Text style={s.forceUpdateBuild}>현재 빌드 {CURRENT_APP_BUILD}</Text>
+      </View>
+    </SafeAreaView>
   );
 }
 
@@ -20911,6 +20986,62 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "transparent",
+  },
+  forceUpdatePage: {
+    flex: 1,
+    backgroundColor: "#F8FFFC",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  forceUpdateCard: {
+    width: "100%",
+    maxWidth: 420,
+    borderRadius: 28,
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    alignItems: "center",
+    ...shadows.card,
+  },
+  forceUpdateIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 22,
+    backgroundColor: colors.mint050,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  forceUpdateTitle: {
+    color: colors.text,
+    fontSize: 22,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  forceUpdateBody: {
+    marginTop: 12,
+    color: colors.textMuted,
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: "center",
+  },
+  forceUpdateButton: {
+    width: "100%",
+    marginTop: 22,
+    borderRadius: 18,
+    overflow: "hidden",
+  },
+  forceUpdateGradient: {
+    height: 54,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  forceUpdateBuild: {
+    marginTop: 12,
+    color: colors.textSubtle,
+    fontSize: 12,
+    fontWeight: "700",
   },
   muteLogoMark: { width: 50, height: 36 },
   muteName: {
