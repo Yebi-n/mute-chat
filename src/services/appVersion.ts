@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+﻿import { Platform } from 'react-native';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
 export type AppVersionPolicy = {
@@ -10,7 +10,7 @@ export type AppVersionPolicy = {
 };
 
 export const CURRENT_APP_BUILD =
-  Platform.OS === 'ios' ? 150 : Platform.OS === 'android' ? 135 : 0;
+  Platform.OS === 'ios' ? 151 : Platform.OS === 'android' ? 136 : 0;
 
 export async function getAppVersionPolicy(): Promise<AppVersionPolicy | null> {
   if (!isSupabaseConfigured || !supabase) return null;

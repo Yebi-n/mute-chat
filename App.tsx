@@ -22,6 +22,7 @@ import ExternalColorPicker, {
   InputWidget,
   Panel3,
 } from "reanimated-color-picker";
+import { WebView } from "react-native-webview";
 import {
   Gesture,
   GestureDetector,
@@ -104,8 +105,10 @@ import {
   ServerRoomMember,
 } from "./src/services/rooms";
 import {
+  completeAdultVerification,
   getOperationsPolicyUrl,
   getVerificationStatus,
+  startAdultVerification,
 } from "./src/services/verification";
 import {
   schedulePendingPushDispatch,
@@ -16799,10 +16802,129 @@ function AdultVerificationScreen({
 }) {
   useAndroidHardwareBack(onBack);
   const [loading, setLoading] = useState(false);
+  const [webVisible, setWebVisible] = useState(false);
+  const [webUrl, setWebUrl] = useState<string | null>(null);
+  const [webHtml, setWebHtml] = useState<string | null>(null);
+  const closeWeb = () => {
+    setWebVisible(false);
+    setWebUrl(null);
+    setWebHtml(null);
+  };
+  const finishVerification = async (identityVerificationId?: string | null) => {
+    setLoading(true);
+    try {
+      if (identityVerificationId) {
+        await completeAdultVerification(identityVerificationId);
+      }
+      closeWeb();
+      const done = await onRefresh();
+      Alert.alert(
+        "성인 인증",
+        done
+          ? "성인 인증이 완료되었습니다."
+          : "인증 결과가 아직 반영되지 않았습니다. 잠시 후 다시 확인해주세요.",
+      );
+    } catch (error) {
+      Alert.alert("인증 확인 실패", serverErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+  const handleVerificationUrl = (url: string) => {
+    if (!url.startsWith("mute://adult-verification-complete")) return false;
+    const match = url.match(/[?&]identityVerificationId=([^&]+)/);
+    const identityVerificationId = match?.[1]
+      ? decodeURIComponent(match[1])
+      : null;
+    void finishVerification(identityVerificationId);
+    return true;
+  };
+  const buildPortOneHtml = (payload: {
+    storeId: string;
+    channelKey: string;
+    identityVerificationId: string;
+    redirectUrl: string;
+  }) => `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <script src="https://cdn.portone.io/v2/browser-sdk.js"></script>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+        color: #1f2933;
+        background: linear-gradient(135deg, #eefafa, #ffffff);
+      }
+      .card {
+        width: 100%;
+        max-width: 360px;
+        border-radius: 24px;
+        padding: 28px 22px;
+        background: rgba(255,255,255,.95);
+        box-shadow: 0 20px 60px rgba(31,41,51,.12);
+        text-align: center;
+      }
+      .title { font-size: 20px; font-weight: 800; margin-bottom: 12px; }
+      .body { font-size: 14px; line-height: 1.6; color: #6b7280; }
+      .error { color: #dc2626; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="title">성인인증을 시작합니다</div>
+      <div id="message" class="body">인증 창을 준비하고 있습니다.</div>
+    </div>
+    <script>
+      const message = document.getElementById('message');
+      function post(payload) {
+        window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+      }
+      async function run() {
+        try {
+          if (!window.PortOne) throw new Error('본인인증 모듈을 불러오지 못했습니다.');
+          const response = await window.PortOne.requestIdentityVerification({
+            storeId: ${JSON.stringify(payload.storeId)},
+            channelKey: ${JSON.stringify(payload.channelKey)},
+            identityVerificationId: ${JSON.stringify(payload.identityVerificationId)},
+            redirectUrl: ${JSON.stringify(payload.redirectUrl)},
+          });
+          if (response && response.code) {
+            throw new Error(response.message || '본인인증이 취소되었습니다.');
+          }
+          post({
+            type: 'adultVerificationComplete',
+            identityVerificationId: (response && response.identityVerificationId) || ${JSON.stringify(payload.identityVerificationId)}
+          });
+        } catch (error) {
+          message.className = 'body error';
+          message.textContent = error && error.message ? error.message : '본인인증을 시작하지 못했습니다.';
+          post({ type: 'adultVerificationError', message: message.textContent });
+        }
+      }
+      run();
+    </script>
+  </body>
+</html>`;
   const openPortal = async () => {
     setLoading(true);
     try {
-      await Linking.openURL(getOperationsPolicyUrl());
+      const payload = await startAdultVerification();
+      if ("url" in payload) {
+        setWebHtml(null);
+        setWebUrl(payload.url);
+      } else {
+        setWebHtml(buildPortOneHtml(payload));
+        setWebUrl(null);
+      }
+      setWebVisible(true);
     } catch (error) {
       Alert.alert("열기 실패", serverErrorMessage(error));
     } finally {
@@ -16826,6 +16948,45 @@ function AdultVerificationScreen({
   return (
     <SafeAreaView style={s.safe}>
       <TopBar title="성인 인증" onBack={onBack} />
+      <Modal visible={webVisible} animationType="slide" onRequestClose={closeWeb}>
+        <SafeAreaView style={s.safe}>
+          <TopBar title="성인 인증 진행" onBack={closeWeb} />
+          <WebView
+            originWhitelist={["*"]}
+            source={
+              webHtml
+                ? {
+                    html: webHtml,
+                    baseUrl: "https://service-introduction-theta.vercel.app",
+                  }
+                : { uri: webUrl ?? "about:blank" }
+            }
+            javaScriptEnabled
+            domStorageEnabled
+            onShouldStartLoadWithRequest={(request) =>
+              !handleVerificationUrl(request.url)
+            }
+            onNavigationStateChange={(event) => {
+              handleVerificationUrl(event.url);
+            }}
+            onMessage={(event) => {
+              try {
+                const message = JSON.parse(event.nativeEvent.data);
+                if (message?.type === "adultVerificationComplete") {
+                  void finishVerification(message.identityVerificationId);
+                } else if (message?.type === "adultVerificationError") {
+                  Alert.alert(
+                    "인증 실패",
+                    message.message ?? "본인인증에 실패했습니다.",
+                  );
+                }
+              } catch {
+                // Ignore non-JSON messages.
+              }
+            }}
+          />
+        </SafeAreaView>
+      </Modal>
       <View style={s.verificationPage}>
         <View style={s.verificationIcon}>
           <Ionicons

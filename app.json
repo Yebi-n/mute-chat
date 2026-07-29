@@ -1,6 +1,6 @@
-{
+﻿{
   "expo": {
-    "name": "뮤트",
+    "name": "裕ㅽ듃",
     "slug": "mute-chat",
     "scheme": "mute",
     "version": "1.0.4",
@@ -10,18 +10,18 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "app.mute.chat",
-      "buildNumber": "150",
+      "buildNumber": "151",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIViewControllerBasedStatusBarAppearance": true,
-        "NSUserTrackingUsageDescription": "맞춤형 광고 제공 여부를 선택하기 위해 기기 광고 식별자 접근 권한을 요청합니다.",
+        "NSUserTrackingUsageDescription": "留욎땄??愿묎퀬 ?쒓났 ?щ?瑜??좏깮?섍린 ?꾪빐 湲곌린 愿묎퀬 ?앸퀎???묎렐 沅뚰븳???붿껌?⑸땲??",
         "UIDeviceFamily": [
           1
         ]
       }
     },
     "android": {
-      "versionCode": 135,
+      "versionCode": 136,
       "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
@@ -41,8 +41,8 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "채팅 이미지와 프로필 이미지를 확인하기 위해 사진 접근 권한이 필요합니다.",
-          "savePhotosPermission": "채팅 이미지를 사진 앱에 저장하기 위해 권한이 필요합니다.",
+          "photosPermission": "梨꾪똿 ?대?吏? ?꾨줈???대?吏瑜??뺤씤?섍린 ?꾪빐 ?ъ쭊 ?묎렐 沅뚰븳???꾩슂?⑸땲??",
+          "savePhotosPermission": "梨꾪똿 ?대?吏瑜??ъ쭊 ?깆뿉 ??ν븯湲??꾪빐 沅뚰븳???꾩슂?⑸땲??",
           "granularPermissions": [
             "photo"
           ]
@@ -51,8 +51,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "채팅, 스토리, 프로필에 사용할 사진을 선택하기 위해 사진 접근 권한이 필요합니다.",
-          "cameraPermission": "채팅, 스토리, 프로필에 사용할 사진을 촬영하기 위해 카메라 권한이 필요합니다.",
+          "photosPermission": "梨꾪똿, ?ㅽ넗由? ?꾨줈?꾩뿉 ?ъ슜???ъ쭊???좏깮?섍린 ?꾪빐 ?ъ쭊 ?묎렐 沅뚰븳???꾩슂?⑸땲??",
+          "cameraPermission": "梨꾪똿, ?ㅽ넗由? ?꾨줈?꾩뿉 ?ъ슜???ъ쭊??珥ъ쁺?섍린 ?꾪빐 移대찓??沅뚰븳???꾩슂?⑸땲??",
           "microphonePermission": false
         }
       ],
@@ -63,7 +63,7 @@
           "androidAppId": "ca-app-pub-4013454985021474~9838684343",
           "iosAppId": "ca-app-pub-4013454985021474~4784155440",
           "delayAppMeasurementInit": true,
-          "userTrackingUsageDescription": "맞춤형 광고 제공 여부를 선택하기 위해 기기 광고 식별자 접근 권한을 요청합니다."
+          "userTrackingUsageDescription": "留욎땄??愿묎퀬 ?쒓났 ?щ?瑜??좏깮?섍린 ?꾪빐 湲곌린 愿묎퀬 ?앸퀎???묎렐 沅뚰븳???붿껌?⑸땲??"
         }
       ],
       "expo-iap",
@@ -72,7 +72,7 @@
     ],
     "extra": {
       "brand": {
-        "ko": "뮤트",
+        "ko": "裕ㅽ듃",
         "en": "Mute"
       },
       "eas": {
