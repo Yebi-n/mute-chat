@@ -25,6 +25,7 @@ export type ServerRoomMessage = {
   textColor?:string;
   mafiaGameId?: string | null;
   mafiaVisibility?: 'public' | 'private' | 'spectator' | 'mafia' | 'lover';
+  mafiaRecipientUserIds?: string[];
 };
 
 export type RoomReadReceipt = {
@@ -204,7 +205,7 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
     .maybeSingle();
   let messageQuery = client
     .from('messages')
-    .select('id,sender_user_id,kind,body,sender_deleted_at,reply_to_message_id,secret_recipient_user_id,media_group_id,story_id,created_at,sender_display_name_snapshot,sender_avatar_asset_path_snapshot,mafia_game_id,mafia_visibility')
+    .select('id,sender_user_id,kind,body,sender_deleted_at,reply_to_message_id,secret_recipient_user_id,media_group_id,story_id,created_at,sender_display_name_snapshot,sender_avatar_asset_path_snapshot,mafia_game_id,mafia_visibility,mafia_recipient_user_ids')
     .eq('room_id', roomId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
@@ -364,6 +365,9 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
     textColor:row.sender_user_id?styleByUserId.get(row.sender_user_id as string)?.textColor:undefined,
     mafiaGameId: row.mafia_game_id as string | null,
     mafiaVisibility: (row.mafia_visibility as ServerRoomMessage['mafiaVisibility']) ?? 'public',
+    mafiaRecipientUserIds: Array.isArray(row.mafia_recipient_user_ids)
+      ? (row.mafia_recipient_user_ids as string[])
+      : [],
   })) as ServerRoomMessage[];
 }
 
@@ -384,6 +388,15 @@ export async function startMafiaLobby(input: { roomId: string; capacity: number 
   const { data, error } = await requireClient().rpc('mafia_start_lobby', {
     p_room_id: input.roomId,
     p_capacity: input.capacity,
+  });
+  if (error) throw error;
+  schedulePendingPushDispatch();
+  return normalizeMafiaState(data);
+}
+
+export async function startMafiaNow(gameId: string) {
+  const { data, error } = await requireClient().rpc('mafia_start_now', {
+    p_game_id: gameId,
   });
   if (error) throw error;
   schedulePendingPushDispatch();
