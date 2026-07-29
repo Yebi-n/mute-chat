@@ -21,7 +21,8 @@
       }
     },
     "android": {
-      "versionCode": 121,
+      "versionCode": 127,
+      "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/mute-app-icon.png",

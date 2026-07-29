@@ -1246,11 +1246,6 @@ function KeyboardAvoidingView(
   props: React.ComponentProps<typeof RNKeyboardAvoidingView>,
 ) {
   const { behavior, enabled, keyboardVerticalOffset, ...rest } = props;
-  // MainActivity already uses adjustResize. Applying RN's Android `height`
-  // behavior as well resizes the same screen twice and causes visible shaking.
-  if (Platform.OS === "android") {
-    return <RNView {...rest} style={themedStyle(props.style, "view")} />;
-  }
   return (
     <RNKeyboardAvoidingView
       {...rest}
