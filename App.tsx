@@ -244,7 +244,8 @@ import {
 const ANDROID_STATUS_BAR_HEIGHT =
   Platform.OS === "android" ? RNStatusBar.currentHeight ?? 0 : 0;
 const ANDROID_NAV_BAR_FALLBACK_HEIGHT = 34;
-const ANDROID_BOTTOM_DOCK_MAX_EXTRA_INSET = 18;
+const ANDROID_BOTTOM_DOCK_MAX_EXTRA_INSET = 24;
+const ANDROID_KEYBOARD_SHEET_OVERLAP = 18;
 
 function androidSystemBottomInset(insetBottom = 0) {
   if (Platform.OS !== "android") return 0;
@@ -267,6 +268,16 @@ function androidBottomDockInset(insetBottom = 0) {
     androidSystemBottomInset(insetBottom),
     ANDROID_BOTTOM_DOCK_MAX_EXTRA_INSET,
   );
+}
+
+function androidFixedBottomInset(insetBottom = 0) {
+  if (Platform.OS !== "android") return 0;
+  return Math.max(androidBottomDockInset(insetBottom), 22);
+}
+
+function androidChatFooterInset(insetBottom = 0) {
+  if (Platform.OS !== "android") return 0;
+  return Math.min(androidBottomDockInset(insetBottom), 10);
 }
 
 function useAndroidKeyboardCompensation() {
@@ -1115,9 +1126,10 @@ function AppNoticeTicker({
       translateX.setValue(0);
       return;
     }
-    const distance = containerWidth + textWidth;
+    const startX = Math.max(0, containerWidth / 2);
+    const distance = startX + textWidth;
     const duration = Math.max(9000, distance * 35);
-    translateX.setValue(containerWidth);
+    translateX.setValue(startX);
     const animation = Animated.loop(
       Animated.timing(translateX, {
         toValue: -textWidth,
@@ -1317,18 +1329,28 @@ function KeyboardAvoidingView(
   props: React.ComponentProps<typeof RNKeyboardAvoidingView>,
 ) {
   const { behavior, enabled, keyboardVerticalOffset, ...rest } = props;
+  const resolvedBehavior =
+    Platform.OS === "android" ? behavior : behavior ?? "padding";
+  const resolvedEnabled =
+    Platform.OS === "android" ? Boolean(behavior && enabled !== false) : enabled ?? true;
   return (
     <RNKeyboardAvoidingView
       {...rest}
-      behavior={behavior ?? "padding"}
-      enabled={enabled ?? true}
+      behavior={resolvedBehavior}
+      enabled={resolvedEnabled}
       keyboardVerticalOffset={keyboardVerticalOffset ?? 0}
       style={themedStyle(props.style, "view")}
     />
   );
 }
 
-function KeyboardSafeBottomSheet({ children }: { children: React.ReactNode }) {
+function KeyboardSafeBottomSheet({
+  children,
+  androidKeyboardOverlap = ANDROID_KEYBOARD_SHEET_OVERLAP,
+}: {
+  children: React.ReactNode;
+  androidKeyboardOverlap?: number;
+}) {
   const insets = useSafeAreaInsets();
   const androidKeyboardInset = useAndroidKeyboardCompensation();
   const [keyboardVisible, setKeyboardVisible] = useState(false);
@@ -1350,9 +1372,14 @@ function KeyboardSafeBottomSheet({ children }: { children: React.ReactNode }) {
     <RNView
       style={
         Platform.OS === "android" && androidKeyboardInset > 0
-          ? { paddingBottom: androidKeyboardInset }
+          ? {
+              paddingBottom: Math.max(
+                0,
+                androidKeyboardInset - androidKeyboardOverlap,
+              ),
+            }
           : Platform.OS === "android" && !keyboardVisible
-            ? { paddingBottom: androidBottomDockInset(insets.bottom) }
+            ? { paddingBottom: androidFixedBottomInset(insets.bottom) }
             : undefined
       }
     >
@@ -1421,7 +1448,7 @@ function KeyboardSafeFixedBottom({
   const basePaddingBottom = flat.paddingBottom ?? 0;
   const bottomPadding =
     Platform.OS === "android" && !keyboardVisible
-      ? basePaddingBottom + androidBottomDockInset(insets.bottom)
+      ? basePaddingBottom + androidFixedBottomInset(insets.bottom)
       : basePaddingBottom;
   return (
     <RNView style={[themed, { paddingBottom: bottomPadding }]}>
@@ -7221,7 +7248,7 @@ function RoomDetail({
             }}
             style={s.sheetDim}
           />
-          <KeyboardSafeBottomSheet>
+          <KeyboardSafeBottomSheet androidKeyboardOverlap={30}>
             <View style={s.privatePinSheet}>
               <View style={s.sheetHandle} />
               <Text style={s.privatePinTitle}>비밀방 PIN 입력</Text>
@@ -7657,7 +7684,7 @@ function ChatRoom({
       ? 0
       : chatKeyboardVisible
         ? 0
-        : androidBottomDockInset(safeAreaInsets.bottom);
+        : androidChatFooterInset(safeAreaInsets.bottom);
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
     isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
   );
@@ -12777,10 +12804,7 @@ function StoryDetail({
   const safeAreaInsets = useSafeAreaInsets();
   const theme = useAppTheme();
   const foreground = themeForeground(theme);
-  const androidStoryBottomInset =
-    Platform.OS === "android" && keyboardInset <= 0
-      ? androidBottomDockInset(safeAreaInsets.bottom)
-      : 0;
+  const androidStoryBottomInset = 0;
   useAndroidHardwareBack(onBack);
   const canDelete = story.mine || canModerate;
   const onChangeRef = useRef(onChange);
@@ -17498,6 +17522,14 @@ function Settings({
               )
             }
           />
+          {Platform.OS === "android" && (
+            <Menu
+              icon="shield-checkmark-outline"
+              title="성인 인증"
+              value={adultVerified ? "완료" : "미완료"}
+              onPress={onAdultVerification}
+            />
+          )}
           <Menu
             icon="key-outline"
             title="비밀번호 변경"
@@ -19356,7 +19388,7 @@ function MemberActionSheet({
         onPress={onClose}
         style={s.sheetDim}
       />
-      <KeyboardSafeBottomSheet>
+      <KeyboardSafeBottomSheet androidKeyboardOverlap={8}>
         <View style={s.memberSheet}>
           <View style={s.sheetHandle} />
           <Pressable

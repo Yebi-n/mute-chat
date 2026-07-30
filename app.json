@@ -10,7 +10,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "app.mute.chat",
-      "buildNumber": "153",
+      "buildNumber": "154",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIViewControllerBasedStatusBarAppearance": true,
@@ -21,11 +21,11 @@
       }
     },
     "android": {
-      "versionCode": 138,
-      "softwareKeyboardLayoutMode": "pan",
+      "versionCode": 139,
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
-        "foregroundImage": "./assets/mute-app-icon.png",
+        "foregroundImage": "./assets/android-adaptive-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
