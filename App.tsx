@@ -3635,6 +3635,11 @@ function AuthenticatedApp({
 
       const kind = typeof row.kind === "string" ? row.kind : "text";
       const body = typeof row.body === "string" ? row.body.trim() : "";
+      const isMafiaSystemNotice =
+        kind === "system" &&
+        typeof row.mafia_game_id === "string" &&
+        body.startsWith("[MAFIA_");
+      if (isMafiaSystemNotice) return;
       const lastMessage = row.story_id
         ? "스토리를 올렸습니다."
         : kind === "image"
@@ -8054,10 +8059,15 @@ function ChatRoom({
     title: string;
   } | null>(null);
   const [mafiaNightTargetDraft, setMafiaNightTargetDraft] = useState<string | null>(null);
+  const [mafiaClockNow, setMafiaClockNow] = useState(() => Date.now());
   const mafiaGameRef = useRef<MafiaGameState | null>(null);
+  const mafiaTickKeyRef = useRef<string | null>(null);
   useEffect(() => {
     mafiaGameRef.current = mafiaGame;
   }, [mafiaGame]);
+  useEffect(() => {
+    mafiaTickKeyRef.current = null;
+  }, [mafiaGame?.id, mafiaGame?.endsAt, mafiaGame?.phase]);
   const mafiaGameRunning = mafiaGame?.status === "running";
   useEffect(() => {
     if (!mafiaNightPicker) return;
@@ -8107,19 +8117,26 @@ function ChatRoom({
 
   useEffect(() => {
     if (!mafiaGame || mafiaGame.status === "ended" || mafiaGame.status === "cancelled") return;
+    setMafiaClockNow(Date.now());
     const timer = setInterval(() => {
+      const now = Date.now();
+      setMafiaClockNow(now);
       const gameId = mafiaGame.id;
       const due = Date.parse(mafiaGame.endsAt);
-      if (Number.isFinite(due) && Date.now() >= due) {
+      if (Number.isFinite(due) && now >= due) {
+        const tickKey = `${gameId}:${mafiaGame.phase}:${mafiaGame.endsAt}`;
+        if (mafiaTickKeyRef.current === tickKey) return;
+        mafiaTickKeyRef.current = tickKey;
         tickMafiaGame(gameId)
           .then((state) => {
             if (mountedRef.current) setMafiaGame(state);
           })
-          .catch((error) => console.warn("mafia tick failed", error));
-      } else {
-        void refreshMafiaGame();
+          .catch((error) => {
+            mafiaTickKeyRef.current = null;
+            console.warn("mafia tick failed", error);
+          });
       }
-    }, 5000);
+    }, 1000);
     return () => clearInterval(timer);
   }, [mafiaGame?.id, mafiaGame?.endsAt, mafiaGame?.status, refreshMafiaGame]);
   const rememberScrollPosition = () => {
@@ -8957,6 +8974,21 @@ function ChatRoom({
       setMafiaBusy(false);
     }
   }, [mafiaBusy, mafiaGame, mafiaNightPicker, mafiaNightTargetDraft]);
+  const showMafiaAdjustLimitToast = useCallback(() => {
+    setToast("시간 단축/연장은 한 턴에 두 번까지만 가능합니다.");
+    setTimeout(() => setToast(""), 1800);
+  }, []);
+  const handleMafiaAdjustError = useCallback(
+    (error: unknown) => {
+      const message = serverErrorMessage(error);
+      if (message.includes("MAFIA_PHASE_ADJUST_LIMIT")) {
+        showMafiaAdjustLimitToast();
+        return;
+      }
+      Alert.alert("마피아 게임 실패", message);
+    },
+    [showMafiaAdjustLimitToast],
+  );
   const startMafiaWithCapacity = useCallback(
     async (capacity: number) => {
       if (!isSupabaseConfigured || !isUuid(room.id)) {
@@ -9164,12 +9196,16 @@ function ChatRoom({
       }
       setMafiaGame(await tickMafiaGame(latest.id));
     } catch (error) {
+      if (serverErrorMessage(error).includes("MAFIA_PHASE_ADJUST_LIMIT")) {
+        showMafiaAdjustLimitToast();
+        return;
+      }
       Alert.alert("마피아 게임 실패", serverErrorMessage(error));
     } finally {
       setMafiaBusy(false);
       setTool(null);
     }
-  }, [canForceEndMafiaGame, chooseMafiaPlayer, hasEnoughMafiaRoomMembers, mafiaBusy, mafiaGame, mafiaRoomMemberLimit, refreshMafiaGame, room.id, showMafiaMemberLimitToast]);
+  }, [canForceEndMafiaGame, chooseMafiaPlayer, hasEnoughMafiaRoomMembers, mafiaBusy, mafiaGame, mafiaRoomMemberLimit, refreshMafiaGame, room.id, showMafiaAdjustLimitToast, showMafiaMemberLimitToast]);
   const send = () => {
     const text = message.trim();
     if (!text) return;
@@ -9183,6 +9219,27 @@ function ChatRoom({
             ? "lover"
             : null
         : null;
+    const mafiaMessageVisibility: "public" | "spectator" | "mafia" | "lover" =
+      activeMafia && (!myMafia?.joined || myMafia.alive === false)
+        ? "spectator"
+        : activeMafia?.phase === "night" && myMafia?.alive && myMafia.joined
+          ? myMafia.role === "mafia"
+            ? "mafia"
+            : myMafia.role === "lover"
+              ? "lover"
+              : "public"
+          : "public";
+    if (
+      activeMafia?.phase === "final_defense" &&
+      myMafia?.alive &&
+      myMafia.joined &&
+      activeMafia.defenseTargetUserId &&
+      myMafia.userId !== activeMafia.defenseTargetUserId
+    ) {
+      setToast("최후의 반론 중에는 당사자만 채팅할 수 있습니다.");
+      setTimeout(() => setToast(""), 1600);
+      return;
+    }
     if (activeMafia?.phase === "night" && myMafia?.alive && myMafia.joined && !mafiaNightVisibility) {
       setToast("밤에는 역할 행동만 할 수 있습니다.");
       setTimeout(() => setToast(""), 1600);
@@ -9208,7 +9265,7 @@ function ChatRoom({
         bubbleColor,
         textColor,
         mafiaGameId: activeMafia?.id ?? null,
-        mafiaVisibility: mafiaNightVisibility ?? "public",
+        mafiaVisibility: mafiaMessageVisibility,
       },
     ]);
     setMessage("");
@@ -9218,11 +9275,11 @@ function ChatRoom({
     setTimeout(() => scrollToLatestRef.current(false), 140);
     textSendQueueRef.current = textSendQueueRef.current
       .then(async () => {
-        if (activeMafia?.id && mafiaNightVisibility) {
+        if (activeMafia?.id && mafiaMessageVisibility !== "public") {
           const id = await sendMafiaScopedMessage({
             gameId: activeMafia.id,
             body: text,
-            visibility: mafiaNightVisibility,
+            visibility: mafiaMessageVisibility,
           });
           setMessages((items) =>
             items.map((item) =>
@@ -11386,6 +11443,9 @@ function ChatRoom({
                   setMafiaBusy(true);
                   adjustMafiaPhaseTime({ gameId: mafiaGame.id, deltaSeconds: -15 })
                     .then((state) => setMafiaGame(state))
+                    .catch((error) => {
+                      handleMafiaAdjustError(error);
+                    })
                     .catch((error) => Alert.alert("마피아 게임 실패", serverErrorMessage(error)))
                     .finally(() => setMafiaBusy(false));
                 }}
@@ -11394,12 +11454,16 @@ function ChatRoom({
                   setMafiaBusy(true);
                   adjustMafiaPhaseTime({ gameId: mafiaGame.id, deltaSeconds: 15 })
                     .then((state) => setMafiaGame(state))
+                    .catch((error) => {
+                      handleMafiaAdjustError(error);
+                    })
                     .catch((error) => Alert.alert("마피아 게임 실패", serverErrorMessage(error)))
                     .finally(() => setMafiaBusy(false));
                 }}
                 onNightAction={openMafiaNightPicker}
                 onStartNow={startMafiaImmediately}
                 canStartNow={canStartMafiaNow}
+                nowMs={mafiaClockNow}
                 nightActionLabel={
                   mafiaNightActionLabel
                     ? `${mafiaNightActionLabel}${mafiaNightActionSelection?.targetName ? `: ${mafiaNightActionSelection.targetName}` : ""}`
@@ -11764,6 +11828,11 @@ function ChatRoom({
             <View style={s.mafiaNightRadioList}>
               {mafiaGame?.players
                 .filter((player) => player.joined && player.alive)
+                .filter((player) => {
+                  if (mafiaNightPicker.actionType === "kill") return player.role !== "mafia";
+                  if (mafiaNightPicker.actionType === "inspect") return player.userId !== currentUserId;
+                  return true;
+                })
                 .map((player) => {
                   const selected = mafiaNightTargetDraft === player.userId;
                   return (
@@ -12840,7 +12909,12 @@ function StoryDetail({
   const theme = useAppTheme();
   const foreground = themeForeground(theme);
   const androidStoryBottomInset = 0;
-  useAndroidHardwareBack(onBack);
+  const handleBack = useCallback(() => {
+    setMenuOpen(false);
+    Keyboard.dismiss();
+    requestAnimationFrame(onBack);
+  }, [onBack]);
+  useAndroidHardwareBack(handleBack);
   const canDelete = story.mine || canModerate;
   const onChangeRef = useRef(onChange);
   useEffect(() => {
@@ -13068,7 +13142,7 @@ function StoryDetail({
       behavior={undefined}
       keyboardVerticalOffset={0}
     >
-      <EdgeBackLayer onBack={onBack} />
+      <EdgeBackLayer onBack={handleBack} />
       {!hideHeader && (
         <LinearGradient
           colors={theme.gradient}
@@ -13084,7 +13158,7 @@ function StoryDetail({
             },
           ]}
         >
-          <Pressable onPress={onBack} style={s.storyHeaderAction}>
+          <Pressable onPress={handleBack} style={s.storyHeaderAction}>
             <Ionicons name="chevron-back" size={22} color={foreground} />
           </Pressable>
           <Text style={[s.storyDetailHeaderTitle, { color: foreground }]}>스토리</Text>
@@ -13205,6 +13279,7 @@ function StoryDetail({
           <InlineBannerAd
             placement="story"
             dark={theme.id === "dark"}
+            reserveSpace={Platform.OS === "android"}
           />
         )}
         <View style={s.commentSection}>
@@ -13246,6 +13321,11 @@ function StoryDetail({
               ? { marginBottom: keyboardInset }
               : Platform.OS === "android" && androidCommentKeyboardLift > 0
                 ? { marginBottom: androidCommentKeyboardLift }
+              : Platform.OS === "android"
+                ? [
+                    s.androidStoryCommentComposerDocked,
+                    { marginBottom: -androidSystemBottomInset(safeAreaInsets.bottom) },
+                  ]
               : androidStoryBottomInset > 0
                 ? { paddingBottom: androidStoryBottomInset }
                 : null,
@@ -17364,13 +17444,20 @@ function AdultVerificationScreen({
           <Pressable
             disabled={loading}
             onPress={openPortal}
-            style={[s.primary, loading && s.disabled]}
+            style={[
+              s.primary,
+              Platform.OS === "android" && s.verificationPrimaryAndroid,
+              loading && s.disabled,
+            ]}
           >
             <LinearGradient
               colors={["#82B9C1", "#5DBB8C"]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
-              style={s.primaryGradient}
+              style={[
+                s.primaryGradient,
+                Platform.OS === "android" && s.verificationGradientAndroid,
+              ]}
             >
               <Text style={s.primaryText}>
                 {loading ? "여는 중..." : "운영정책 웹 열기"}
@@ -18841,10 +18928,26 @@ function ChatDeliveryMeta({
   ) : null;
 }
 
-function mafiaPhaseLabel(state: MafiaGameState) {
+function mafiaPhaseLabel(state: MafiaGameState, nowMs = Date.now()) {
   const remainingSeconds = Math.max(
     0,
-    Math.ceil((Date.parse(state.endsAt) - Date.now()) / 1000),
+    Math.ceil((Date.parse(state.endsAt) - nowMs) / 1000),
+  );
+  const suffix = remainingSeconds > 0 ? ` · ${remainingSeconds}초` : "";
+  if (state.status === "waiting")
+    return `마피아 모집 중 ${state.players.filter((p) => p.joined).length}/${state.capacity}${suffix}`;
+  if (state.phase === "day_discussion") return `${state.dayNumber}일 차 낮${suffix}`;
+  if (state.phase === "day_vote") return `투표하기${suffix}`;
+  if (state.phase === "final_defense") return `최후의 반론${suffix}`;
+  if (state.phase === "final_vote") return `찬반 투표${suffix}`;
+  if (state.phase === "night") return `${state.dayNumber}일 차 밤${suffix}`;
+  return "마피아 게임";
+}
+
+function mafiaPhaseLabelText(state: MafiaGameState, nowMs = Date.now()) {
+  const remainingSeconds = Math.max(
+    0,
+    Math.ceil((Date.parse(state.endsAt) - nowMs) / 1000),
   );
   const suffix = remainingSeconds > 0 ? ` · ${remainingSeconds}초` : "";
   if (state.status === "waiting")
@@ -18867,6 +18970,7 @@ function MafiaGameBar({
   nightActionLabel,
   onStartNow,
   canStartNow,
+  nowMs,
 }: {
   state: MafiaGameState;
   busy: boolean;
@@ -18877,8 +18981,17 @@ function MafiaGameBar({
   nightActionLabel?: string;
   onStartNow?: () => void;
   canStartNow?: boolean;
+  nowMs?: number;
 }) {
   const me = state.me;
+  const joinedNames = state.players
+    .filter((player) => player.joined)
+    .map((player) => player.name)
+    .filter(Boolean)
+    .join(", ");
+  const waitingSub = `${me?.joined ? "참여 중 · 누르면 참여 취소" : "누르면 참여"}\n현재 참여자: ${
+    joinedNames || "없음"
+  }`;
   const sub =
     state.status === "waiting"
       ? me?.joined
@@ -18899,7 +19012,7 @@ function MafiaGameBar({
           <View style={s.mafiaGameBarHeader}>
             <Ionicons name="people-circle-outline" size={18} color="#FFFFFF" />
             <View style={s.flex}>
-              <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabel(state)}</Text>
+              <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabelText(state, nowMs)}</Text>
               <Text style={s.mafiaGameBarSub}>{sub}</Text>
             </View>
           </View>
@@ -18927,7 +19040,7 @@ function MafiaGameBar({
           <View style={s.mafiaGameBarHeader}>
             <Ionicons name="moon-outline" size={18} color="#FFFFFF" />
             <View style={s.flex}>
-              <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabel(state)}</Text>
+              <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabelText(state, nowMs)}</Text>
               <Text style={s.mafiaGameBarSub}>{sub}</Text>
             </View>
           </View>
@@ -18950,8 +19063,8 @@ function MafiaGameBar({
           <Pressable disabled={busy} onPress={onPress} style={s.mafiaGameBarHeader}>
             <Ionicons name="people-circle-outline" size={18} color="#FFFFFF" />
             <View style={s.flex}>
-              <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabel(state)}</Text>
-              <Text style={s.mafiaGameBarSub}>{sub}</Text>
+              <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabelText(state, nowMs)}</Text>
+              <Text style={s.mafiaGameBarSub}>{state.status === "waiting" ? waitingSub : sub}</Text>
             </View>
           </Pressable>
           <Pressable disabled={busy} onPress={onStartNow} style={s.mafiaGameActionChipWide}>
@@ -18975,8 +19088,8 @@ function MafiaGameBar({
       >
         <Ionicons name="people-circle-outline" size={18} color="#FFFFFF" />
         <View style={s.flex}>
-          <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabel(state)}</Text>
-          <Text style={s.mafiaGameBarSub}>{sub}</Text>
+          <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabelText(state, nowMs)}</Text>
+          <Text style={s.mafiaGameBarSub}>{state.status === "waiting" ? waitingSub : sub}</Text>
         </View>
         <Ionicons name="chevron-up" size={16} color="#FFFFFF" />
       </LinearGradient>
@@ -20841,6 +20954,15 @@ const s = StyleSheet.create({
     color: colors.mint700,
     fontSize: 12,
     fontWeight: "700",
+  },
+  verificationPrimaryAndroid: {
+    alignSelf: "center",
+    width: 172,
+    maxWidth: 260,
+    backgroundColor: "transparent",
+  },
+  verificationGradientAndroid: {
+    paddingHorizontal: 22,
   },
   readOnlyBanner: {
     height: 34,
@@ -23788,6 +23910,10 @@ const s = StyleSheet.create({
     backgroundColor: "#FFF",
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
+  },
+  androidStoryCommentComposerDocked: {
+    marginBottom: 0,
+    paddingBottom: 0,
   },
   commentComposer: {
     minHeight: 62,
