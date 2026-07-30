@@ -8341,20 +8341,22 @@ function ChatRoom({
               if (mafiaVisibility !== "public" && !isSuperAdmin) {
                 const latestMafia = mafiaGameRef.current;
                 const me = latestMafia?.me;
+                const hasMafiaState = Boolean(latestMafia && latestMafia.status === "running");
                 const isSpectator =
-                  !me?.joined || me.alive === false || latestMafia?.status !== "running";
+                  hasMafiaState && (!me?.joined || me.alive === false);
                 const allowed =
                   mafiaVisibility === "private"
                     ? Boolean(currentUserId && mafiaRecipientUserIds.includes(currentUserId))
-                    : mafiaVisibility === "spectator"
-                      ? isSpectator
-                      : isSpectator ||
-                        Boolean(
-                          me?.joined &&
-                            me.alive &&
-                            ((mafiaVisibility === "mafia" && me.role === "mafia") ||
-                              (mafiaVisibility === "lover" && me.role === "lover")),
-                        );
+                    : hasMafiaState &&
+                      (mafiaVisibility === "spectator"
+                        ? isSpectator
+                        : isSpectator ||
+                          Boolean(
+                            me?.joined &&
+                              me.alive &&
+                              ((mafiaVisibility === "mafia" && me.role === "mafia") ||
+                                (mafiaVisibility === "lover" && me.role === "lover")),
+                          ));
                 if (!allowed) return;
               }
               const instant = mapServerChatMessage(
@@ -9771,10 +9773,11 @@ function ChatRoom({
       if (nextVisibility === "public") return true;
       if (isSuperAdmin) return true;
       const me = mafiaGame?.me;
-      const isSpectator =
-        !me?.joined || me.alive === false || mafiaGame?.status !== "running";
       if (nextVisibility === "private")
         return Boolean(currentUserId && recipientUserIds?.includes(currentUserId));
+      const hasMafiaState = Boolean(mafiaGame && mafiaGame.status === "running");
+      const isSpectator = hasMafiaState && (!me?.joined || me.alive === false);
+      if (!hasMafiaState) return false;
       if (nextVisibility === "spectator") return isSpectator;
       if (isSpectator) return true;
       if (nextVisibility === "mafia")

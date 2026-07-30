@@ -103,6 +103,53 @@ as $$
     );
 $$;
 
+drop policy if exists messages_read_members_or_mafia_scope on public.messages;
+create policy messages_read_members_or_mafia_scope on public.messages
+for select
+using (
+  deleted_at is null
+  and public.mafia_is_message_visible(
+    room_id,
+    kind,
+    sender_user_id,
+    secret_recipient_user_id,
+    mafia_game_id,
+    mafia_visibility,
+    mafia_recipient_user_ids
+  )
+);
+
+drop policy if exists message_assets_read_message_viewers_or_mafia_scope on public.message_assets;
+create policy message_assets_read_message_viewers_or_mafia_scope on public.message_assets
+for select
+using (
+  exists (
+    select 1
+    from public.messages m
+    where m.id = message_assets.message_id
+      and m.deleted_at is null
+      and public.mafia_is_message_visible(
+        m.room_id,
+        m.kind,
+        m.sender_user_id,
+        m.secret_recipient_user_id,
+        m.mafia_game_id,
+        m.mafia_visibility,
+        m.mafia_recipient_user_ids
+      )
+  )
+);
+
+drop function if exists public.mafia_is_message_visible(
+  uuid,
+  public.message_kind,
+  uuid,
+  uuid,
+  public.mafia_message_visibility,
+  uuid[],
+  uuid
+);
+
 create or replace function public.mafia_post_system_message(
   p_room_id uuid,
   p_game_id uuid,
