@@ -169,6 +169,7 @@ import {
   startMafiaNow,
   tickMafiaGame,
   voteMafiaGame,
+  MafiaRole,
   MafiaGameState,
 } from "./src/services/chat";
 import { sendUploadedImages, uploadValidatedImage } from "./src/services/media";
@@ -570,6 +571,7 @@ type ChatBase = {
   mafiaGameId?: string | null;
   mafiaVisibility?: "public" | "private" | "spectator" | "mafia" | "lover";
   mafiaRecipientUserIds?: string[];
+  mafiaSystemBody?: string | null;
 };
 type ChatMessage =
   | (ChatBase & {
@@ -638,6 +640,52 @@ type ChatDrawPayload = {
   title: string;
   selectedName: string;
 };
+
+type MafiaRoleResultEntry = {
+  userId: string;
+  name: string;
+  role?: MafiaRole | null;
+  avatarUri?: string;
+};
+
+const MAFIA_ROLE_LABELS: Record<MafiaRole, string> = {
+  mafia: "마피아",
+  police: "경찰",
+  doctor: "의사",
+  lover: "연인",
+  citizen: "시민",
+};
+
+function mafiaRoleLabel(role?: MafiaRole | null) {
+  return role ? (MAFIA_ROLE_LABELS[role] ?? "알 수 없음") : "알 수 없음";
+}
+
+function isMafiaGameEndSystemBody(body?: string | null) {
+  return typeof body === "string" && body.startsWith("[MAFIA_GAME_END");
+}
+
+function buildMafiaRoleResults(
+  game: MafiaGameState | null,
+  members: RoomMember[],
+): MafiaRoleResultEntry[] {
+  if (!game?.players?.length) return [];
+  const membersByUserId = new Map(
+    members
+      .filter((member) => Boolean(member.userId))
+      .map((member) => [member.userId!, member]),
+  );
+  return game.players
+    .filter((player) => player.joined)
+    .map((player) => {
+      const member = membersByUserId.get(player.userId);
+      return {
+        userId: player.userId,
+        name: player.name || member?.name || "멤버",
+        role: player.role,
+        avatarUri: member?.avatarUri,
+      };
+    });
+}
 
 const CHAT_RANKING_TITLE_RE = /^(.+)님이 랭킹을 뽑았습니다\.$/;
 const CHAT_RANKING_ENTRY_RE = /^(\d+)위\s+(.+)$/;
@@ -724,11 +772,7 @@ function sortChatMessages(messages: ChatMessage[]) {
   return [...messages].sort((first, second) => {
     const firstTime = Date.parse(first.createdAt ?? "") || 0;
     const secondTime = Date.parse(second.createdAt ?? "") || 0;
-    return firstTime === secondTime
-      ? normalizedChatMessageId(first.id).localeCompare(
-          normalizedChatMessageId(second.id),
-        )
-      : firstTime - secondTime;
+    return firstTime - secondTime;
   });
 }
 
@@ -2242,6 +2286,7 @@ function mapServerChatMessage(
       mafiaGameId: message.mafiaGameId,
       mafiaVisibility: message.mafiaVisibility ?? "public",
       mafiaRecipientUserIds: message.mafiaRecipientUserIds ?? [],
+      mafiaSystemBody: message.body,
     };
   }
   return {
@@ -6171,7 +6216,10 @@ function MainScreen({
       listActiveAppNotices()
         .then((items) => {
           if (!active) return;
-          setAppNoticeText(items.map((item) => item.body.trim()).filter(Boolean).join("   ·   "));
+          const noticeBodies = Array.from(
+            new Set(items.map((item) => item.body.trim()).filter(Boolean)),
+          );
+          setAppNoticeText(noticeBodies.join("   ·   "));
         })
         .catch(() => {
           if (active) setAppNoticeText("");
@@ -8205,9 +8253,112 @@ function ChatRoom({
     }
   }, [room.id]);
 
+  const applyMafiaPhaseTimeOptimistic = useCallback((deltaSeconds: number) => {
+    const now = Date.now();
+    setMafiaClockNow(now);
+    setMafiaGame((current) => {
+      if (
+        !current ||
+        current.status === "ended" ||
+        current.status === "cancelled"
+      )
+        return current;
+      const currentEnd = Date.parse(current.endsAt);
+      if (!Number.isFinite(currentEnd)) return current;
+      const nextEnd = Math.max(
+        now + 1000,
+        Math.min(now + 10 * 60 * 1000, currentEnd + deltaSeconds * 1000),
+      );
+      return { ...current, endsAt: new Date(nextEnd).toISOString() };
+    });
+  }, []);
+
+  const submitMafiaPhaseTimeAdjustment = useCallback(
+    async (gameId: string, deltaSeconds: number) => {
+      applyMafiaPhaseTimeOptimistic(deltaSeconds);
+      const state = await adjustMafiaPhaseTime({ gameId, deltaSeconds });
+      if (mountedRef.current) setMafiaGame(state);
+      return state;
+    },
+    [applyMafiaPhaseTimeOptimistic],
+  );
+
   useEffect(() => {
     void refreshMafiaGame();
   }, [refreshMafiaGame]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase || !isUuid(room.id)) return;
+    const client = supabase;
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => void refreshMafiaGame(), 80);
+    };
+    const channel = client
+      .channel(`mafia-game-state-${room.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "mafia_games",
+          filter: `room_id=eq.${room.id}`,
+        },
+        (payload) => {
+          const row = payload.new as Record<string, unknown> | undefined;
+          if (row && typeof row.id === "string") {
+            setMafiaClockNow(Date.now());
+            setMafiaGame((current) => {
+              if (!current || current.id !== row.id) return current;
+              return {
+                ...current,
+                status:
+                  row.status === "waiting" ||
+                  row.status === "running" ||
+                  row.status === "ended" ||
+                  row.status === "cancelled"
+                    ? row.status
+                    : current.status,
+                phase:
+                  row.phase === "lobby" ||
+                  row.phase === "day_discussion" ||
+                  row.phase === "day_vote" ||
+                  row.phase === "final_defense" ||
+                  row.phase === "final_vote" ||
+                  row.phase === "night" ||
+                  row.phase === "ended"
+                    ? row.phase
+                    : current.phase,
+                dayNumber:
+                  typeof row.day_number === "number"
+                    ? row.day_number
+                    : current.dayNumber,
+                endsAt:
+                  typeof row.phase_ends_at === "string"
+                    ? row.phase_ends_at
+                    : current.endsAt,
+                defenseTargetUserId:
+                  typeof row.defense_target_user_id === "string" ||
+                  row.defense_target_user_id === null
+                    ? row.defense_target_user_id
+                    : current.defenseTargetUserId,
+                winner:
+                  row.winner === "mafia" || row.winner === "citizen" || row.winner === null
+                    ? row.winner
+                    : current.winner,
+              };
+            });
+          }
+          scheduleRefresh();
+        },
+      )
+      .subscribe();
+    return () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      client.removeChannel(channel);
+    };
+  }, [refreshMafiaGame, room.id]);
 
   useEffect(() => {
     if (!mafiaGame || mafiaGame.status === "ended" || mafiaGame.status === "cancelled") return;
@@ -8232,7 +8383,7 @@ function ChatRoom({
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [mafiaGame?.id, mafiaGame?.endsAt, mafiaGame?.status, refreshMafiaGame]);
+  }, [mafiaGame?.id, mafiaGame?.endsAt, mafiaGame?.phase, mafiaGame?.status, refreshMafiaGame]);
   const rememberScrollPosition = () => {
     ROOM_SCROLL_STATE.set(room.id, {
       offsetY: scrollMetrics.current.offsetY,
@@ -9235,7 +9386,12 @@ function ChatRoom({
                 );
               });
         if (!action) return;
-        setMafiaGame(await adjustMafiaPhaseTime({ gameId: latest.id, deltaSeconds: action === "extend" ? 15 : -15 }));
+        setMafiaGame(
+          await submitMafiaPhaseTimeAdjustment(
+            latest.id,
+            action === "extend" ? 15 : -15,
+          ),
+        );
         return;
       }
       if (latest.phase === "day_vote") {
@@ -9299,7 +9455,7 @@ function ChatRoom({
       setMafiaBusy(false);
       setTool(null);
     }
-  }, [canForceEndMafiaGame, chooseMafiaPlayer, hasEnoughMafiaRoomMembers, mafiaBusy, mafiaGame, mafiaRoomMemberLimit, refreshMafiaGame, room.id, showMafiaAdjustLimitToast, showMafiaMemberLimitToast]);
+  }, [canForceEndMafiaGame, chooseMafiaPlayer, hasEnoughMafiaRoomMembers, mafiaBusy, mafiaGame, mafiaRoomMemberLimit, refreshMafiaGame, room.id, showMafiaAdjustLimitToast, showMafiaMemberLimitToast, submitMafiaPhaseTimeAdjustment]);
   const send = () => {
     const text = message.trim();
     if (!text) return;
@@ -10962,14 +11118,24 @@ function ChatRoom({
                   <View style={[s.unreadLine, appTheme.id === "dark" && s.unreadLineDark]} />
                 </View>
               ) : null;
-            if (item.kind === "system")
+            if (item.kind === "system") {
+              if (!item.text.trim()) return null;
+              const mafiaRoleResults =
+                isMafiaGameEndSystemBody(item.mafiaSystemBody) &&
+                mafiaGame?.id === item.mafiaGameId
+                  ? buildMafiaRoleResults(mafiaGame, roomMembersRef.current)
+                  : [];
               return (
                 <View key={item.id}>
                   {dateMarker}
                   {unreadMarker}
                   <SystemMessage event={item.event} text={item.text} />
+                  {mafiaRoleResults.length ? (
+                    <MafiaRoleResultCard entries={mafiaRoleResults} />
+                  ) : null}
                 </View>
               );
+            }
             if (item.kind === "story")
               return (
                 <View key={item.id}>
@@ -11535,7 +11701,7 @@ function ChatRoom({
                 onShorten={() => {
                   if (mafiaBusy || !mafiaGame) return;
                   setMafiaBusy(true);
-                  adjustMafiaPhaseTime({ gameId: mafiaGame.id, deltaSeconds: -15 })
+                  submitMafiaPhaseTimeAdjustment(mafiaGame.id, -15)
                     .then((state) => setMafiaGame(state))
                     .catch((error) => {
                       handleMafiaAdjustError(error);
@@ -11546,7 +11712,7 @@ function ChatRoom({
                 onExtend={() => {
                   if (mafiaBusy || !mafiaGame) return;
                   setMafiaBusy(true);
-                  adjustMafiaPhaseTime({ gameId: mafiaGame.id, deltaSeconds: 15 })
+                  submitMafiaPhaseTimeAdjustment(mafiaGame.id, 15)
                     .then((state) => setMafiaGame(state))
                     .catch((error) => {
                       handleMafiaAdjustError(error);
@@ -19261,6 +19427,30 @@ function DrawMessageCard({
     </View>
   );
 }
+
+function MafiaRoleResultCard({ entries }: { entries: MafiaRoleResultEntry[] }) {
+  if (!entries.length) return null;
+  return (
+    <View style={s.mafiaRoleResultCard}>
+      <RNText style={s.mafiaRoleResultTitle}>마피아 게임 결과</RNText>
+      <View style={s.mafiaRoleResultList}>
+        {entries.map((entry) => (
+          <View key={entry.userId} style={s.mafiaRoleResultEntry}>
+            <Avatar uri={entry.avatarUri} size={34} />
+            <View style={s.mafiaRoleResultTextBlock}>
+              <RNText numberOfLines={1} style={s.mafiaRoleResultName}>
+                {entry.name}
+              </RNText>
+              <RNText style={s.mafiaRoleResultRole}>
+                {mafiaRoleLabel(entry.role)}
+              </RNText>
+            </View>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
 function MuteLogo({
   variant = "color",
   compact = false,
@@ -22891,6 +23081,55 @@ const s = StyleSheet.create({
     alignSelf: "stretch",
     textAlign: "center",
     fontSize: 22,
+    fontWeight: "800",
+  },
+  mafiaRoleResultCard: {
+    alignSelf: "center",
+    width: "82%",
+    maxWidth: 360,
+    marginTop: -12,
+    marginBottom: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 18,
+    backgroundColor: "#FFFFFF",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    ...shadows.soft,
+  },
+  mafiaRoleResultTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "800",
+    marginBottom: 10,
+    textAlign: "center",
+  },
+  mafiaRoleResultList: {
+    gap: 9,
+  },
+  mafiaRoleResultEntry: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  mafiaRoleResultTextBlock: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  mafiaRoleResultName: {
+    flex: 1,
+    minWidth: 0,
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  mafiaRoleResultRole: {
+    color: colors.mint700,
+    fontSize: 12,
     fontWeight: "800",
   },
   deletedMessageRow: {

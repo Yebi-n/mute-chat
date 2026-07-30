@@ -10,7 +10,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "app.mute.chat",
-      "buildNumber": "156",
+      "buildNumber": "157",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIViewControllerBasedStatusBarAppearance": true,
@@ -21,7 +21,7 @@
       }
     },
     "android": {
-      "versionCode": 144,
+      "versionCode": 146,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
