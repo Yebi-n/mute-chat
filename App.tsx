@@ -216,6 +216,7 @@ import {
   getAppVersionPolicy,
   AppVersionPolicy,
 } from "./src/services/appVersion";
+import { listActiveAppNotices } from "./src/services/appNotices";
 import {
   listRoomPromotions,
   promoteRoomOnServer,
@@ -1093,6 +1094,70 @@ async function loadSplashTheme() {
 }
 function themeForeground(theme: AppTheme) {
   return theme.id === "white" ? "#222222" : "#FFF";
+}
+function AppNoticeTicker({
+  text,
+  theme,
+}: {
+  text: string;
+  theme: AppTheme;
+}) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [textWidth, setTextWidth] = useState(0);
+  const normalizedText = text.trim();
+  const isDark = theme.id === "dark";
+
+  useEffect(() => {
+    translateX.stopAnimation();
+    if (!normalizedText || containerWidth <= 0 || textWidth <= 0) return;
+    if (textWidth <= containerWidth - 24) {
+      translateX.setValue(0);
+      return;
+    }
+    const distance = containerWidth + textWidth;
+    const duration = Math.max(9000, distance * 35);
+    translateX.setValue(containerWidth);
+    const animation = Animated.loop(
+      Animated.timing(translateX, {
+        toValue: -textWidth,
+        duration,
+        easing: (value) => value,
+        useNativeDriver: true,
+      }),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [containerWidth, normalizedText, textWidth, translateX]);
+
+  if (!normalizedText) return null;
+
+  return (
+    <View
+      style={[
+        s.appNoticeTicker,
+        {
+          backgroundColor: isDark ? "#222222" : "#FFFFFF",
+          borderBottomColor: isDark ? "#343434" : colors.border,
+        },
+      ]}
+      onLayout={(event) => setContainerWidth(event.nativeEvent.layout.width)}
+    >
+      <Animated.Text
+        numberOfLines={1}
+        onLayout={(event) => setTextWidth(event.nativeEvent.layout.width)}
+        style={[
+          s.appNoticeTickerText,
+          {
+            color: theme.accent,
+            transform: [{ translateX }],
+          },
+        ]}
+      >
+        {normalizedText}
+      </Animated.Text>
+    </View>
+  );
 }
 function stableHash(value: string) {
   let hash = 2166136261;
@@ -5924,6 +5989,7 @@ function MainScreen({
   const [profileSubpageOpen, setProfileSubpageOpen] = useState(false);
   const [storySearchOpen, setStorySearchOpen] = useState(false);
   const [storyQuery, setStoryQuery] = useState("");
+  const [appNoticeText, setAppNoticeText] = useState("");
   const appTheme = useAppTheme();
   const mainInsets = useSafeAreaInsets();
   const primaryForeground = themeForeground(appTheme);
@@ -5935,6 +6001,42 @@ function MainScreen({
   useEffect(() => {
     if (notificationDrawerSignal > 0) setDrawerOpen(true);
   }, [notificationDrawerSignal]);
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase || !currentUserId) {
+      setAppNoticeText("");
+      return;
+    }
+    const client = supabase;
+    let active = true;
+    const reload = () =>
+      listActiveAppNotices()
+        .then((items) => {
+          if (!active) return;
+          setAppNoticeText(items.map((item) => item.body.trim()).filter(Boolean).join("   ·   "));
+        })
+        .catch(() => {
+          if (active) setAppNoticeText("");
+        });
+    reload();
+    const interval = setInterval(reload, 60000);
+    const channel = client
+      .channel("main-app-notices")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "app_notices",
+        },
+        reload,
+      )
+      .subscribe();
+    return () => {
+      active = false;
+      clearInterval(interval);
+      client.removeChannel(channel);
+    };
+  }, [currentUserId]);
   useEffect(() => {
     if (!supabase || !isSupabaseConfigured || !currentUserId) return;
     const client = supabase;
@@ -6341,9 +6443,12 @@ function MainScreen({
           }
           ListHeaderComponent={
             bottomTab === "myRooms" ? (
-              <View style={s.listHeader}>
+              <>
+                <AppNoticeTicker text={appNoticeText} theme={appTheme} />
+                <View style={s.listHeader}>
                 <Text style={s.listTitle}>내 채팅</Text>
-              </View>
+                </View>
+              </>
             ) : category === "promotion" ? null : (
               <View>
                 <SectionLabel
@@ -21776,6 +21881,18 @@ const s = StyleSheet.create({
     backgroundColor: "#FFF",
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
+  },
+  appNoticeTicker: {
+    height: 28,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+    justifyContent: "center",
+  },
+  appNoticeTickerText: {
+    paddingHorizontal: 20,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
   },
   tab: { flex: 1, alignItems: "center", justifyContent: "center" },
   tabText: { color: colors.textMuted, fontSize: 12, fontWeight: "600" },
