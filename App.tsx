@@ -13078,7 +13078,7 @@ function StoryDetail({
               backgroundColor: "#222222",
               borderTopColor: "#343434",
             },
-            keyboardInset > 0
+            Platform.OS === "android" && keyboardInset > 0
               ? { marginBottom: keyboardInset }
               : androidStoryBottomInset > 0
                 ? { paddingBottom: androidStoryBottomInset }
