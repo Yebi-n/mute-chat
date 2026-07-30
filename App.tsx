@@ -318,6 +318,25 @@ function useAndroidKeyboardCompensation() {
   return Platform.OS === "android" ? inset : 0;
 }
 
+function useAndroidKeyboardLift(insetBottom = 0) {
+  const [height, setHeight] = useState(0);
+
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    const show = Keyboard.addListener("keyboardDidShow", (event) => {
+      const keyboardHeight = event.endCoordinates?.height ?? 0;
+      setHeight(Math.max(0, keyboardHeight - insetBottom));
+    });
+    const hide = Keyboard.addListener("keyboardDidHide", () => setHeight(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, [insetBottom]);
+
+  return Platform.OS === "android" ? height : 0;
+}
+
 type Screen =
   | "main"
   | "search"
@@ -1155,12 +1174,20 @@ function AppNoticeTicker({
       ]}
       onLayout={(event) => setContainerWidth(event.nativeEvent.layout.width)}
     >
+      <Text
+        pointerEvents="none"
+        onLayout={(event) => setTextWidth(event.nativeEvent.layout.width)}
+        style={[s.appNoticeTickerMeasure, { color: theme.accent }]}
+      >
+        {normalizedText}
+      </Text>
       <Animated.Text
         numberOfLines={1}
-        onLayout={(event) => setTextWidth(event.nativeEvent.layout.width)}
+        ellipsizeMode="clip"
         style={[
           s.appNoticeTickerText,
           {
+            minWidth: Math.max(textWidth, containerWidth),
             color: theme.accent,
             transform: [{ translateX }],
           },
@@ -2598,6 +2625,7 @@ export default function App() {
       </>
     );
   } else if (
+    Platform.OS === "ios" &&
     versionPolicy &&
     Number.isFinite(versionPolicy.minBuild) &&
     CURRENT_APP_BUILD < versionPolicy.minBuild
@@ -2732,6 +2760,11 @@ function AppLockGate({
 }
 
 function ForceUpdateScreen({ policy }: { policy: AppVersionPolicy }) {
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => true);
+    return () => subscription.remove();
+  }, []);
   const message =
     policy.forceMessage ||
     "현재 버전에서는 일부 기능을 안정적으로 사용할 수 없습니다. 최신 버전으로 업데이트 후 이용해주세요.";
@@ -7675,6 +7708,7 @@ function ChatRoom({
   const adsDisabled = useAdFree();
   const safeAreaInsets = useSafeAreaInsets();
   const [chatKeyboardVisible, setChatKeyboardVisible] = useState(false);
+  const androidChatKeyboardLift = useAndroidKeyboardLift(safeAreaInsets.bottom);
   const [chatBannerHeight, setChatBannerHeight] = useState(0);
   useEffect(() => {
     if (adsDisabled) setChatBannerHeight(0);
@@ -7683,7 +7717,7 @@ function ChatRoom({
     Platform.OS !== "android"
       ? 0
       : chatKeyboardVisible
-        ? 0
+        ? androidChatKeyboardLift
         : androidChatFooterInset(safeAreaInsets.bottom);
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
     isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
@@ -12802,6 +12836,7 @@ function StoryDetail({
   const [refreshing, setRefreshing] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const safeAreaInsets = useSafeAreaInsets();
+  const androidCommentKeyboardLift = useAndroidKeyboardLift(safeAreaInsets.bottom);
   const theme = useAppTheme();
   const foreground = themeForeground(theme);
   const androidStoryBottomInset = 0;
@@ -13209,6 +13244,8 @@ function StoryDetail({
             },
             Platform.OS === "android" && keyboardInset > 0
               ? { marginBottom: keyboardInset }
+              : Platform.OS === "android" && androidCommentKeyboardLift > 0
+                ? { marginBottom: androidCommentKeyboardLift }
               : androidStoryBottomInset > 0
                 ? { paddingBottom: androidStoryBottomInset }
                 : null,
@@ -21925,6 +21962,18 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     lineHeight: 18,
+    flexShrink: 0,
+  },
+  appNoticeTickerMeasure: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    opacity: 0,
+    paddingHorizontal: 20,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+    flexShrink: 0,
   },
   tab: { flex: 1, alignItems: "center", justifyContent: "center" },
   tabText: { color: colors.textMuted, fontSize: 12, fontWeight: "600" },

@@ -10,7 +10,7 @@ export type AppVersionPolicy = {
 };
 
 export const CURRENT_APP_BUILD =
-  Platform.OS === 'ios' ? 151 : Platform.OS === 'android' ? 136 : 0;
+  Platform.OS === 'ios' ? 155 : Platform.OS === 'android' ? 140 : 0;
 
 export async function getAppVersionPolicy(): Promise<AppVersionPolicy | null> {
   if (!isSupabaseConfigured || !supabase) return null;
