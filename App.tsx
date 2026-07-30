@@ -852,6 +852,8 @@ const PIN_ICON_SOURCE = require("./assets/pin-gray.png");
 const APP_LOCK_ENABLED_KEY = "mute:app-lock:enabled";
 const APP_LOCK_PIN_KEY = "mute:app-lock:pin";
 const APP_LOCK_SECURE_PIN_KEY = "mute_app_lock_pin";
+const ADULT_VERIFICATION_PENDING_ID_KEY =
+  "mute:adult-verification:pending-id";
 const PRIVACY_POLICY_URL =
   "https://service-introduction-theta.vercel.app/privacy/";
 const APPLE_STANDARD_EULA_URL =
@@ -896,6 +898,81 @@ async function clearAppLockCredentials() {
       // SecureStore can reject legacy/invalid native keys during logout on
       // some upgraded installs. Local logout must not be blocked by cleanup.
     }
+  }
+}
+
+function parseAdultVerificationId(url: string) {
+  if (!url.startsWith("mute://adult-verification-complete")) return null;
+  const match = url.match(/[?&]identityVerificationId=([^&]+)/);
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+function adultVerificationErrorCode(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (!error || typeof error !== "object") return String(error ?? "");
+  const record = error as Record<string, unknown>;
+  return String(
+    record.message ??
+      record.error_description ??
+      record.error ??
+      record.code ??
+      "",
+  );
+}
+
+async function storePendingAdultVerificationId(
+  identityVerificationId?: string | null,
+) {
+  if (!identityVerificationId) return;
+  await AsyncStorage.setItem(
+    ADULT_VERIFICATION_PENDING_ID_KEY,
+    identityVerificationId,
+  );
+}
+
+async function clearPendingAdultVerificationId(
+  identityVerificationId?: string | null,
+) {
+  const current = await AsyncStorage.getItem(
+    ADULT_VERIFICATION_PENDING_ID_KEY,
+  );
+  if (!identityVerificationId || current === identityVerificationId) {
+    await AsyncStorage.removeItem(ADULT_VERIFICATION_PENDING_ID_KEY);
+  }
+}
+
+let pendingAdultVerificationSyncInFlight = false;
+let lastPendingAdultVerificationSyncAt = 0;
+
+async function completePendingAdultVerification() {
+  if (!isSupabaseConfigured || !supabase) return false;
+  if (pendingAdultVerificationSyncInFlight) return false;
+  const now = Date.now();
+  if (now - lastPendingAdultVerificationSyncAt < 2500) return false;
+
+  const identityVerificationId = await AsyncStorage.getItem(
+    ADULT_VERIFICATION_PENDING_ID_KEY,
+  );
+  if (!identityVerificationId) return false;
+
+  pendingAdultVerificationSyncInFlight = true;
+  lastPendingAdultVerificationSyncAt = now;
+  try {
+    await completeAdultVerification(identityVerificationId);
+    await clearPendingAdultVerificationId(identityVerificationId);
+    return true;
+  } catch (error) {
+    const code = adultVerificationErrorCode(error);
+    if (
+      /VERIFICATION_ATTEMPT_NOT_FOUND|VERIFICATION_ATTEMPT_EXPIRED|UNDER_AGE|PHONE_MISMATCH|PHONE_ACCOUNT_NOT_FOUND|IDENTITY_ALREADY_USED/i.test(
+        code,
+      )
+    ) {
+      await clearPendingAdultVerificationId(identityVerificationId);
+    }
+    return false;
+  } finally {
+    pendingAdultVerificationSyncInFlight = false;
   }
 }
 const LOCAL_PENDING_MESSAGES = new Map<string, ChatMessage[]>();
@@ -3343,6 +3420,7 @@ function AuthenticatedApp({
     lastAppDataReloadAtRef.current = reloadStartedAt;
     if (showSpinner) setDataRefreshing(true);
     try {
+      await completePendingAdultVerification();
       const [
         roomsResult,
         activeIdsResult,
@@ -3440,6 +3518,22 @@ function AuthenticatedApp({
     const subscription = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
       void reloadAppData(false, true);
+    });
+    return () => subscription.remove();
+  }, []);
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    const handleUrl = async (url?: string | null) => {
+      if (!url) return;
+      const identityVerificationId = parseAdultVerificationId(url);
+      if (!identityVerificationId) return;
+      await storePendingAdultVerificationId(identityVerificationId);
+      await completePendingAdultVerification();
+      void reloadAppData(false, true);
+    };
+    Linking.getInitialURL().then(handleUrl).catch(() => undefined);
+    const subscription = Linking.addEventListener("url", (event) => {
+      void handleUrl(event.url);
     });
     return () => subscription.remove();
   }, []);
@@ -17251,7 +17345,9 @@ function AdultVerificationScreen({
     setLoading(true);
     try {
       if (identityVerificationId) {
+        await storePendingAdultVerificationId(identityVerificationId);
         await completeAdultVerification(identityVerificationId);
+        await clearPendingAdultVerificationId(identityVerificationId);
       }
       closeWeb();
       const done = await onRefresh();
@@ -17268,11 +17364,8 @@ function AdultVerificationScreen({
     }
   };
   const handleVerificationUrl = (url: string) => {
-    if (!url.startsWith("mute://adult-verification-complete")) return false;
-    const match = url.match(/[?&]identityVerificationId=([^&]+)/);
-    const identityVerificationId = match?.[1]
-      ? decodeURIComponent(match[1])
-      : null;
+    const identityVerificationId = parseAdultVerificationId(url);
+    if (!identityVerificationId) return false;
     void finishVerification(identityVerificationId);
     return true;
   };
@@ -17354,6 +17447,9 @@ function AdultVerificationScreen({
     setLoading(true);
     try {
       const payload = await startAdultVerification();
+      if ("identityVerificationId" in payload) {
+        await storePendingAdultVerificationId(payload.identityVerificationId);
+      }
       if ("url" in payload) {
         setWebHtml(null);
         setWebUrl(payload.url);
@@ -17371,6 +17467,7 @@ function AdultVerificationScreen({
   const refresh = async () => {
     setLoading(true);
     try {
+      await completePendingAdultVerification();
       const done = await onRefresh();
       Alert.alert(
         "인증 상태",
