@@ -696,10 +696,10 @@ function buildMafiaRoleResults(
     });
 }
 
-const CHAT_RANKING_TITLE_RE = /^(.+)님이 랭킹을 뽑았습니다\.$/;
-const CHAT_RANKING_ENTRY_RE = /^(\d+)위\s+(.+)$/;
-const CHAT_DRAW_TITLE_RE = /^(.+)님이 제비를 뽑았습니다\.$/;
-const CHAT_DRAW_SELECTED_RE = /^당첨\s+(.+)$/;
+const CHAT_RANKING_TITLE_RE = /^(.+?)님이\s*랭킹을\s*뽑았습니다\.?$/;
+const CHAT_RANKING_ENTRY_RE = /^(\d+)\s*위[\s,.:：-]*(.+)$/;
+const CHAT_DRAW_TITLE_RE = /^(.+?)님이\s*제비를\s*뽑았습니다\.?$/;
+const CHAT_DRAW_SELECTED_RE = /^당첨[\s,.:：-]*(.+)$/;
 
 function shuffleRoomMembersForRanking(members: RoomMember[], fallbackName: string) {
   const unique = new Map<string, string>();
