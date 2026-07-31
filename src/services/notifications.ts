@@ -1,4 +1,4 @@
-import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
@@ -49,7 +49,13 @@ Notifications.setNotificationHandler({
 });
 
 export async function registerPushDevice() {
-  if (!Device.isDevice || Platform.OS === 'web') return null;
+  if (Platform.OS === 'web') return null;
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('messages', {
+      name: 'messages',
+      importance: Notifications.AndroidImportance.HIGH,
+    });
+  }
   const current = await Notifications.getPermissionsAsync();
   const permission = current.status === 'granted'
     ? current
@@ -60,7 +66,13 @@ export async function registerPushDevice() {
           allowSound: true,
         },
       });
-  if (permission.status !== 'granted') return null;
+  const iosStatus = permission.ios?.status;
+  const granted =
+    permission.granted ||
+    iosStatus === Notifications.IosAuthorizationStatus.AUTHORIZED ||
+    iosStatus === Notifications.IosAuthorizationStatus.PROVISIONAL ||
+    iosStatus === Notifications.IosAuthorizationStatus.EPHEMERAL;
+  if (!granted) return null;
 
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('messages', {
@@ -69,7 +81,9 @@ export async function registerPushDevice() {
     });
   }
 
-  const token = (await Notifications.getExpoPushTokenAsync()).data;
+  const projectId =
+    Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+  const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
   if (isSupabaseConfigured && supabase) {
     const enabled=await getGlobalNotificationsEnabled();
     const { error } = await supabase.rpc('register_push_device', {
@@ -83,7 +97,7 @@ export async function registerPushDevice() {
 }
 
 export async function unregisterPushDevice() {
-  if (!Device.isDevice || Platform.OS === 'web') return;
+  if (Platform.OS === 'web') return;
   if (!isSupabaseConfigured || !supabase) return;
   // Disable every token owned by the current account. Fetching the local Expo
   // token can fail during logout, which previously left stale devices enabled.

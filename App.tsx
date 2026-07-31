@@ -8285,7 +8285,7 @@ function ChatRoom({
   }, [mafiaGame?.phase, mafiaGame?.status, mafiaNightPicker]);
   useEffect(() => {
     if (!mafiaCapacityPickerOpen) return;
-    if (mafiaGame?.status !== "waiting") setMafiaCapacityPickerOpen(false);
+    if (mafiaGame && mafiaGame.status !== "waiting") setMafiaCapacityPickerOpen(false);
   }, [mafiaCapacityPickerOpen, mafiaGame?.status]);
   const canForceEndMafiaGame =
     Boolean(mafiaGame && currentUserId && mafiaGame.hostUserId === currentUserId) || isStaff;
@@ -9556,7 +9556,7 @@ function ChatRoom({
           showMafiaMemberLimitToast();
           return;
         }
-        setMafiaCapacityDraft(Math.min(MAFIA_MIN_PLAYERS, mafiaRoomMemberLimit));
+        setMafiaCapacityDraft(Math.min(mafiaRoomMemberLimit, MAFIA_MIN_PLAYERS));
         setMafiaCapacityPickerOpen(true);
         return;
       }
