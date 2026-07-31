@@ -8041,6 +8041,9 @@ function ChatRoom({
     initialY: number;
     viewportOffset: number;
   } | null>(null);
+  const prependSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const messagePositions = useRef<Record<string, number>>({});
   const restoreScrollAfterPanelRef = useRef(false);
   const [chatReady, setChatReady] = useState(false);
@@ -9176,8 +9179,21 @@ function ChatRoom({
       (item) => item.createdAt && !item.id.startsWith("pending-"),
     );
     if (!oldest?.createdAt) return;
+    if (prependSettleTimerRef.current) {
+      clearTimeout(prependSettleTimerRef.current);
+      prependSettleTimerRef.current = null;
+    }
     prependHeightRef.current = scrollMetrics.current.contentHeight;
     prependOffsetRef.current = scrollMetrics.current.offsetY;
+    const oldestY = messagePositions.current[oldest.id];
+    prependAnchorRef.current =
+      typeof oldestY === "number"
+        ? {
+            id: oldest.id,
+            initialY: oldestY,
+            viewportOffset: oldestY - scrollMetrics.current.offsetY,
+          }
+        : null;
     loadingOlderRef.current = true;
     setLoadingOlder(true);
     try {
@@ -9190,6 +9206,12 @@ function ChatRoom({
         mapServerChatMessage(item, currentUserId),
       );
       setHasOlderMessages(older.length === olderMessagePageSize);
+      if (!mapped.length) {
+        prependHeightRef.current = null;
+        prependOffsetRef.current = null;
+        prependAnchorRef.current = null;
+        return;
+      }
       setMessages((current) => {
         return mergeChatMessages(mapped, current);
       });
@@ -9281,6 +9303,13 @@ function ChatRoom({
     lastContentSizeMessageCountRef.current = 0;
     nearBottomRef.current = true;
     restoreScrollAfterPanelRef.current = false;
+    if (prependSettleTimerRef.current) {
+      clearTimeout(prependSettleTimerRef.current);
+      prependSettleTimerRef.current = null;
+    }
+    prependHeightRef.current = null;
+    prependOffsetRef.current = null;
+    prependAnchorRef.current = null;
     ROOM_SCROLL_STATE.delete(room.id);
     requestAnimationFrame(() => setTimeout(() => scrollToLatest(false), 80));
     const timers = [
@@ -9288,7 +9317,13 @@ function ChatRoom({
       setTimeout(() => scrollToLatest(false), 320),
       setTimeout(() => scrollToLatest(false), 640),
     ];
-    return () => timers.forEach((timer) => clearTimeout(timer));
+    return () => {
+      timers.forEach((timer) => clearTimeout(timer));
+      if (prependSettleTimerRef.current) {
+        clearTimeout(prependSettleTimerRef.current);
+        prependSettleTimerRef.current = null;
+      }
+    };
   }, [room.id]);
   const submitTextMessage = async (
     localId: string,
@@ -11342,11 +11377,27 @@ function ChatRoom({
               const previousHeight = prependHeightRef.current;
               const previousOffset =
                 prependOffsetRef.current ?? scrollMetrics.current.offsetY;
-              prependHeightRef.current = null;
-              prependOffsetRef.current = null;
-              prependAnchorRef.current = null;
-              const delta = Math.max(0, height - previousHeight);
-              const nextY = Math.max(0, previousOffset + delta);
+              const delta = height - previousHeight;
+              const anchor = prependAnchorRef.current;
+              const anchorY = anchor
+                ? messagePositions.current[anchor.id]
+                : undefined;
+              const nextY = Math.max(
+                0,
+                typeof anchorY === "number"
+                  ? anchorY - (anchor?.viewportOffset ?? 0)
+                  : previousOffset + delta,
+              );
+              prependHeightRef.current = height;
+              prependOffsetRef.current = nextY;
+              if (prependSettleTimerRef.current)
+                clearTimeout(prependSettleTimerRef.current);
+              prependSettleTimerRef.current = setTimeout(() => {
+                prependHeightRef.current = null;
+                prependOffsetRef.current = null;
+                prependAnchorRef.current = null;
+                prependSettleTimerRef.current = null;
+              }, 700);
               requestAnimationFrame(() => {
                 chatScrollRef.current?.scrollTo({
                   y: nextY,
