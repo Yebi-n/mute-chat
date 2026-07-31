@@ -130,6 +130,11 @@ alter table public.mafia_players enable row level security;
 alter table public.mafia_actions enable row level security;
 alter table public.mafia_votes enable row level security;
 
+drop policy if exists mafia_games_room_members_read on public.mafia_games;
+drop policy if exists mafia_players_room_members_read on public.mafia_players;
+drop policy if exists mafia_actions_self_or_spectator_read on public.mafia_actions;
+drop policy if exists mafia_votes_room_members_read on public.mafia_votes;
+
 create policy mafia_games_room_members_read on public.mafia_games
   for select to authenticated
   using (public.is_active_room_member(room_id));
@@ -234,6 +239,7 @@ create policy messages_read_members_or_mafia_scope on public.messages
 
 drop policy if exists message_assets_read_message_viewers on public.message_assets;
 drop policy if exists message_assets_read_message_viewers_or_admin on public.message_assets;
+drop policy if exists message_assets_read_message_viewers_or_mafia_scope on public.message_assets;
 create policy message_assets_read_message_viewers_or_mafia_scope on public.message_assets
   for select to authenticated
   using (
