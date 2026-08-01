@@ -22,7 +22,6 @@ import ExternalColorPicker, {
   InputWidget,
   Panel3,
 } from "reanimated-color-picker";
-import { WebView } from "react-native-webview";
 import {
   Gesture,
   GestureDetector,
@@ -105,10 +104,8 @@ import {
   ServerRoomMember,
 } from "./src/services/rooms";
 import {
-  completeAdultVerification,
   getOperationsPolicyUrl,
   getVerificationStatus,
-  startAdultVerification,
 } from "./src/services/verification";
 import {
   schedulePendingPushDispatch,
@@ -146,31 +143,18 @@ import {
 } from "./src/services/roomFeatures";
 import {
   announceStoryCreated,
-  adjustMafiaPhaseTime,
-  cancelMafiaJoin,
-  forceEndMafiaGame,
-  getMafiaGameState,
   getLatestRoomMessageCursor,
   getRoomMessageCreatedAt,
   getRoomReadReceipt,
-  joinMafiaGame,
   listRoomMessages,
   listRoomReadReceipts,
   markRoomRead,
   searchRoomMessages,
-  sendMafiaScopedMessage,
   sendSecretMessage,
   softDeleteMyMessage,
-  startMafiaLobby,
-  submitMafiaNightAction,
   sendSystemMessage,
   sendTextMessage,
   ServerRoomMessage,
-  startMafiaNow,
-  tickMafiaGame,
-  voteMafiaGame,
-  MafiaRole,
-  MafiaGameState,
 } from "./src/services/chat";
 import { sendUploadedImages, uploadValidatedImage } from "./src/services/media";
 import {
@@ -213,12 +197,6 @@ import {
 } from "./src/services/payments";
 import { boostTopSpace, listTopSpaces } from "./src/services/topSpace";
 import {
-  CURRENT_APP_BUILD,
-  getAppVersionPolicy,
-  AppVersionPolicy,
-} from "./src/services/appVersion";
-import { listActiveAppNotices } from "./src/services/appNotices";
-import {
   listRoomPromotions,
   promoteRoomOnServer,
 } from "./src/services/promotions";
@@ -234,7 +212,6 @@ import {
 import { colors, radius, shadows, spacing } from "./src/theme";
 import { MainTab, Room } from "./src/types";
 import InlineBannerAd from "./src/components/InlineBannerAd";
-import { displayMafiaSystemText } from "./src/utils/mafiaText";
 import {
   SCREENSHOT_DEMO_ENABLED,
   screenshotDemoMembers,
@@ -245,8 +222,7 @@ import {
 const ANDROID_STATUS_BAR_HEIGHT =
   Platform.OS === "android" ? RNStatusBar.currentHeight ?? 0 : 0;
 const ANDROID_NAV_BAR_FALLBACK_HEIGHT = 34;
-const ANDROID_BOTTOM_DOCK_MAX_EXTRA_INSET = 24;
-const ANDROID_KEYBOARD_SHEET_OVERLAP = 18;
+const ANDROID_BOTTOM_DOCK_MAX_EXTRA_INSET = 18;
 
 function androidSystemBottomInset(insetBottom = 0) {
   if (Platform.OS !== "android") return 0;
@@ -269,16 +245,6 @@ function androidBottomDockInset(insetBottom = 0) {
     androidSystemBottomInset(insetBottom),
     ANDROID_BOTTOM_DOCK_MAX_EXTRA_INSET,
   );
-}
-
-function androidFixedBottomInset(insetBottom = 0) {
-  if (Platform.OS !== "android") return 0;
-  return Math.max(androidBottomDockInset(insetBottom), 22);
-}
-
-function androidChatFooterInset(insetBottom = 0) {
-  if (Platform.OS !== "android") return 0;
-  return Math.min(androidBottomDockInset(insetBottom), 10);
 }
 
 function useAndroidKeyboardCompensation() {
@@ -317,25 +283,6 @@ function useAndroidKeyboardCompensation() {
   }, []);
 
   return Platform.OS === "android" ? inset : 0;
-}
-
-function useAndroidKeyboardLift(insetBottom = 0) {
-  const [height, setHeight] = useState(0);
-
-  useEffect(() => {
-    if (Platform.OS !== "android") return;
-    const show = Keyboard.addListener("keyboardDidShow", (event) => {
-      const keyboardHeight = event.endCoordinates?.height ?? 0;
-      setHeight(Math.max(0, keyboardHeight - insetBottom));
-    });
-    const hide = Keyboard.addListener("keyboardDidHide", () => setHeight(0));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, [insetBottom]);
-
-  return Platform.OS === "android" ? height : 0;
 }
 
 type Screen =
@@ -387,8 +334,6 @@ const ChatStack = createNativeStackNavigator<ChatStackParamList>();
 type ComposerTool = "media" | "style" | "secret" | null;
 const CHAT_COLLAPSE_CHAR_THRESHOLD = 140;
 const CHAT_COLLAPSE_LINE_LIMIT = 4;
-const MAFIA_MIN_PLAYERS = 3;
-const MAFIA_MAX_PLAYERS = 20;
 const DEMO_ROOM_ID = "green-table";
 const SCREENSHOT_DEMO_ROOM_IDS = new Set(
   screenshotDemoRooms.map((room) => room.id),
@@ -564,18 +509,12 @@ type ChatBase = {
   id: string;
   userId?: string | null;
   createdAt?: string;
-  clientOrder?: number;
   delivery?: ChatDelivery;
   uploadProgress?: number;
   uploadProgressLabel?: string;
   bubbleColor?: string;
   textColor?: string;
   pendingUploadAssets?: ChatImageAsset[];
-  mafiaGameId?: string | null;
-  mafiaVisibility?: "public" | "private" | "spectator" | "mafia" | "lover";
-  mafiaRecipientUserIds?: string[];
-  mafiaSystemBody?: string | null;
-  mafiaParticipant?: boolean;
 };
 type ChatMessage =
   | (ChatBase & {
@@ -630,146 +569,6 @@ type ChatSearchResult = {
   text: string;
 };
 
-type ChatRankingEntry = {
-  rank: number;
-  name: string;
-};
-
-type ChatRankingPayload = {
-  title: string;
-  drawerName: string;
-  entries: ChatRankingEntry[];
-};
-
-type ChatDrawPayload = {
-  title: string;
-  drawerName: string;
-  selectedName: string;
-};
-
-type MafiaRoleResultEntry = {
-  userId: string;
-  name: string;
-  role?: MafiaRole | null;
-  avatarUri?: string;
-};
-
-const MAFIA_ROLE_LABELS: Record<MafiaRole, string> = {
-  mafia: "마피아",
-  police: "경찰",
-  doctor: "의사",
-  lover: "연인",
-  citizen: "시민",
-};
-
-function mafiaRoleLabel(role?: MafiaRole | null) {
-  return role ? (MAFIA_ROLE_LABELS[role] ?? "알 수 없음") : "알 수 없음";
-}
-
-function isMafiaGameEndSystemBody(body?: string | null) {
-  return (
-    typeof body === "string" &&
-    (body.startsWith("[MAFIA_GAME_END") || body.includes("팀이 승리하였습니다"))
-  );
-}
-
-function buildMafiaRoleResults(
-  game: MafiaGameState | null,
-  members: RoomMember[],
-): MafiaRoleResultEntry[] {
-  if (!game?.players?.length) return [];
-  const membersByUserId = new Map(
-    members
-      .filter((member) => Boolean(member.userId))
-      .map((member) => [member.userId!, member]),
-  );
-  return game.players
-    .filter((player) => player.joined)
-    .map((player) => {
-      const member = membersByUserId.get(player.userId);
-      return {
-        userId: player.userId,
-        name: player.name || member?.name || "멤버",
-        role: player.role,
-        avatarUri: member?.avatarUri,
-      };
-    });
-}
-
-const CHAT_RANKING_TITLE_RE = /^(.+?)님이\s*랭킹을\s*뽑았습니다\.?$/;
-const CHAT_RANKING_ENTRY_RE = /^(\d+)\s*위[\s,.:：-]*(.+)$/;
-const CHAT_DRAW_TITLE_RE = /^(.+?)님이\s*제비를\s*뽑았습니다\.?$/;
-const CHAT_DRAW_SELECTED_RE = /^당첨[\s,.:：-]*(.+)$/;
-
-function shuffleRoomMembersForRanking(members: RoomMember[], fallbackName: string) {
-  const unique = new Map<string, string>();
-  members.forEach((member, index) => {
-    if (member.blocked) return;
-    const name = typeof member.name === "string" ? member.name.trim() : "";
-    if (!name) return;
-    const key = member.userId || `${name}-${index}`;
-    if (!unique.has(key)) unique.set(key, name);
-  });
-  if (!unique.size) unique.set("me", fallbackName || "나");
-  const names = [...unique.values()];
-  for (let index = names.length - 1; index > 0; index -= 1) {
-    const randomIndex = Math.floor(Math.random() * (index + 1));
-    [names[index], names[randomIndex]] = [names[randomIndex], names[index]];
-  }
-  return names;
-}
-
-function buildChatRankingMessage(drawerName: string, members: RoomMember[]) {
-  const safeDrawerName = drawerName.trim() || "나";
-  const names = shuffleRoomMembersForRanking(members, safeDrawerName);
-  return [
-    `${safeDrawerName}님이 랭킹을 뽑았습니다.`,
-    ...names.map((name, index) => `${index + 1}위 ${name}`),
-  ].join("\n");
-}
-
-function parseChatRankingMessage(text: string): ChatRankingPayload | null {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const titleMatch = lines[0]?.match(CHAT_RANKING_TITLE_RE);
-  if (lines.length < 2 || !titleMatch) return null;
-  const entries = lines.slice(1).map((line) => {
-    const match = line.match(CHAT_RANKING_ENTRY_RE);
-    if (!match) return null;
-    return { rank: Number(match[1]), name: match[2].trim() };
-  });
-  if (entries.some((entry) => !entry)) return null;
-  return {
-    title: lines[0],
-    drawerName: titleMatch[1].trim(),
-    entries: entries.filter(Boolean) as ChatRankingEntry[],
-  };
-}
-
-function buildChatDrawMessage(drawerName: string, members: RoomMember[]) {
-  const safeDrawerName = drawerName.trim() || "나";
-  const selectedName = shuffleRoomMembersForRanking(members, safeDrawerName)[0];
-  return `${safeDrawerName}님이 제비를 뽑았습니다.\n당첨 ${selectedName}`;
-}
-
-function parseChatDrawMessage(text: string): ChatDrawPayload | null {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const titleMatch = lines[0]?.match(CHAT_DRAW_TITLE_RE);
-  if (lines.length !== 2 || !titleMatch) return null;
-  const selected = lines[1].match(CHAT_DRAW_SELECTED_RE);
-  if (!selected?.[1]?.trim()) return null;
-  return {
-    title: lines[0],
-    drawerName: titleMatch[1].trim(),
-    selectedName: selected[1].trim(),
-  };
-}
-
 function normalizedChatMessageId(id: string) {
   return id.startsWith("server-") ? id.slice(7) : id;
 }
@@ -783,25 +582,13 @@ function chatMessageMergeKey(message: ChatMessage) {
 
 function sortChatMessages(messages: ChatMessage[]) {
   return [...messages].sort((first, second) => {
-    if (
-      typeof first.clientOrder === "number" &&
-      typeof second.clientOrder === "number" &&
-      first.clientOrder !== second.clientOrder
-    )
-      return first.clientOrder - second.clientOrder;
-    const firstCreatedAt = first.createdAt ?? "";
-    const secondCreatedAt = second.createdAt ?? "";
-    const firstTime = Date.parse(firstCreatedAt) || 0;
-    const secondTime = Date.parse(secondCreatedAt) || 0;
-    if (firstTime !== secondTime) return firstTime - secondTime;
-    const createdAtOrder = firstCreatedAt.localeCompare(secondCreatedAt);
-    if (createdAtOrder !== 0) return createdAtOrder;
-    const firstId = normalizedChatMessageId(first.id);
-    const secondId = normalizedChatMessageId(second.id);
-    const firstPending = firstId.startsWith("pending-") ? 1 : 0;
-    const secondPending = secondId.startsWith("pending-") ? 1 : 0;
-    if (firstPending !== secondPending) return firstPending - secondPending;
-    return firstId.localeCompare(secondId);
+    const firstTime = Date.parse(first.createdAt ?? "") || 0;
+    const secondTime = Date.parse(second.createdAt ?? "") || 0;
+    return firstTime === secondTime
+      ? normalizedChatMessageId(first.id).localeCompare(
+          normalizedChatMessageId(second.id),
+        )
+      : firstTime - secondTime;
   });
 }
 
@@ -812,20 +599,7 @@ function mergeChatMessages(...groups: ChatMessage[][]) {
       message.kind === "story"
         ? message
         : { ...message, id: normalizedChatMessageId(message.id) };
-    const key = chatMessageMergeKey(normalized);
-    const previous = byKey.get(key);
-    byKey.set(
-      key,
-      previous
-        ? {
-            ...previous,
-            ...normalized,
-            clientOrder: normalized.clientOrder ?? previous.clientOrder,
-            mafiaParticipant:
-              normalized.mafiaParticipant ?? previous.mafiaParticipant,
-          }
-        : normalized,
-    );
+    byKey.set(chatMessageMergeKey(normalized), normalized);
   });
   return sortChatMessages([...byKey.values()]);
 }
@@ -938,8 +712,6 @@ const PIN_ICON_SOURCE = require("./assets/pin-gray.png");
 const APP_LOCK_ENABLED_KEY = "mute:app-lock:enabled";
 const APP_LOCK_PIN_KEY = "mute:app-lock:pin";
 const APP_LOCK_SECURE_PIN_KEY = "mute_app_lock_pin";
-const ADULT_VERIFICATION_PENDING_ID_KEY =
-  "mute:adult-verification:pending-id";
 const PRIVACY_POLICY_URL =
   "https://service-introduction-theta.vercel.app/privacy/";
 const APPLE_STANDARD_EULA_URL =
@@ -984,81 +756,6 @@ async function clearAppLockCredentials() {
       // SecureStore can reject legacy/invalid native keys during logout on
       // some upgraded installs. Local logout must not be blocked by cleanup.
     }
-  }
-}
-
-function parseAdultVerificationId(url: string) {
-  if (!url.startsWith("mute://adult-verification-complete")) return null;
-  const match = url.match(/[?&]identityVerificationId=([^&]+)/);
-  return match?.[1] ? decodeURIComponent(match[1]) : null;
-}
-
-function adultVerificationErrorCode(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (!error || typeof error !== "object") return String(error ?? "");
-  const record = error as Record<string, unknown>;
-  return String(
-    record.message ??
-      record.error_description ??
-      record.error ??
-      record.code ??
-      "",
-  );
-}
-
-async function storePendingAdultVerificationId(
-  identityVerificationId?: string | null,
-) {
-  if (!identityVerificationId) return;
-  await AsyncStorage.setItem(
-    ADULT_VERIFICATION_PENDING_ID_KEY,
-    identityVerificationId,
-  );
-}
-
-async function clearPendingAdultVerificationId(
-  identityVerificationId?: string | null,
-) {
-  const current = await AsyncStorage.getItem(
-    ADULT_VERIFICATION_PENDING_ID_KEY,
-  );
-  if (!identityVerificationId || current === identityVerificationId) {
-    await AsyncStorage.removeItem(ADULT_VERIFICATION_PENDING_ID_KEY);
-  }
-}
-
-let pendingAdultVerificationSyncInFlight = false;
-let lastPendingAdultVerificationSyncAt = 0;
-
-async function completePendingAdultVerification() {
-  if (!isSupabaseConfigured || !supabase) return false;
-  if (pendingAdultVerificationSyncInFlight) return false;
-  const now = Date.now();
-  if (now - lastPendingAdultVerificationSyncAt < 2500) return false;
-
-  const identityVerificationId = await AsyncStorage.getItem(
-    ADULT_VERIFICATION_PENDING_ID_KEY,
-  );
-  if (!identityVerificationId) return false;
-
-  pendingAdultVerificationSyncInFlight = true;
-  lastPendingAdultVerificationSyncAt = now;
-  try {
-    await completeAdultVerification(identityVerificationId);
-    await clearPendingAdultVerificationId(identityVerificationId);
-    return true;
-  } catch (error) {
-    const code = adultVerificationErrorCode(error);
-    if (
-      /VERIFICATION_ATTEMPT_NOT_FOUND|VERIFICATION_ATTEMPT_EXPIRED|UNDER_AGE|PHONE_MISMATCH|PHONE_ACCOUNT_NOT_FOUND|IDENTITY_ALREADY_USED/i.test(
-        code,
-      )
-    ) {
-      await clearPendingAdultVerificationId(identityVerificationId);
-    }
-    return false;
-  } finally {
-    pendingAdultVerificationSyncInFlight = false;
   }
 }
 const LOCAL_PENDING_MESSAGES = new Map<string, ChatMessage[]>();
@@ -1288,79 +985,6 @@ async function loadSplashTheme() {
 function themeForeground(theme: AppTheme) {
   return theme.id === "white" ? "#222222" : "#FFF";
 }
-function AppNoticeTicker({
-  text,
-  theme,
-}: {
-  text: string;
-  theme: AppTheme;
-}) {
-  const translateX = useRef(new Animated.Value(0)).current;
-  const [containerWidth, setContainerWidth] = useState(0);
-  const [textWidth, setTextWidth] = useState(0);
-  const normalizedText = text.trim();
-  const isDark = theme.id === "dark";
-
-  useEffect(() => {
-    translateX.stopAnimation();
-    if (!normalizedText || containerWidth <= 0 || textWidth <= 0) return;
-    if (textWidth <= containerWidth - 24) {
-      translateX.setValue(0);
-      return;
-    }
-    const startX = Math.max(0, containerWidth / 2);
-    const distance = startX + textWidth;
-    const duration = Math.max(9000, distance * 35);
-    translateX.setValue(startX);
-    const animation = Animated.loop(
-      Animated.timing(translateX, {
-        toValue: -textWidth,
-        duration,
-        easing: (value) => value,
-        useNativeDriver: true,
-      }),
-    );
-    animation.start();
-    return () => animation.stop();
-  }, [containerWidth, normalizedText, textWidth, translateX]);
-
-  if (!normalizedText) return null;
-
-  return (
-    <View
-      style={[
-        s.appNoticeTicker,
-        {
-          backgroundColor: isDark ? "#222222" : "#FFFFFF",
-          borderBottomColor: isDark ? "#343434" : colors.border,
-        },
-      ]}
-      onLayout={(event) => setContainerWidth(event.nativeEvent.layout.width)}
-    >
-      <Text
-        pointerEvents="none"
-        onLayout={(event) => setTextWidth(event.nativeEvent.layout.width)}
-        style={[s.appNoticeTickerMeasure, { color: theme.accent }]}
-      >
-        {normalizedText}
-      </Text>
-      <Animated.Text
-        numberOfLines={1}
-        ellipsizeMode="clip"
-        style={[
-          s.appNoticeTickerText,
-          {
-            minWidth: Math.max(textWidth, containerWidth),
-            color: theme.accent,
-            transform: [{ translateX }],
-          },
-        ]}
-      >
-        {normalizedText}
-      </Animated.Text>
-    </View>
-  );
-}
 function stableHash(value: string) {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
@@ -1519,28 +1143,23 @@ function KeyboardAvoidingView(
   props: React.ComponentProps<typeof RNKeyboardAvoidingView>,
 ) {
   const { behavior, enabled, keyboardVerticalOffset, ...rest } = props;
-  const resolvedBehavior =
-    Platform.OS === "android" ? behavior : behavior ?? "padding";
-  const resolvedEnabled =
-    Platform.OS === "android" ? Boolean(behavior && enabled !== false) : enabled ?? true;
+  // MainActivity already uses adjustResize. Applying RN's Android `height`
+  // behavior as well resizes the same screen twice and causes visible shaking.
+  if (Platform.OS === "android") {
+    return <RNView {...rest} style={themedStyle(props.style, "view")} />;
+  }
   return (
     <RNKeyboardAvoidingView
       {...rest}
-      behavior={resolvedBehavior}
-      enabled={resolvedEnabled}
+      behavior={behavior ?? "padding"}
+      enabled={enabled ?? true}
       keyboardVerticalOffset={keyboardVerticalOffset ?? 0}
       style={themedStyle(props.style, "view")}
     />
   );
 }
 
-function KeyboardSafeBottomSheet({
-  children,
-  androidKeyboardOverlap = ANDROID_KEYBOARD_SHEET_OVERLAP,
-}: {
-  children: React.ReactNode;
-  androidKeyboardOverlap?: number;
-}) {
+function KeyboardSafeBottomSheet({ children }: { children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   const androidKeyboardInset = useAndroidKeyboardCompensation();
   const [keyboardVisible, setKeyboardVisible] = useState(false);
@@ -1562,14 +1181,9 @@ function KeyboardSafeBottomSheet({
     <RNView
       style={
         Platform.OS === "android" && androidKeyboardInset > 0
-          ? {
-              paddingBottom: Math.max(
-                0,
-                androidKeyboardInset - androidKeyboardOverlap,
-              ),
-            }
+          ? { paddingBottom: androidKeyboardInset }
           : Platform.OS === "android" && !keyboardVisible
-            ? { paddingBottom: androidFixedBottomInset(insets.bottom) }
+            ? { paddingBottom: androidSystemBottomInset(insets.bottom) }
             : undefined
       }
     >
@@ -1638,7 +1252,7 @@ function KeyboardSafeFixedBottom({
   const basePaddingBottom = flat.paddingBottom ?? 0;
   const bottomPadding =
     Platform.OS === "android" && !keyboardVisible
-      ? basePaddingBottom + androidFixedBottomInset(insets.bottom)
+      ? basePaddingBottom + insets.bottom
       : basePaddingBottom;
   return (
     <RNView style={[themed, { paddingBottom: bottomPadding }]}>
@@ -2212,19 +1826,10 @@ function replyLabel(name: string, myDisplayName: string) {
   return name === myDisplayName ? "나에게 답장" : `${name}님에게 답장`;
 }
 
-function isMafiaParticipantServerMessage(message: ServerRoomMessage) {
-  return Boolean(
-    message.userId &&
-      message.mafiaGameId &&
-      (message.mafiaVisibility ?? "public") === "public",
-  );
-}
-
 function mapServerChatMessage(
   message: ServerRoomMessage,
   currentUserId?: string,
 ): ChatMessage {
-  const mafiaParticipant = isMafiaParticipantServerMessage(message);
   const mine = Boolean(currentUserId && message.userId === currentUserId);
   const deletedText =
     message.senderDeletedAt && message.kind !== "system"
@@ -2243,10 +1848,6 @@ function mapServerChatMessage(
       createdAt: message.createdAt,
       bubbleColor: message.bubbleColor,
       textColor: message.textColor,
-      mafiaGameId: message.mafiaGameId,
-      mafiaVisibility: message.mafiaVisibility ?? "public",
-      mafiaRecipientUserIds: message.mafiaRecipientUserIds ?? [],
-      mafiaParticipant,
     };
   }
   const replyTo = message.replyToBody
@@ -2270,10 +1871,6 @@ function mapServerChatMessage(
       replyTo,
       bubbleColor: message.bubbleColor,
       textColor: message.textColor,
-      mafiaGameId: message.mafiaGameId,
-      mafiaVisibility: message.mafiaVisibility ?? "public",
-      mafiaRecipientUserIds: message.mafiaRecipientUserIds ?? [],
-      mafiaParticipant,
     };
   }
   if (message.kind === "story") {
@@ -2290,10 +1887,6 @@ function mapServerChatMessage(
       imageUri: message.storyImageUri,
       time: formatChatClock(message.createdAt),
       createdAt: message.createdAt,
-      mafiaGameId: message.mafiaGameId,
-      mafiaVisibility: message.mafiaVisibility ?? "public",
-      mafiaRecipientUserIds: message.mafiaRecipientUserIds ?? [],
-      mafiaParticipant,
     };
   }
   if (message.kind === "secret") {
@@ -2311,14 +1904,9 @@ function mapServerChatMessage(
       replyTo: deletedText ? undefined : replyTo,
       bubbleColor: message.bubbleColor,
       textColor: message.textColor,
-      mafiaGameId: message.mafiaGameId,
-      mafiaVisibility: message.mafiaVisibility ?? "public",
-      mafiaRecipientUserIds: message.mafiaRecipientUserIds ?? [],
-      mafiaParticipant,
     };
   }
   if (message.kind === "system") {
-    const systemText = displayMafiaSystemText(message.body);
     const event: Extract<ChatMessage, { kind: "system" }>["event"] =
       message.body.includes("하트")
         ? "heart"
@@ -2336,13 +1924,8 @@ function mapServerChatMessage(
       id: message.id,
       kind: "system",
       event,
-      text: systemText,
+      text: message.body,
       createdAt: message.createdAt,
-      mafiaGameId: message.mafiaGameId,
-      mafiaVisibility: message.mafiaVisibility ?? "public",
-      mafiaRecipientUserIds: message.mafiaRecipientUserIds ?? [],
-      mafiaParticipant,
-      mafiaSystemBody: message.body,
     };
   }
   return {
@@ -2358,11 +1941,7 @@ function mapServerChatMessage(
     replyTo: deletedText ? undefined : replyTo,
     bubbleColor: message.bubbleColor,
     textColor: message.textColor,
-      mafiaGameId: message.mafiaGameId,
-      mafiaVisibility: message.mafiaVisibility ?? "public",
-      mafiaRecipientUserIds: message.mafiaRecipientUserIds ?? [],
-      mafiaParticipant,
-    };
+  };
 }
 
 function formatTopSpaceRemaining(expiresAt: number | undefined, now: number) {
@@ -2754,33 +2333,11 @@ export default function App() {
   const [passwordRecoveryActive, setPasswordRecoveryActive] = useState(false);
   const [authReady, setAuthReady] = useState(demoMode || !isSupabaseConfigured);
   const [splashThemeReady, setSplashThemeReady] = useState(false);
-  const [versionPolicy, setVersionPolicy] = useState<AppVersionPolicy | null>(null);
-  const [versionPolicyReady, setVersionPolicyReady] = useState(demoMode || !isSupabaseConfigured);
-  const reloadVersionPolicy = useCallback(() => {
-    if (demoMode || !isSupabaseConfigured) {
-      setVersionPolicyReady(true);
-      return;
-    }
-    getAppVersionPolicy()
-      .then(setVersionPolicy)
-      .catch((error) => {
-        console.warn("app version policy load failed", error);
-        setVersionPolicy(null);
-      })
-      .finally(() => setVersionPolicyReady(true));
-  }, [demoMode]);
   useEffect(() => {
     void loadSplashTheme()
       .catch(() => applyAppTheme(APP_THEMES[0]))
       .finally(() => setSplashThemeReady(true));
   }, []);
-  useEffect(() => {
-    reloadVersionPolicy();
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") reloadVersionPolicy();
-    });
-    return () => subscription.remove();
-  }, [reloadVersionPolicy]);
   useEffect(() => {
     if (demoMode || !supabase) return;
     getCurrentSession()
@@ -2796,23 +2353,10 @@ export default function App() {
   let content: React.ReactNode;
   if (!splashThemeReady) {
     content = <NativeSplashBridge />;
-  } else if (!authReady || !versionPolicyReady) {
+  } else if (!authReady) {
     content = (
       <>
         <SplashScreen />
-        <GlobalBusyOverlay />
-      </>
-    );
-  } else if (
-    Platform.OS === "ios" &&
-    versionPolicy &&
-    Number.isFinite(versionPolicy.minBuild) &&
-    CURRENT_APP_BUILD < versionPolicy.minBuild
-  ) {
-    content = (
-      <>
-        <ForceUpdateScreen policy={versionPolicy} />
-        <PersistentHomeIndicator />
         <GlobalBusyOverlay />
       </>
     );
@@ -2935,47 +2479,6 @@ function AppLockGate({
       {children}
       <PersistentHomeIndicator />
     </>
-  );
-}
-
-function ForceUpdateScreen({ policy }: { policy: AppVersionPolicy }) {
-  useEffect(() => {
-    if (Platform.OS !== "android") return;
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => true);
-    return () => subscription.remove();
-  }, []);
-  const message =
-    policy.forceMessage ||
-    "현재 버전에서는 일부 기능을 안정적으로 사용할 수 없습니다. 최신 버전으로 업데이트 후 이용해주세요.";
-  const openUpdate = () => {
-    const url =
-      policy.updateUrl ||
-      (Platform.OS === "ios"
-        ? "https://apps.apple.com/kr/app/%EB%AE%A4%ED%8A%B8/id6781187934"
-        : "https://play.google.com/store/apps/details?id=app.mute.chat");
-    Linking.openURL(url).catch(() => undefined);
-  };
-  return (
-    <SafeAreaView style={s.forceUpdatePage}>
-      <View style={s.forceUpdateCard}>
-        <View style={s.forceUpdateIcon}>
-          <Ionicons name="cloud-download-outline" size={30} color={colors.mint700} />
-        </View>
-        <Text style={s.forceUpdateTitle}>업데이트가 필요합니다</Text>
-        <Text style={s.forceUpdateBody}>{message}</Text>
-        <Pressable onPress={openUpdate} style={s.forceUpdateButton}>
-          <LinearGradient
-            colors={["#82B9C1", "#5DBB8C"]}
-            start={{ x: 0, y: 0.5 }}
-            end={{ x: 1, y: 0.5 }}
-            style={s.forceUpdateGradient}
-          >
-            <Text style={s.primaryText}>업데이트하기</Text>
-          </LinearGradient>
-        </Pressable>
-        <Text style={s.forceUpdateBuild}>현재 빌드 {CURRENT_APP_BUILD}</Text>
-      </View>
-    </SafeAreaView>
   );
 }
 
@@ -3260,8 +2763,13 @@ function AuthenticatedApp({
   const [adultVerified, setAdultVerified] = useState(false);
   const [adultContentWebOptedIn, setAdultContentWebOptedIn] = useState(false);
   const [iosAdultContentEnabled, setIosAdultContentEnabled] = useState(false);
-  const showAdultTab = isSuperAdmin || adultVerified;
-  const canSeeAdultRooms = isSuperAdmin || adultVerified;
+  const showAdultTab =
+    !IOS_HIDE_ADULT_UI ||
+    isSuperAdmin ||
+    (adultVerified && iosAdultContentEnabled);
+  const canSeeAdultRooms =
+    isSuperAdmin ||
+    (adultVerified && (!IOS_HIDE_ADULT_UI || iosAdultContentEnabled));
   const canUseAdultFeatures = isSuperAdmin || adultVerified;
   const [chatInitialPanel, setChatInitialPanel] = useState<ChatPanel>(null);
   const [chatInitialStoryId, setChatInitialStoryId] = useState<string | null>(
@@ -3522,7 +3030,6 @@ function AuthenticatedApp({
     lastAppDataReloadAtRef.current = reloadStartedAt;
     if (showSpinner) setDataRefreshing(true);
     try {
-      await completePendingAdultVerification();
       const [
         roomsResult,
         activeIdsResult,
@@ -3620,22 +3127,6 @@ function AuthenticatedApp({
     const subscription = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
       void reloadAppData(false, true);
-    });
-    return () => subscription.remove();
-  }, []);
-  useEffect(() => {
-    if (!isSupabaseConfigured) return;
-    const handleUrl = async (url?: string | null) => {
-      if (!url) return;
-      const identityVerificationId = parseAdultVerificationId(url);
-      if (!identityVerificationId) return;
-      await storePendingAdultVerificationId(identityVerificationId);
-      await completePendingAdultVerification();
-      void reloadAppData(false, true);
-    };
-    Linking.getInitialURL().then(handleUrl).catch(() => undefined);
-    const subscription = Linking.addEventListener("url", (event) => {
-      void handleUrl(event.url);
     });
     return () => subscription.remove();
   }, []);
@@ -3794,9 +3285,7 @@ function AuthenticatedApp({
               rows.map((row) => [
                 row.roomId,
                 {
-                  lastMessage: row.lastMessage
-                    ? displayMafiaSystemText(row.lastMessage)
-                    : undefined,
+                  lastMessage: row.lastMessage ?? undefined,
                   updatedAt: row.lastMessageAt
                     ? new Date(row.lastMessageAt).getTime()
                     : undefined,
@@ -3820,29 +3309,16 @@ function AuthenticatedApp({
       if (!row) return;
       const roomId = typeof row?.room_id === "string" ? row.room_id : "";
       if (!roomId || !joinedIds.includes(roomId)) return;
-      const mafiaVisibility =
-        row.mafia_visibility === "private" ||
-        row.mafia_visibility === "spectator" ||
-        row.mafia_visibility === "mafia" ||
-        row.mafia_visibility === "lover"
-          ? row.mafia_visibility
-          : "public";
-      if (mafiaVisibility !== "public") return;
 
       const kind = typeof row.kind === "string" ? row.kind : "text";
       const body = typeof row.body === "string" ? row.body.trim() : "";
-      const isMafiaSystemNotice =
-        kind === "system" && typeof row.mafia_game_id === "string";
-      if (isMafiaSystemNotice) return;
       const lastMessage = row.story_id
         ? "스토리를 올렸습니다."
         : kind === "image"
           ? "사진을 보냈습니다."
           : kind === "secret"
             ? "비밀 쪽지가 도착했습니다."
-            : body
-              ? displayMafiaSystemText(body)
-              : undefined;
+            : body || undefined;
       const createdAt =
         typeof row.created_at === "string"
           ? new Date(row.created_at).getTime()
@@ -4553,7 +4029,6 @@ function AuthenticatedApp({
         {({ navigation }) => (
           <EditRoom
             room={selectedRoom}
-            adultVerified={canUseAdultFeatures}
             onBack={() => navigation.goBack()}
             onUpdated={(updated) => {
               setSelectedRoom(updated);
@@ -4579,16 +4054,12 @@ function AuthenticatedApp({
       <AppStack.Screen name="AdultVerification">
         {({ navigation }) =>
           IOS_HIDE_ADULT_UI ? (
-            <AdultVerificationScreen
-              verified={adultVerified}
+            <Settings
+              adultVerified={adultVerified}
+              isSuperAdmin={isSuperAdmin}
+              onAdultVerification={() => navigation.navigate("AdultVerification")}
               onBack={() => navigation.goBack()}
-              onRefresh={async () => {
-                const status = await getVerificationStatus();
-                setAdultVerified(status.adultVerified);
-                setAdultContentWebOptedIn(status.adultContentWebOptedIn);
-                setIosAdultContentEnabled(status.iosAdultContentEnabled);
-                return status.adultVerified;
-              }}
+              onSignedOut={onSignedOut}
             />
           ) : (
             <AdultVerificationScreen
@@ -4597,8 +4068,6 @@ function AuthenticatedApp({
               onRefresh={async () => {
                 const status = await getVerificationStatus();
                 setAdultVerified(status.adultVerified);
-                setAdultContentWebOptedIn(status.adultContentWebOptedIn);
-                setIosAdultContentEnabled(status.iosAdultContentEnabled);
                 return status.adultVerified;
               }}
             />
@@ -5270,7 +4739,6 @@ function PhoneAuthScreenV2({
           await signInWithTestId(phone, password);
         }
       } else await signInWithPhonePassword(phone, password);
-      Keyboard.dismiss();
     } catch {
       Alert.alert("로그인 실패", "전화번호 또는 비밀번호를 확인해주세요.");
     } finally {
@@ -6248,7 +5716,6 @@ function MainScreen({
   const [profileSubpageOpen, setProfileSubpageOpen] = useState(false);
   const [storySearchOpen, setStorySearchOpen] = useState(false);
   const [storyQuery, setStoryQuery] = useState("");
-  const [appNoticeText, setAppNoticeText] = useState("");
   const appTheme = useAppTheme();
   const mainInsets = useSafeAreaInsets();
   const primaryForeground = themeForeground(appTheme);
@@ -6260,45 +5727,6 @@ function MainScreen({
   useEffect(() => {
     if (notificationDrawerSignal > 0) setDrawerOpen(true);
   }, [notificationDrawerSignal]);
-  useEffect(() => {
-    if (!isSupabaseConfigured || !supabase || !currentUserId) {
-      setAppNoticeText("");
-      return;
-    }
-    const client = supabase;
-    let active = true;
-    const reload = () =>
-      listActiveAppNotices()
-        .then((items) => {
-          if (!active) return;
-          const noticeBodies = Array.from(
-            new Set(items.map((item) => item.body.trim()).filter(Boolean)),
-          );
-          setAppNoticeText(noticeBodies.join("   ·   "));
-        })
-        .catch(() => {
-          if (active) setAppNoticeText("");
-        });
-    reload();
-    const interval = setInterval(reload, 60000);
-    const channel = client
-      .channel("main-app-notices")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "app_notices",
-        },
-        reload,
-      )
-      .subscribe();
-    return () => {
-      active = false;
-      clearInterval(interval);
-      client.removeChannel(channel);
-    };
-  }, [currentUserId]);
   useEffect(() => {
     if (!supabase || !isSupabaseConfigured || !currentUserId) return;
     const client = supabase;
@@ -6705,12 +6133,9 @@ function MainScreen({
           }
           ListHeaderComponent={
             bottomTab === "myRooms" ? (
-              <>
-                <AppNoticeTicker text={appNoticeText} theme={appTheme} />
-                <View style={s.listHeader}>
+              <View style={s.listHeader}>
                 <Text style={s.listTitle}>내 채팅</Text>
-                </View>
-              </>
+              </View>
             ) : category === "promotion" ? null : (
               <View>
                 <SectionLabel
@@ -7483,7 +6908,7 @@ function RoomDetail({
             }}
             style={s.sheetDim}
           />
-          <KeyboardSafeBottomSheet androidKeyboardOverlap={30}>
+          <KeyboardSafeBottomSheet>
             <View style={s.privatePinSheet}>
               <View style={s.sheetHandle} />
               <Text style={s.privatePinTitle}>비밀방 PIN 입력</Text>
@@ -7910,7 +7335,6 @@ function ChatRoom({
   const adsDisabled = useAdFree();
   const safeAreaInsets = useSafeAreaInsets();
   const [chatKeyboardVisible, setChatKeyboardVisible] = useState(false);
-  const androidChatKeyboardLift = useAndroidKeyboardLift(safeAreaInsets.bottom);
   const [chatBannerHeight, setChatBannerHeight] = useState(0);
   useEffect(() => {
     if (adsDisabled) setChatBannerHeight(0);
@@ -7919,12 +7343,8 @@ function ChatRoom({
     Platform.OS !== "android"
       ? 0
       : chatKeyboardVisible
-        ? androidChatKeyboardLift
-        : androidChatFooterInset(safeAreaInsets.bottom);
-  const chatToastBottom =
-    92 +
-    chatBannerHeight +
-    (Platform.OS === "android" ? androidChatBottomInset : 0);
+        ? 0
+        : androidSystemBottomInset(safeAreaInsets.bottom);
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>(() =>
     isLocalDemoRoomId(room.id) ? membersForRoom(room) : [],
   );
@@ -8032,7 +7452,6 @@ function ChatRoom({
   const onReadRef = useRef(onRead);
   const keyboardOpenedAtBottomRef = useRef(false);
   const composerFocusPreparedRef = useRef(false);
-  const composerFocusedRef = useRef(false);
   const scrollToLatestRef = useRef<(animated?: boolean) => void>(() => undefined);
   const prependHeightRef = useRef<number | null>(null);
   const prependOffsetRef = useRef<number | null>(null);
@@ -8041,9 +7460,6 @@ function ChatRoom({
     initialY: number;
     viewportOffset: number;
   } | null>(null);
-  const prependSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
   const messagePositions = useRef<Record<string, number>>({});
   const restoreScrollAfterPanelRef = useRef(false);
   const [chatReady, setChatReady] = useState(false);
@@ -8067,25 +7483,22 @@ function ChatRoom({
       if (!composerFocusPreparedRef.current)
         keyboardOpenedAtBottomRef.current = nearBottomRef.current;
       setChatKeyboardVisible(true);
-      if (keyboardOpenedAtBottomRef.current && Platform.OS === "ios")
+      if (keyboardOpenedAtBottomRef.current)
         requestAnimationFrame(() => scrollToLatestRef.current(false));
     });
     const didShow = Keyboard.addListener("keyboardDidShow", () => {
       setChatKeyboardVisible(true);
       if (keyboardOpenedAtBottomRef.current) {
         requestAnimationFrame(() => scrollToLatestRef.current(false));
-        if (Platform.OS === "ios") {
-          setTimeout(() => scrollToLatestRef.current(false), 20);
-          setTimeout(() => scrollToLatestRef.current(false), 40);
-          setTimeout(() => scrollToLatestRef.current(false), 120);
-          setTimeout(() => scrollToLatestRef.current(false), 260);
-        }
+        setTimeout(() => scrollToLatestRef.current(false), 20);
+        setTimeout(() => scrollToLatestRef.current(false), 40);
+        setTimeout(() => scrollToLatestRef.current(false), 120);
+        setTimeout(() => scrollToLatestRef.current(false), 260);
       }
     });
     const hide = Keyboard.addListener("keyboardDidHide", () => {
       keyboardOpenedAtBottomRef.current = false;
       composerFocusPreparedRef.current = false;
-      composerFocusedRef.current = false;
       setChatKeyboardVisible(false);
     });
     return () => {
@@ -8251,309 +7664,9 @@ function ChatRoom({
             time: "오후 9:28",
             createdAt: "2026-06-12T09:28:00.000Z",
           },
-      ]
-    : [],
+        ]
+      : [],
   );
-  const [mafiaGame, setMafiaGame] = useState<MafiaGameState | null>(null);
-  const [mafiaBusy, setMafiaBusy] = useState(false);
-  const [mafiaCapacityPickerOpen, setMafiaCapacityPickerOpen] = useState(false);
-  const [mafiaCapacityDraft, setMafiaCapacityDraft] = useState(MAFIA_MIN_PLAYERS);
-  const [mafiaNightPicker, setMafiaNightPicker] = useState<{
-    actionType: "kill" | "save" | "inspect";
-    title: string;
-  } | null>(null);
-  const [mafiaNightTargetDraft, setMafiaNightTargetDraft] = useState<string | null>(null);
-  const [mafiaClockNow, setMafiaClockNow] = useState(() => Date.now());
-  const mafiaGameRef = useRef<MafiaGameState | null>(null);
-  const mafiaTickKeyRef = useRef<string | null>(null);
-  const mafiaRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  const mafiaRefreshInFlightRef = useRef(false);
-  const mafiaRefreshQueuedRef = useRef(false);
-  useEffect(() => {
-    mafiaGameRef.current = mafiaGame;
-  }, [mafiaGame]);
-  useEffect(() => {
-    mafiaTickKeyRef.current = null;
-  }, [mafiaGame?.id, mafiaGame?.endsAt, mafiaGame?.phase]);
-  const mafiaGameRunning = mafiaGame?.status === "running";
-  useEffect(() => {
-    if (!mafiaNightPicker) return;
-    if (mafiaGame?.status !== "running" || mafiaGame.phase !== "night")
-      setMafiaNightPicker(null);
-  }, [mafiaGame?.phase, mafiaGame?.status, mafiaNightPicker]);
-  useEffect(() => {
-    if (!mafiaCapacityPickerOpen) return;
-    if (mafiaGame && mafiaGame.status !== "waiting") setMafiaCapacityPickerOpen(false);
-  }, [mafiaCapacityPickerOpen, mafiaGame?.status]);
-  const canForceEndMafiaGame =
-    Boolean(mafiaGame && currentUserId && mafiaGame.hostUserId === currentUserId) || isStaff;
-  const mafiaJoinedCount = mafiaGame?.players.filter((player) => player.joined).length ?? 0;
-  const showMafiaControlBar = Boolean(
-    mafiaGame &&
-      (mafiaGame.status === "waiting" ||
-        (mafiaGame.status === "running" && mafiaGame.me?.joined && mafiaGame.me.alive)),
-  );
-  const showMafiaDeadBar = Boolean(
-    mafiaGame?.status === "running" && mafiaGame.me?.joined && mafiaGame.me.alive === false,
-  );
-  const canStartMafiaNow = Boolean(
-    mafiaGame?.status === "waiting" && mafiaJoinedCount >= MAFIA_MIN_PLAYERS,
-  );
-  const mafiaRoomMemberLimit = useMemo(() => {
-    const activeCount = roomMembers.filter((member) => member.userId && !member.blocked).length;
-    return Math.max(
-      MAFIA_MIN_PLAYERS,
-      Math.min(MAFIA_MAX_PLAYERS, activeCount || room.memberCount || MAFIA_MIN_PLAYERS),
-    );
-  }, [room.memberCount, roomMembers]);
-  const mafiaGameParticipantIds = useMemo(
-    () =>
-      new Set(
-        mafiaGame && (mafiaGame.status === "waiting" || mafiaGame.status === "running")
-          ? mafiaGame.players
-              .filter((player) => player.joined)
-              .map((player) => player.userId)
-          : [],
-      ),
-    [mafiaGame?.players, mafiaGame?.status],
-  );
-  const blockMafiaRestrictedFeature = useCallback(() => {
-    if (!mafiaGameRunning) return false;
-    setToast("마피아게임 중에는 해당 기능을 이용할 수 없습니다");
-    setTimeout(() => setToast(""), 1800);
-    return true;
-  }, [mafiaGameRunning]);
-  const refreshMafiaGame = useCallback(async () => {
-    if (!isSupabaseConfigured || !isUuid(room.id)) {
-      setMafiaGame(null);
-      return null;
-    }
-    try {
-      const state = await getMafiaGameState(room.id);
-      if (mountedRef.current) setMafiaGame(state);
-      return state;
-    } catch (error) {
-      console.warn("mafia state refresh failed", error);
-      return null;
-    }
-  }, [room.id]);
-
-  const runScheduledMafiaRefresh = useCallback(async () => {
-    if (mafiaRefreshInFlightRef.current) {
-      mafiaRefreshQueuedRef.current = true;
-      return;
-    }
-    mafiaRefreshInFlightRef.current = true;
-    try {
-      do {
-        mafiaRefreshQueuedRef.current = false;
-        await refreshMafiaGame();
-      } while (mafiaRefreshQueuedRef.current);
-    } finally {
-      mafiaRefreshInFlightRef.current = false;
-    }
-  }, [refreshMafiaGame]);
-
-  const scheduleMafiaGameRefresh = useCallback(
-    (delay = 140) => {
-      if (mafiaRefreshTimerRef.current)
-        clearTimeout(mafiaRefreshTimerRef.current);
-      mafiaRefreshTimerRef.current = setTimeout(() => {
-        mafiaRefreshTimerRef.current = null;
-        void runScheduledMafiaRefresh();
-      }, delay);
-    },
-    [runScheduledMafiaRefresh],
-  );
-
-  useEffect(
-    () => () => {
-      if (mafiaRefreshTimerRef.current) {
-        clearTimeout(mafiaRefreshTimerRef.current);
-        mafiaRefreshTimerRef.current = null;
-      }
-    },
-    [room.id],
-  );
-
-  const applyMafiaPhaseTimeOptimistic = useCallback((deltaSeconds: number) => {
-    const now = Date.now();
-    setMafiaClockNow(now);
-    setMafiaGame((current) => {
-      if (
-        !current ||
-        current.status === "ended" ||
-        current.status === "cancelled"
-      )
-        return current;
-      const currentEnd = Date.parse(current.endsAt);
-      if (!Number.isFinite(currentEnd)) return current;
-      const nextEnd = Math.max(
-        now + 1000,
-        Math.min(now + 10 * 60 * 1000, currentEnd + deltaSeconds * 1000),
-      );
-      return { ...current, endsAt: new Date(nextEnd).toISOString() };
-    });
-  }, []);
-
-  const submitMafiaPhaseTimeAdjustment = useCallback(
-    async (gameId: string, deltaSeconds: number) => {
-      applyMafiaPhaseTimeOptimistic(deltaSeconds);
-      const state = await adjustMafiaPhaseTime({ gameId, deltaSeconds });
-      if (mountedRef.current) setMafiaGame(state);
-      return state;
-    },
-    [applyMafiaPhaseTimeOptimistic],
-  );
-
-  useEffect(() => {
-    void refreshMafiaGame();
-  }, [refreshMafiaGame]);
-
-  useEffect(() => {
-    if (!isSupabaseConfigured || !supabase || !isUuid(room.id)) return;
-    const client = supabase;
-    const channel = client
-      .channel(`mafia-game-state-${room.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "mafia_games",
-          filter: `room_id=eq.${room.id}`,
-        },
-        (payload) => {
-          const row = payload.new as Record<string, unknown> | undefined;
-          if (row && typeof row.id === "string") {
-            setMafiaClockNow(Date.now());
-            setMafiaGame((current) => {
-              if (!current || current.id !== row.id) return current;
-              return {
-                ...current,
-                status:
-                  row.status === "waiting" ||
-                  row.status === "running" ||
-                  row.status === "ended" ||
-                  row.status === "cancelled"
-                    ? row.status
-                    : current.status,
-                phase:
-                  row.phase === "lobby" ||
-                  row.phase === "day_discussion" ||
-                  row.phase === "day_vote" ||
-                  row.phase === "final_defense" ||
-                  row.phase === "final_vote" ||
-                  row.phase === "night" ||
-                  row.phase === "ended"
-                    ? row.phase
-                    : current.phase,
-                dayNumber:
-                  typeof row.day_number === "number"
-                    ? row.day_number
-                    : current.dayNumber,
-                endsAt:
-                  typeof row.phase_ends_at === "string"
-                    ? row.phase_ends_at
-                    : current.endsAt,
-                defenseTargetUserId:
-                  typeof row.defense_target_user_id === "string" ||
-                  row.defense_target_user_id === null
-                    ? row.defense_target_user_id
-                    : current.defenseTargetUserId,
-                winner:
-                  row.winner === "mafia" || row.winner === "citizen" || row.winner === null
-                    ? row.winner
-                    : current.winner,
-              };
-            });
-          }
-          scheduleMafiaGameRefresh(120);
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "mafia_players",
-        },
-        (payload) => {
-          const row =
-            (payload.new as Record<string, unknown> | undefined) ??
-            (payload.old as Record<string, unknown> | undefined);
-          const activeGameId = mafiaGameRef.current?.id;
-          if (!activeGameId || row?.game_id !== activeGameId) return;
-          setMafiaClockNow(Date.now());
-          scheduleMafiaGameRefresh(120);
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "mafia_actions",
-        },
-        (payload) => {
-          const row =
-            (payload.new as Record<string, unknown> | undefined) ??
-            (payload.old as Record<string, unknown> | undefined);
-          const activeGameId = mafiaGameRef.current?.id;
-          if (!activeGameId || row?.game_id !== activeGameId) return;
-          setMafiaClockNow(Date.now());
-          scheduleMafiaGameRefresh(120);
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "mafia_votes",
-        },
-        (payload) => {
-          const row =
-            (payload.new as Record<string, unknown> | undefined) ??
-            (payload.old as Record<string, unknown> | undefined);
-          const activeGameId = mafiaGameRef.current?.id;
-          if (!activeGameId || row?.game_id !== activeGameId) return;
-          setMafiaClockNow(Date.now());
-          scheduleMafiaGameRefresh(120);
-        },
-      )
-      .subscribe();
-    return () => {
-      client.removeChannel(channel);
-    };
-  }, [room.id, scheduleMafiaGameRefresh]);
-
-  useEffect(() => {
-    if (!mafiaGame || mafiaGame.status === "ended" || mafiaGame.status === "cancelled") return;
-    setMafiaClockNow(Date.now());
-    const timer = setInterval(() => {
-      const now = Date.now();
-      setMafiaClockNow(now);
-      const gameId = mafiaGame.id;
-      const due = Date.parse(mafiaGame.endsAt);
-      if (Number.isFinite(due) && now >= due) {
-        const tickKey = `${gameId}:${mafiaGame.phase}:${mafiaGame.endsAt}`;
-        if (mafiaTickKeyRef.current === tickKey) return;
-        mafiaTickKeyRef.current = tickKey;
-        tickMafiaGame(gameId)
-          .then((state) => {
-            if (mountedRef.current) setMafiaGame(state);
-          })
-          .catch((error) => {
-            mafiaTickKeyRef.current = null;
-            console.warn("mafia tick failed", error);
-          });
-      }
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [mafiaGame?.id, mafiaGame?.endsAt, mafiaGame?.phase, mafiaGame?.status, refreshMafiaGame]);
   const rememberScrollPosition = () => {
     ROOM_SCROLL_STATE.set(room.id, {
       offsetY: scrollMetrics.current.offsetY,
@@ -8899,7 +8012,6 @@ function ChatRoom({
           if (eventType === "INSERT" && row) {
             const id = typeof row.id === "string" ? row.id : "";
             const body = typeof row.body === "string" ? row.body : "";
-            if (body.startsWith("[MAFIA_")) scheduleMafiaGameRefresh(80);
             const createdAt =
               typeof row.created_at === "string"
                 ? row.created_at
@@ -8924,39 +8036,6 @@ function ChatRoom({
               const recipient = roomMembersRef.current.find(
                 (member) => member.userId === recipientId,
               );
-              const mafiaVisibility =
-                row.mafia_visibility === "private" ||
-                row.mafia_visibility === "spectator" ||
-                row.mafia_visibility === "mafia" ||
-                row.mafia_visibility === "lover"
-                  ? row.mafia_visibility
-                  : "public";
-              const mafiaRecipientUserIds = Array.isArray(row.mafia_recipient_user_ids)
-                ? (row.mafia_recipient_user_ids.filter(
-                    (value): value is string => typeof value === "string",
-                  ))
-                : [];
-              if (mafiaVisibility !== "public" && !isSuperAdmin) {
-                const latestMafia = mafiaGameRef.current;
-                const me = latestMafia?.me;
-                const hasMafiaState = Boolean(latestMafia && latestMafia.status === "running");
-                const isDeadMafiaParticipant =
-                  hasMafiaState && Boolean(me?.joined && me.alive === false);
-                const allowed =
-                  mafiaVisibility === "private"
-                    ? Boolean(currentUserId && mafiaRecipientUserIds.includes(currentUserId))
-                    : hasMafiaState &&
-                      (mafiaVisibility === "spectator"
-                        ? isDeadMafiaParticipant
-                        : isDeadMafiaParticipant ||
-                          Boolean(
-                            me?.joined &&
-                              me.alive &&
-                              ((mafiaVisibility === "mafia" && me.role === "mafia") ||
-                                (mafiaVisibility === "lover" && me.role === "lover")),
-                          ));
-                if (!allowed) return;
-              }
               const instant = mapServerChatMessage(
                 {
                   id,
@@ -8972,12 +8051,6 @@ function ChatRoom({
                       : sender?.name,
                   senderAvatarUrl: sender?.avatarUri,
                   recipientName: recipient?.name,
-                  mafiaGameId:
-                    typeof row.mafia_game_id === "string"
-                      ? row.mafia_game_id
-                      : null,
-                  mafiaVisibility,
-                  mafiaRecipientUserIds,
                 },
                 currentUserId,
               );
@@ -8987,9 +8060,8 @@ function ChatRoom({
                   senderUserId === currentUserId &&
                   current.some(
                     (item) =>
+                      item.id.startsWith("pending-text-") &&
                       item.kind === "text" &&
-                      item.mine &&
-                      item.delivery === "sending" &&
                       item.text === body,
                   );
                 if (pendingOwnMessage) return current;
@@ -9043,50 +8115,10 @@ function ChatRoom({
       appStateSubscription.remove();
       client.removeChannel(channel);
     };
-  }, [currentUserId, room.id, scheduleMafiaGameRefresh]);
+  }, [currentUserId, room.id]);
   useEffect(() => {
     if (!supabase || !isUuid(room.id)) return;
     const client = supabase;
-    let styleTimer: ReturnType<typeof setTimeout> | null = null;
-    const reloadStyles = () =>
-      listRoomChatStyles(room.id)
-        .then((styles) => {
-          const styleByUserId = new Map(
-            styles.map((style) => [style.userId, style]),
-          );
-          setMessages((current) =>
-            current.map((item) => {
-              const userId =
-                "userId" in item && typeof item.userId === "string"
-                  ? item.userId
-                  : null;
-              if (!userId) return item;
-              const style = styleByUserId.get(userId);
-              if (!style) return item;
-              return {
-                ...item,
-                bubbleColor: style.bubbleColor,
-                textColor: style.textColor,
-              };
-            }),
-          );
-          const own = currentUserId
-            ? styleByUserId.get(currentUserId)
-            : undefined;
-          if (own) {
-            setBubbleColor(own.bubbleColor);
-            setTextColor(own.textColor);
-            setChatBackground(own.backgroundColor);
-            setBubbleProductId(own.bubbleProductId);
-            setTextProductId(own.textProductId);
-            setBackgroundProductId(own.backgroundProductId);
-          }
-        })
-        .catch(() => undefined);
-    const scheduleStyleReload = () => {
-      if (styleTimer) clearTimeout(styleTimer);
-      styleTimer = setTimeout(reloadStyles, 250);
-    };
     const channel = client
       .channel(`chat-styles-${room.id}`)
       .on(
@@ -9097,11 +8129,25 @@ function ChatRoom({
           table: "room_member_chat_styles",
           filter: `room_id=eq.${room.id}`,
         },
-        scheduleStyleReload,
+        () =>
+          listRoomMessages(room.id, initialMessageLimit)
+            .then((rows) =>
+              setMessages((current) =>
+                mergeChatMessages(
+                  rows.map((item) =>
+                    mapServerChatMessage(item, currentUserId),
+                  ),
+                  current.filter(
+                    (item) =>
+                      item.delivery === "sending" || item.delivery === "failed",
+                  ),
+                ),
+              ),
+            )
+            .catch(() => undefined),
       )
       .subscribe();
     return () => {
-      if (styleTimer) clearTimeout(styleTimer);
       client.removeChannel(channel);
     };
   }, [currentUserId, room.id]);
@@ -9179,21 +8225,8 @@ function ChatRoom({
       (item) => item.createdAt && !item.id.startsWith("pending-"),
     );
     if (!oldest?.createdAt) return;
-    if (prependSettleTimerRef.current) {
-      clearTimeout(prependSettleTimerRef.current);
-      prependSettleTimerRef.current = null;
-    }
     prependHeightRef.current = scrollMetrics.current.contentHeight;
     prependOffsetRef.current = scrollMetrics.current.offsetY;
-    const oldestY = messagePositions.current[oldest.id];
-    prependAnchorRef.current =
-      typeof oldestY === "number"
-        ? {
-            id: oldest.id,
-            initialY: oldestY,
-            viewportOffset: oldestY - scrollMetrics.current.offsetY,
-          }
-        : null;
     loadingOlderRef.current = true;
     setLoadingOlder(true);
     try {
@@ -9206,12 +8239,6 @@ function ChatRoom({
         mapServerChatMessage(item, currentUserId),
       );
       setHasOlderMessages(older.length === olderMessagePageSize);
-      if (!mapped.length) {
-        prependHeightRef.current = null;
-        prependOffsetRef.current = null;
-        prependAnchorRef.current = null;
-        return;
-      }
       setMessages((current) => {
         return mergeChatMessages(mapped, current);
       });
@@ -9290,40 +8317,16 @@ function ChatRoom({
     if (Platform.OS === "ios") setChatKeyboardVisible(true);
     if (keyboardOpenedAtBottomRef.current) {
       requestAnimationFrame(() => scrollToLatestRef.current(false));
-      if (Platform.OS === "ios") {
-        setTimeout(() => scrollToLatestRef.current(false), 20);
-        setTimeout(() => scrollToLatestRef.current(false), 80);
-        setTimeout(() => scrollToLatestRef.current(false), 180);
-        setTimeout(() => scrollToLatestRef.current(false), 320);
-      }
+      setTimeout(() => scrollToLatestRef.current(false), 20);
+      setTimeout(() => scrollToLatestRef.current(false), 80);
+      setTimeout(() => scrollToLatestRef.current(false), 180);
+      setTimeout(() => scrollToLatestRef.current(false), 320);
     }
   };
   useEffect(() => {
     initialScrollDone.current = false;
     lastContentSizeMessageCountRef.current = 0;
-    nearBottomRef.current = true;
-    restoreScrollAfterPanelRef.current = false;
-    if (prependSettleTimerRef.current) {
-      clearTimeout(prependSettleTimerRef.current);
-      prependSettleTimerRef.current = null;
-    }
-    prependHeightRef.current = null;
-    prependOffsetRef.current = null;
-    prependAnchorRef.current = null;
-    ROOM_SCROLL_STATE.delete(room.id);
     requestAnimationFrame(() => setTimeout(() => scrollToLatest(false), 80));
-    const timers = [
-      setTimeout(() => scrollToLatest(false), 160),
-      setTimeout(() => scrollToLatest(false), 320),
-      setTimeout(() => scrollToLatest(false), 640),
-    ];
-    return () => {
-      timers.forEach((timer) => clearTimeout(timer));
-      if (prependSettleTimerRef.current) {
-        clearTimeout(prependSettleTimerRef.current);
-        prependSettleTimerRef.current = null;
-      }
-    };
   }, [room.id]);
   const submitTextMessage = async (
     localId: string,
@@ -9338,21 +8341,14 @@ function ChatRoom({
           body: text,
           replyToMessageId: isUuid(reply?.id) ? reply?.id : undefined,
         });
-      const serverCreatedAt =
-        id !== localId && isUuid(id)
-          ? await getRoomMessageCreatedAt(id).catch(() => undefined)
-          : undefined;
-      const sentAt = serverCreatedAt ?? new Date().toISOString();
       setMessages((items) =>
         items.map((item) =>
           item.id === localId
             ? {
                 ...item,
                 id,
-                clientOrder: undefined,
                 delivery: "sent" as const,
-                time: formatChatClock(sentAt),
-                createdAt: sentAt,
+                time: formatChatClock(new Date().toISOString()),
               }
             : item,
         ),
@@ -9366,386 +8362,18 @@ function ChatRoom({
     }
   };
   const pendingTextSeq = useRef(0);
-  const nextChatClientOrderRef = useRef(0);
   const textSendQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const chooseMafiaPlayer = useCallback(
-    async (title: string, players: MafiaGameState["players"]) => {
-      const options = players
-        .filter((player) => player.joined && player.alive)
-        .map((player) => ({ label: player.name, value: player.userId }));
-      if (!options.length) return null;
-      if (Platform.OS === "android") {
-        return (await showAndroidActionList(title, [
-          ...options,
-          { label: "취소", value: null },
-        ])) as string | null;
-      }
-      return await new Promise<string | null>((resolve) => {
-        Alert.alert(
-          title,
-          undefined,
-          [
-            ...options.slice(0, 12).map((option) => ({
-              text: option.label,
-              onPress: () => resolve(option.value),
-            })),
-            { text: "취소", style: "cancel" as const, onPress: () => resolve(null) },
-          ],
-          { cancelable: true, onDismiss: () => resolve(null) },
-        );
-      });
-    },
-    [],
-  );
-  const showMafiaMemberLimitToast = useCallback(() => {
-    setToast(`마피아 게임은 방 멤버가 ${MAFIA_MIN_PLAYERS}명 이상일 때만 진행 가능합니다`);
-    setTimeout(() => setToast(""), 1800);
-  }, []);
-  const hasEnoughMafiaRoomMembers = useCallback(() => {
-    const activeCount = roomMembersRef.current.filter((member) => member.userId).length;
-    return Math.max(activeCount, room.memberCount ?? 0) >= MAFIA_MIN_PLAYERS;
-  }, [room.memberCount]);
-  const myMafiaNightActionType =
-    mafiaGame?.status === "running" &&
-    mafiaGame.phase === "night" &&
-    mafiaGame.me?.joined &&
-    mafiaGame.me.alive
-      ? mafiaGame.me.role === "mafia"
-        ? "kill"
-        : mafiaGame.me.role === "doctor"
-          ? "save"
-          : mafiaGame.me.role === "police"
-            ? "inspect"
-            : null
-      : null;
-  const mafiaNightActionLabel =
-    myMafiaNightActionType === "kill"
-      ? "희생자 정하기"
-      : myMafiaNightActionType === "save"
-        ? "살릴 사람 정하기"
-        : myMafiaNightActionType === "inspect"
-          ? "마피아 조사하기"
-          : null;
-  const mafiaNightActionSelection =
-    myMafiaNightActionType && mafiaGame?.nightActions
-      ? mafiaGame.nightActions[myMafiaNightActionType] ?? null
-      : null;
-  const openMafiaNightPicker = useCallback(() => {
-    if (!mafiaGame || !myMafiaNightActionType || !mafiaNightActionLabel) return;
-    setMafiaNightTargetDraft(mafiaNightActionSelection?.targetUserId ?? null);
-    setMafiaNightPicker({
-      actionType: myMafiaNightActionType,
-      title: mafiaNightActionLabel,
-    });
-  }, [mafiaGame, mafiaNightActionLabel, mafiaNightActionSelection?.targetUserId, myMafiaNightActionType]);
-  const submitMafiaNightTarget = useCallback(async () => {
-    if (!mafiaGame || !mafiaNightPicker || !mafiaNightTargetDraft || mafiaBusy) return;
-    try {
-      setMafiaBusy(true);
-      setMafiaGame(
-        await submitMafiaNightAction({
-          gameId: mafiaGame.id,
-          targetUserId: mafiaNightTargetDraft,
-          actionType: mafiaNightPicker.actionType,
-        }),
-      );
-      setMafiaNightPicker(null);
-    } catch (error) {
-      Alert.alert("마피아 게임 실패", serverErrorMessage(error));
-    } finally {
-      setMafiaBusy(false);
-    }
-  }, [mafiaBusy, mafiaGame, mafiaNightPicker, mafiaNightTargetDraft]);
-  const showMafiaAdjustLimitToast = useCallback(() => {
-    setToast("시간 단축/연장은 한 턴에 두 번까지만 가능합니다.");
-    setTimeout(() => setToast(""), 1800);
-  }, []);
-  const handleMafiaAdjustError = useCallback(
-    (error: unknown) => {
-      const message = serverErrorMessage(error);
-      if (message.includes("MAFIA_PHASE_ADJUST_LIMIT")) {
-        showMafiaAdjustLimitToast();
-        return;
-      }
-      Alert.alert("마피아 게임 실패", message);
-    },
-    [showMafiaAdjustLimitToast],
-  );
-  const startMafiaWithCapacity = useCallback(
-    async (capacity: number) => {
-      if (!isSupabaseConfigured || !isUuid(room.id)) {
-        setToast("서버 방에서만 사용할 수 있습니다.");
-        setTimeout(() => setToast(""), 1600);
-        return;
-      }
-      if (!hasEnoughMafiaRoomMembers()) {
-        showMafiaMemberLimitToast();
-        setMafiaCapacityPickerOpen(false);
-        return;
-      }
-      if (mafiaBusy) return;
-      try {
-        setMafiaBusy(true);
-        setMafiaCapacityPickerOpen(false);
-        setMafiaGame(await startMafiaLobby({ roomId: room.id, capacity }));
-      } catch (error) {
-        if (serverErrorMessage(error).includes("MAFIA_MIN_MEMBERS_REQUIRED")) {
-          showMafiaMemberLimitToast();
-          return;
-        }
-        Alert.alert("마피아 게임 시작 실패", serverErrorMessage(error));
-      } finally {
-        setMafiaBusy(false);
-        setTool(null);
-      }
-    },
-    [hasEnoughMafiaRoomMembers, mafiaBusy, room.id, showMafiaMemberLimitToast],
-  );
-  const startMafiaImmediately = useCallback(async () => {
-    if (!mafiaGame || mafiaBusy) return;
-    try {
-      setMafiaBusy(true);
-      setMafiaGame(await startMafiaNow(mafiaGame.id));
-    } catch (error) {
-      if (serverErrorMessage(error).includes("MAFIA_MIN_PLAYERS_REQUIRED")) {
-        showMafiaMemberLimitToast();
-        return;
-      }
-      Alert.alert("마피아 게임 시작 실패", serverErrorMessage(error));
-    } finally {
-      setMafiaBusy(false);
-      setTool(null);
-    }
-  }, [mafiaBusy, mafiaGame, showMafiaMemberLimitToast]);
-  const confirmForceEndMafiaGame = useCallback(async () => {
-    if (!mafiaGame || mafiaBusy || !canForceEndMafiaGame) return;
-    const confirmed = await new Promise<boolean>((resolve) => {
-      Alert.alert(
-        "마피아 게임 강제 종료",
-        "정말로 진행 중인 게임을 강제 종료하시겠습니까? 진행 중인 게임은 저장되지 않습니다",
-        [
-          { text: "취소", style: "cancel", onPress: () => resolve(false) },
-          { text: "강제 종료", style: "destructive", onPress: () => resolve(true) },
-        ],
-        { cancelable: true, onDismiss: () => resolve(false) },
-      );
-    });
-    if (!confirmed) return;
-    try {
-      setMafiaBusy(true);
-      setMafiaGame(await forceEndMafiaGame(mafiaGame.id));
-    } catch (error) {
-      Alert.alert("마피아 게임 강제 종료 실패", serverErrorMessage(error));
-    } finally {
-      setMafiaBusy(false);
-      setTool(null);
-    }
-  }, [canForceEndMafiaGame, mafiaBusy, mafiaGame]);
-  const handleMafiaMenu = useCallback(async () => {
-    if (!isSupabaseConfigured || !isUuid(room.id)) {
-      setToast("서버 방에서만 사용할 수 있습니다.");
-      setTimeout(() => setToast(""), 1600);
-      return;
-    }
-    if (mafiaBusy) return;
-    try {
-      setMafiaBusy(true);
-      const latest = (await refreshMafiaGame()) ?? mafiaGame;
-      if (!latest) {
-        if (!hasEnoughMafiaRoomMembers()) {
-          showMafiaMemberLimitToast();
-          return;
-        }
-        setMafiaCapacityDraft(Math.min(mafiaRoomMemberLimit, MAFIA_MIN_PLAYERS));
-        setMafiaCapacityPickerOpen(true);
-        return;
-      }
-      const activeMafiaGame = latest;
-      if (activeMafiaGame.status === "waiting") {
-        if (false && canForceEndMafiaGame) {
-          const confirmed = await new Promise<boolean>((resolve) => {
-            Alert.alert(
-              "마피아 게임 강제 종료",
-              "정말로 진행 중인 게임을 강제 종료하시겠습니까? 진행 중인 게임은 저장되지 않습니다",
-              [
-                { text: "취소", style: "cancel", onPress: () => resolve(false) },
-                { text: "강제 종료", style: "destructive", onPress: () => resolve(true) },
-              ],
-              { cancelable: true, onDismiss: () => resolve(false) },
-            );
-          });
-          if (confirmed) setMafiaGame(await forceEndMafiaGame(activeMafiaGame.id));
-          return;
-        }
-        if (activeMafiaGame.me?.joined) setMafiaGame(await cancelMafiaJoin(activeMafiaGame.id));
-        else setMafiaGame(await joinMafiaGame(activeMafiaGame.id));
-        return;
-      }
-      if (false && activeMafiaGame.status === "running" && canForceEndMafiaGame) {
-        const confirmed = await new Promise<boolean>((resolve) => {
-          Alert.alert(
-            "마피아 게임 강제 종료",
-            "정말로 진행 중인 게임을 강제 종료하시겠습니까? 진행 중인 게임은 저장되지 않습니다",
-            [
-              { text: "취소", style: "cancel", onPress: () => resolve(false) },
-              { text: "강제 종료", style: "destructive", onPress: () => resolve(true) },
-            ],
-            { cancelable: true, onDismiss: () => resolve(false) },
-          );
-        });
-        if (confirmed) setMafiaGame(await forceEndMafiaGame(activeMafiaGame.id));
-        return;
-      }
-      const me = activeMafiaGame.me;
-      if (!me?.joined || !me.alive) {
-        setToast("관전 중입니다.");
-        setTimeout(() => setToast(""), 1600);
-        return;
-      }
-      if (latest.phase === "day_discussion") {
-        const action =
-          Platform.OS === "android"
-            ? ((await showAndroidActionList("마피아 게임", [
-                { label: "시간 15초 단축", value: "shorten" },
-                { label: "시간 15초 연장", value: "extend" },
-                { label: "취소", value: null },
-              ])) as "shorten" | "extend" | null)
-            : await new Promise<"shorten" | "extend" | null>((resolve) => {
-                Alert.alert(
-                  "마피아 게임",
-                  undefined,
-                  [
-                    { text: "시간 15초 단축", onPress: () => resolve("shorten") },
-                    { text: "시간 15초 연장", onPress: () => resolve("extend") },
-                    { text: "취소", style: "cancel", onPress: () => resolve(null) },
-                  ],
-                  { cancelable: true, onDismiss: () => resolve(null) },
-                );
-              });
-        if (!action) return;
-        setMafiaGame(
-          await submitMafiaPhaseTimeAdjustment(
-            latest.id,
-            action === "extend" ? 15 : -15,
-          ),
-        );
-        return;
-      }
-      if (latest.phase === "day_vote") {
-        const target = await chooseMafiaPlayer("투표할 사람", latest.players);
-        if (target) setMafiaGame(await voteMafiaGame({ gameId: latest.id, targetUserId: target, voteType: "execute" }));
-        return;
-      }
-      if (latest.phase === "final_vote") {
-        const vote =
-          Platform.OS === "android"
-            ? ((await showAndroidActionList("최종 투표", [
-                { label: "찬성", value: "approve" },
-                { label: "반대", value: "reject" },
-                { label: "취소", value: null },
-              ])) as "approve" | "reject" | null)
-            : await new Promise<"approve" | "reject" | null>((resolve) => {
-                Alert.alert(
-                  "최종 투표",
-                  undefined,
-                  [
-                    { text: "찬성", onPress: () => resolve("approve") },
-                    { text: "반대", onPress: () => resolve("reject") },
-                    { text: "취소", style: "cancel", onPress: () => resolve(null) },
-                  ],
-                  { cancelable: true, onDismiss: () => resolve(null) },
-                );
-              });
-        if (vote) setMafiaGame(await voteMafiaGame({ gameId: latest.id, voteType: vote }));
-        return;
-      }
-      if (latest.phase === "night") {
-        const actionType =
-          me.role === "mafia"
-            ? "kill"
-            : me.role === "doctor"
-              ? "save"
-              : me.role === "police"
-                ? "inspect"
-                : null;
-        if (!actionType) {
-          setToast(me.role === "lover" ? "연인 전용 채팅을 보낼 수 있습니다." : "밤 행동이 없는 역할입니다.");
-          setTimeout(() => setToast(""), 1600);
-          return;
-        }
-        setMafiaGame(latest);
-        setMafiaNightTargetDraft(latest.nightActions?.[actionType]?.targetUserId ?? null);
-        setMafiaNightPicker({
-          actionType,
-          title: actionType === "kill" ? "희생자 정하기" : actionType === "save" ? "살릴 사람 정하기" : "마피아 조사하기",
-        });
-        return;
-      }
-      setMafiaGame(await tickMafiaGame(latest.id));
-    } catch (error) {
-      if (serverErrorMessage(error).includes("MAFIA_PHASE_ADJUST_LIMIT")) {
-        showMafiaAdjustLimitToast();
-        return;
-      }
-      Alert.alert("마피아 게임 실패", serverErrorMessage(error));
-    } finally {
-      setMafiaBusy(false);
-      setTool(null);
-    }
-  }, [canForceEndMafiaGame, chooseMafiaPlayer, hasEnoughMafiaRoomMembers, mafiaBusy, mafiaGame, mafiaRoomMemberLimit, refreshMafiaGame, room.id, showMafiaAdjustLimitToast, showMafiaMemberLimitToast, submitMafiaPhaseTimeAdjustment]);
   const send = () => {
     const text = message.trim();
     if (!text) return;
-    const activeMafia = mafiaGame?.status === "running" ? mafiaGame : null;
-    const myMafia = activeMafia?.me;
-    const mafiaNightVisibility =
-      activeMafia?.phase === "night" && myMafia?.alive && myMafia.joined
-        ? myMafia.role === "mafia"
-          ? "mafia"
-          : myMafia.role === "lover"
-            ? "lover"
-            : null
-        : null;
-    const isDeadMafiaParticipant = Boolean(
-      activeMafia && myMafia?.joined && myMafia.alive === false,
-    );
-    const mafiaMessageVisibility: "public" | "spectator" | "mafia" | "lover" =
-      isDeadMafiaParticipant
-        ? "spectator"
-        : activeMafia?.phase === "night" && myMafia?.alive && myMafia.joined
-          ? myMafia.role === "mafia"
-            ? "mafia"
-            : myMafia.role === "lover"
-              ? "lover"
-              : "public"
-          : "public";
-    if (
-      activeMafia?.phase === "final_defense" &&
-      myMafia?.alive &&
-      myMafia.joined &&
-      activeMafia.defenseTargetUserId &&
-      myMafia.userId !== activeMafia.defenseTargetUserId
-    ) {
-      setToast("최후의 변론 중에는 당사자만 채팅할 수 있습니다.");
-      setTimeout(() => setToast(""), 1600);
-      return;
-    }
-    if (activeMafia?.phase === "night" && myMafia?.alive && myMafia.joined && !mafiaNightVisibility) {
-      setToast("밤에는 역할 행동만 할 수 있습니다.");
-      setTimeout(() => setToast(""), 1600);
-      return;
-    }
     const createdAt = new Date().toISOString();
     pendingTextSeq.current += 1;
-    nextChatClientOrderRef.current += 1;
-    const clientOrder = nextChatClientOrderRef.current;
     const localId = `pending-text-${Date.now()}-${pendingTextSeq.current}`;
     const reply = replyTo ?? undefined;
     setMessages((items) => [
       ...items,
       {
         id: localId,
-        clientOrder,
         kind: "text",
         mine: true,
         name: myDisplayName,
@@ -9757,9 +8385,6 @@ function ChatRoom({
         delivery: "sending",
         bubbleColor,
         textColor,
-        mafiaGameId: activeMafia?.id ?? null,
-        mafiaVisibility: mafiaMessageVisibility,
-        mafiaParticipant: Boolean(activeMafia?.id && myMafia?.joined),
       },
     ]);
     setMessage("");
@@ -9768,104 +8393,11 @@ function ChatRoom({
     setTimeout(() => scrollToLatestRef.current(false), 40);
     setTimeout(() => scrollToLatestRef.current(false), 140);
     textSendQueueRef.current = textSendQueueRef.current
-      .then(async () => {
-        if (activeMafia?.id && mafiaMessageVisibility !== "public") {
-          const id = await sendMafiaScopedMessage({
-            gameId: activeMafia.id,
-            body: text,
-            visibility: mafiaMessageVisibility,
-          });
-          setMessages((items) =>
-            items.map((item) =>
-              item.id === localId
-                ? {
-                    ...item,
-                    id,
-                    clientOrder: undefined,
-                    delivery: "sent" as const,
-                    time: formatChatClock(new Date().toISOString()),
-                  }
-                : item,
-            ),
-          );
-          return;
-        }
-        await submitTextMessage(localId, text, reply);
-      })
-      .catch(() => undefined);
-  };
-  const sendRanking = () => {
-    if (blockMafiaRestrictedFeature()) return;
-    const text = buildChatRankingMessage(
-      myDisplayName,
-      roomMembersRef.current,
-    );
-    const createdAt = new Date().toISOString();
-    pendingTextSeq.current += 1;
-    nextChatClientOrderRef.current += 1;
-    const clientOrder = nextChatClientOrderRef.current;
-    const localId = `pending-ranking-${Date.now()}-${pendingTextSeq.current}`;
-    setTool(null);
-    setMessages((items) => [
-      ...items,
-      {
-        id: localId,
-        clientOrder,
-        kind: "text",
-        mine: true,
-        name: myDisplayName,
-        avatarUri: myProfile?.avatarUri,
-        text,
-        time: "지금",
-        createdAt,
-        delivery: "sending",
-        bubbleColor,
-        textColor,
-      },
-    ]);
-    requestAnimationFrame(() => scrollToLatestRef.current(false));
-    setTimeout(() => scrollToLatestRef.current(false), 40);
-    setTimeout(() => scrollToLatestRef.current(false), 140);
-    textSendQueueRef.current = textSendQueueRef.current
-      .then(() => submitTextMessage(localId, text))
-      .catch(() => undefined);
-  };
-  const sendDraw = () => {
-    if (blockMafiaRestrictedFeature()) return;
-    const text = buildChatDrawMessage(myDisplayName, roomMembersRef.current);
-    const createdAt = new Date().toISOString();
-    pendingTextSeq.current += 1;
-    nextChatClientOrderRef.current += 1;
-    const clientOrder = nextChatClientOrderRef.current;
-    const localId = `pending-draw-${Date.now()}-${pendingTextSeq.current}`;
-    setTool(null);
-    setMessages((items) => [
-      ...items,
-      {
-        id: localId,
-        clientOrder,
-        kind: "text",
-        mine: true,
-        name: myDisplayName,
-        avatarUri: myProfile?.avatarUri,
-        text,
-        time: "지금",
-        createdAt,
-        delivery: "sending",
-        bubbleColor,
-        textColor,
-      },
-    ]);
-    requestAnimationFrame(() => scrollToLatestRef.current(false));
-    setTimeout(() => scrollToLatestRef.current(false), 40);
-    setTimeout(() => scrollToLatestRef.current(false), 140);
-    textSendQueueRef.current = textSendQueueRef.current
-      .then(() => submitTextMessage(localId, text))
+      .then(() => submitTextMessage(localId, text, reply))
       .catch(() => undefined);
   };
   scrollToLatestRef.current = scrollToLatest;
   const sendHeart = async (targetNameOverride?: string): Promise<boolean> => {
-    if (blockMafiaRestrictedFeature()) return false;
     const createdAt = new Date().toISOString();
     const targetName = targetNameOverride ?? selectedMember ?? "느린준";
     const body = `${myDisplayName}님이 ${targetName}님에게 하트를 보냈습니다.`;
@@ -9888,7 +8420,6 @@ function ChatRoom({
     target: RoomMember | undefined,
     draft: string,
   ): Promise<boolean> => {
-    if (blockMafiaRestrictedFeature()) return false;
     const text = draft.trim();
     if (!text) return false;
     const createdAt = new Date().toISOString();
@@ -9941,7 +8472,6 @@ function ChatRoom({
     target: RoomMember | undefined,
     rawAmount: string,
   ): Promise<boolean> => {
-    if (blockMafiaRestrictedFeature()) return false;
     if (pointSendingRef.current) return false;
     const normalizedAmount = rawAmount.trim();
     if (!/^[0-9]+$/.test(normalizedAmount)) {
@@ -10071,11 +8601,6 @@ function ChatRoom({
     const createdAt = new Date().toISOString();
     const reply = replyTo ?? undefined;
     const sessionId = roomSessionRef.current;
-    const clientOrder = nextChatClientOrderRef.current;
-    if (!existingId) nextChatClientOrderRef.current += 1;
-    const activeMafia = mafiaGame?.status === "running" ? mafiaGame : null;
-    const myMafia = activeMafia?.me;
-    const mafiaParticipant = Boolean(activeMafia?.id && myMafia?.joined);
     const previewAssets = await Promise.all(
       selected.map((asset) =>
         prepareChatImage(asset, 420, 0.38).catch(() => asset),
@@ -10094,40 +8619,25 @@ function ChatRoom({
           imageUris: previewUris,
           time: "지금",
           createdAt,
-          clientOrder,
           replyTo: reply,
           delivery: "sending",
           uploadProgress: 0,
           uploadProgressLabel:
             selected.length > 1 ? `0/${selected.length}` : undefined,
           pendingUploadAssets: selected,
-          mafiaGameId: activeMafia?.id ?? null,
-          mafiaVisibility: "public" as const,
-          mafiaParticipant,
         },
       ]);
     else
       setMessages((items) =>
         items.map((item) =>
           item.id === localId
-              ? {
+            ? {
                 ...item,
                 delivery: "sending" as const,
-                clientOrder: item.clientOrder ?? clientOrder,
                 uploadProgress: 0,
                 uploadProgressLabel:
                   selected.length > 1 ? `0/${selected.length}` : undefined,
                 pendingUploadAssets: selected,
-                mafiaGameId:
-                  "mafiaGameId" in item ? item.mafiaGameId : activeMafia?.id ?? null,
-                mafiaVisibility:
-                  "mafiaVisibility" in item
-                    ? item.mafiaVisibility
-                    : ("public" as const),
-                mafiaParticipant:
-                  "mafiaParticipant" in item
-                    ? item.mafiaParticipant
-                    : mafiaParticipant,
               }
             : item,
         ),
@@ -10233,7 +8743,6 @@ function ChatRoom({
             ? {
                 ...item,
                 id,
-                clientOrder: undefined,
                 imageUris: previewUris,
                 fullImageUris: output,
                 delivery: "sent" as const,
@@ -10255,7 +8764,6 @@ function ChatRoom({
                 ? {
                     ...item,
                     delivery: "failed" as const,
-                    clientOrder: item.clientOrder ?? clientOrder,
                     imageUris: previewUris,
                     pendingUploadAssets: selected,
                     uploadProgressLabel: undefined,
@@ -10273,13 +8781,9 @@ function ChatRoom({
                 imageUris: previewUris,
                 time: "지금",
                 createdAt,
-                clientOrder,
                 replyTo: reply,
                 delivery: "failed" as const,
                 pendingUploadAssets: selected,
-                mafiaGameId: activeMafia?.id ?? null,
-                mafiaVisibility: "public" as const,
-                mafiaParticipant,
               },
             ];
         LOCAL_PENDING_MESSAGES.set(room.id, next);
@@ -10301,8 +8805,6 @@ function ChatRoom({
     }
   };
   const sendImage = async (source: "camera" | "gallery") => {
-    rememberScrollPosition();
-    restoreScrollAfterPanelRef.current = true;
     const selected = await pickChatImages(source);
     if (selected.length) {
       Keyboard.dismiss();
@@ -10519,32 +9021,7 @@ function ChatRoom({
       : [];
     return mergeChatMessages(messages, requestMessages);
   }, [isOwner, messages, pendingJoinRequests]);
-  const canSeeMafiaMessage = useCallback(
-    (visibility: ChatBase["mafiaVisibility"], recipientUserIds?: string[]) => {
-      const nextVisibility = visibility ?? "public";
-      if (nextVisibility === "public") return true;
-      if (isSuperAdmin) return true;
-      const me = mafiaGame?.me;
-      if (nextVisibility === "private")
-        return Boolean(currentUserId && recipientUserIds?.includes(currentUserId));
-      const explicitRecipient = Boolean(
-        currentUserId && recipientUserIds?.includes(currentUserId),
-      );
-      const hasMafiaState = Boolean(mafiaGame);
-      const isDeadParticipant = hasMafiaState && Boolean(me?.joined && me.alive === false);
-      if (!hasMafiaState) return explicitRecipient;
-      if (nextVisibility === "spectator") return explicitRecipient || isDeadParticipant;
-      if (nextVisibility === "mafia")
-        return explicitRecipient || Boolean(me?.joined && me.role === "mafia");
-      if (nextVisibility === "lover")
-        return explicitRecipient || Boolean(me?.joined && me.role === "lover");
-      return false;
-    },
-    [currentUserId, isSuperAdmin, mafiaGame?.me, mafiaGame?.status],
-  );
   const visibleMessages = combinedMessages.filter((item) => {
-    if (!canSeeMafiaMessage(item.mafiaVisibility, item.mafiaRecipientUserIds))
-      return false;
     if (item.kind !== "secret") return true;
     return item.mine || item.recipient === myDisplayName || isSuperAdmin;
   });
@@ -11023,7 +9500,6 @@ function ChatRoom({
             room={room}
             isOwner={isOwner}
             isSuperAdmin={isSuperAdmin}
-            mafiaParticipantUserIds={mafiaGameParticipantIds}
             onAdminReportUser={onAdminReportUser}
             onProfile={(member) => {
               const nextMember = normalizeRoomMember(member);
@@ -11111,7 +9587,6 @@ function ChatRoom({
     }
   };
   const muteSelectedMember=(seconds:number,label:string)=>{
-    if (blockMafiaRestrictedFeature()) return;
     if(!selectedRoomMember?.userId)return;
     setRoomMemberMute(room.id,selectedRoomMember.userId,seconds).then((until)=>{setRoomMembers((items)=>items.map((item)=>item.userId===selectedRoomMember.userId?{...item,mutedUntil:until}:item));setSelectedMember(null);setToast(`${selectedRoomMember.name}님을 ${label} 동안 채팅 금지했습니다.`);setTimeout(()=>setToast(""),1800);}).catch((error)=>Alert.alert("채팅 금지 실패",serverErrorMessage(error)));
   };
@@ -11156,49 +9631,6 @@ function ChatRoom({
           readOnly && !isSuperAdmin ? openPanel("members") : setDrawerOpen(true);
         }}
       />
-      {!chatSearchOpen && !readOnly && showMafiaDeadBar && (
-        <View style={s.mafiaGameBarWrap}>
-          <View style={s.mafiaDeadBar}>
-            <Text style={s.mafiaDeadBarText}>당신은 사망하였습니다.</Text>
-          </View>
-        </View>
-      )}
-      {!chatSearchOpen && !readOnly && mafiaGame && showMafiaControlBar && (
-        <MafiaGameBar
-          state={mafiaGame}
-          busy={mafiaBusy}
-          onPress={handleMafiaMenu}
-          onShorten={() => {
-            if (mafiaBusy || !mafiaGame) return;
-            setMafiaBusy(true);
-            submitMafiaPhaseTimeAdjustment(mafiaGame.id, -15)
-              .then((state) => setMafiaGame(state))
-              .catch((error) => {
-                handleMafiaAdjustError(error);
-              })
-              .finally(() => setMafiaBusy(false));
-          }}
-          onExtend={() => {
-            if (mafiaBusy || !mafiaGame) return;
-            setMafiaBusy(true);
-            submitMafiaPhaseTimeAdjustment(mafiaGame.id, 15)
-              .then((state) => setMafiaGame(state))
-              .catch((error) => {
-                handleMafiaAdjustError(error);
-              })
-              .finally(() => setMafiaBusy(false));
-          }}
-          onNightAction={openMafiaNightPicker}
-          onStartNow={startMafiaImmediately}
-          canStartNow={canStartMafiaNow}
-          nowMs={mafiaClockNow}
-          nightActionLabel={
-            mafiaNightActionLabel
-              ? `${mafiaNightActionLabel}${mafiaNightActionSelection?.targetName ? `: ${mafiaNightActionSelection.targetName}` : ""}`
-              : undefined
-          }
-        />
-      )}
       {chatSearchOpen && (
         <View style={s.chatSearchBar}>
           <TextInput
@@ -11327,12 +9759,12 @@ function ChatRoom({
             opacity: chatReady ? 1 : 0,
           }}
           contentContainerStyle={s.messages}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           onLayout={(event) => {
             scrollMetrics.current.layoutHeight = event.nativeEvent.layout.height;
             if (!keyboardOpenedAtBottomRef.current) return;
-            if (composerFocusedRef.current) return;
             requestAnimationFrame(() =>
               requestAnimationFrame(() => scrollToLatestRef.current(false)),
             );
@@ -11377,27 +9809,11 @@ function ChatRoom({
               const previousHeight = prependHeightRef.current;
               const previousOffset =
                 prependOffsetRef.current ?? scrollMetrics.current.offsetY;
-              const delta = height - previousHeight;
-              const anchor = prependAnchorRef.current;
-              const anchorY = anchor
-                ? messagePositions.current[anchor.id]
-                : undefined;
-              const nextY = Math.max(
-                0,
-                typeof anchorY === "number"
-                  ? anchorY - (anchor?.viewportOffset ?? 0)
-                  : previousOffset + delta,
-              );
-              prependHeightRef.current = height;
-              prependOffsetRef.current = nextY;
-              if (prependSettleTimerRef.current)
-                clearTimeout(prependSettleTimerRef.current);
-              prependSettleTimerRef.current = setTimeout(() => {
-                prependHeightRef.current = null;
-                prependOffsetRef.current = null;
-                prependAnchorRef.current = null;
-                prependSettleTimerRef.current = null;
-              }, 700);
+              prependHeightRef.current = null;
+              prependOffsetRef.current = null;
+              prependAnchorRef.current = null;
+              const delta = Math.max(0, height - previousHeight);
+              const nextY = Math.max(0, previousOffset + delta);
               requestAnimationFrame(() => {
                 chatScrollRef.current?.scrollTo({
                   y: nextY,
@@ -11428,13 +9844,7 @@ function ChatRoom({
               restoreScrollAfterPanelRef.current = false;
               chatScrollRef.current?.scrollToEnd({ animated: false });
               requestAnimationFrame(() => setChatReady(true));
-            } else if (restoreScrollAfterPanelRef.current) {
-              restoreScrollAfterPanelRef.current = false;
-            } else if (
-              nearBottomRef.current &&
-              messageCountChanged &&
-              !(Platform.OS === "android" && composerFocusedRef.current)
-            )
+            } else if (nearBottomRef.current && messageCountChanged)
               scrollToLatest(false);
           }}
         >
@@ -11461,29 +9871,14 @@ function ChatRoom({
                   <View style={[s.unreadLine, appTheme.id === "dark" && s.unreadLineDark]} />
                 </View>
               ) : null;
-            const mafiaParticipant = Boolean(
-              "userId" in item &&
-                typeof item.userId === "string" &&
-                (item.mafiaParticipant || mafiaGameParticipantIds.has(item.userId)),
-            );
-            if (item.kind === "system") {
-              if (!item.text.trim()) return null;
-              const mafiaRoleResults =
-                isMafiaGameEndSystemBody(item.mafiaSystemBody) &&
-                mafiaGame?.id === item.mafiaGameId
-                  ? buildMafiaRoleResults(mafiaGame, roomMembersRef.current)
-                  : [];
+            if (item.kind === "system")
               return (
                 <View key={item.id}>
                   {dateMarker}
                   {unreadMarker}
                   <SystemMessage event={item.event} text={item.text} />
-                  {mafiaRoleResults.length ? (
-                    <MafiaRoleResultCard entries={mafiaRoleResults} />
-                  ) : null}
                 </View>
               );
-            }
             if (item.kind === "story")
               return (
                 <View key={item.id}>
@@ -11503,11 +9898,7 @@ function ChatRoom({
                           openActiveMemberProfile(item);
                         }}
                       >
-                        <Avatar
-                          uri={item.avatarUri}
-                          size={46}
-                          mafiaParticipant={mafiaParticipant}
-                        />
+                        <Avatar uri={item.avatarUri} size={46} />
                       </Pressable>
                     )}
                     <View
@@ -11603,34 +9994,12 @@ function ChatRoom({
                           openActiveMemberProfile(item);
                         }}
                       >
-                        <Avatar
-                          uri={item.avatarUri}
-                          size={46}
-                          mafiaParticipant={mafiaParticipant}
-                        />
+                        <Avatar uri={item.avatarUri} size={46} />
                       </Pressable>
                     )}
                   </View>
                 </View>
               );
-            const mafiaVisibility =
-              "mafiaVisibility" in item ? item.mafiaVisibility ?? "public" : "public";
-            const mafiaScoped = mafiaVisibility !== "public";
-            const mafiaStyleMuted = mafiaGameRunning && !mafiaScoped;
-            const mafiaBubbleOverride =
-              mafiaVisibility === "mafia"
-                ? "#211417"
-                : mafiaVisibility === "lover"
-                  ? "#FFE8F1"
-                  : mafiaVisibility === "spectator"
-                    ? "#F4F4F4"
-                    : undefined;
-            const mafiaTextOverride =
-              mafiaVisibility === "mafia"
-                ? "#FF6B78"
-                : mafiaVisibility === "lover"
-                  ? "#D9487D"
-                  : undefined;
             const previous = visibleMessages[index - 1];
             const continuous = Boolean(
               previous &&
@@ -11650,19 +10019,8 @@ function ChatRoom({
               sameChatMinute(item.createdAt, next.createdAt),
             );
             const expanded = expandedMessages.includes(item.id);
-            const rankingPayload =
-              item.kind === "text" ? parseChatRankingMessage(item.text) : null;
-            const drawPayload =
-              item.kind === "text" ? parseChatDrawMessage(item.text) : null;
-            const cardPayload = rankingPayload || drawPayload;
-            const cardDrawerMember = cardPayload
-              ? roomMembersRef.current.find(
-                  (member) => member.name === cardPayload.drawerName,
-                )
-              : undefined;
             const shouldCollapse =
               item.kind === "text" &&
-              !cardPayload &&
               item.text.length >= CHAT_COLLAPSE_CHAR_THRESHOLD;
             const deliveryMeta = (
               <ChatDeliveryMeta
@@ -11696,10 +10054,9 @@ function ChatRoom({
                     s.messageRow,
                     item.mine && s.mineRow,
                     continuous && s.continuousRow,
-                    cardPayload && s.rankingMessageRow,
                   ]}
                 >
-                  {!item.mine && !cardPayload ? (
+                  {!item.mine ? (
                     !continuous ? (
                       <Pressable
                         accessibilityLabel={`${item.name} 프로필 메뉴`}
@@ -11707,24 +10064,16 @@ function ChatRoom({
                           openActiveMemberProfile(item);
                         }}
                       >
-                        <Avatar
-                          uri={item.avatarUri}
-                          size={46}
-                          mafiaParticipant={mafiaParticipant}
-                        />
+                        <Avatar uri={item.avatarUri} size={46} />
                       </Pressable>
                     ) : (
                       <View style={s.avatarSpacer} />
                     )
                   ) : null}
                   <View
-                    style={[
-                      s.messageBlock,
-                      item.mine && s.mineMessageBlock,
-                      cardPayload && s.rankingMessageBlock,
-                    ]}
+                    style={[s.messageBlock, item.mine && s.mineMessageBlock]}
                   >
-                    {!continuous && !cardPayload && (
+                    {!continuous && (
                       <Text style={[s.sender, item.mine && s.mineSender]}>
                         {item.name}
                       </Text>
@@ -11734,10 +10083,9 @@ function ChatRoom({
                         s.bubbleLine,
                         s.tightBubbleLine,
                         item.mine && s.mineBubbleLine,
-                        cardPayload && s.rankingBubbleLine,
                       ]}
                     >
-                      {item.mine && !cardPayload && deliveryMeta}
+                      {item.mine && deliveryMeta}
                       <Pressable
                         preserveTheme
                         onLongPress={() =>
@@ -11752,24 +10100,18 @@ function ChatRoom({
                         }
                         style={[
                           s.bubble,
-                          cardPayload && s.rankingBubble,
                           item.kind === "image" && s.imageBubble,
                           activeSearchMessage?.id === item.id &&
                             s.searchBubbleActive,
                           jumpHighlightId === item.id && s.searchBubbleActive,
                           {
                             backgroundColor:
-                              mafiaBubbleOverride ??
-                              (mafiaStyleMuted ? "#F5F5F5" : undefined) ??
                               item.bubbleColor ??
                               (item.mine ? bubbleColor : "#F5F5F5"),
                           },
-                          mafiaScoped && s.mafiaScopedBubble,
-                          !cardPayload && item.mine
+                          item.mine
                             ? { borderBottomRightRadius: 4 }
-                            : !cardPayload
-                              ? { borderBottomLeftRadius: 4 }
-                              : null,
+                            : { borderBottomLeftRadius: 4 },
                         ]}
                       >
                         {item.replyTo && (
@@ -11781,10 +10123,7 @@ function ChatRoom({
                               {
                                 borderLeftColor:
                                   chatAccentColor(
-                                    mafiaTextOverride ??
-                                      (mafiaStyleMuted ? colors.text : undefined) ??
-                                      item.textColor ??
-                                      (item.mine ? textColor : undefined),
+                                    item.textColor ?? (item.mine ? textColor : undefined),
                                   ),
                               },
                             ]}
@@ -11795,10 +10134,7 @@ function ChatRoom({
                                 {
                                   color:
                                     chatAccentColor(
-                                      mafiaTextOverride ??
-                                        (mafiaStyleMuted ? colors.text : undefined) ??
-                                        item.textColor ??
-                                        (item.mine ? textColor : undefined),
+                                      item.textColor ?? (item.mine ? textColor : undefined),
                                     ),
                                 },
                               ]}
@@ -11851,8 +10187,6 @@ function ChatRoom({
                                 s.messageText,
                                 {
                                   color:
-                                    mafiaTextOverride ??
-                                    (mafiaStyleMuted ? colors.text : undefined) ??
                                     item.textColor ??
                                     (item.mine ? textColor : colors.text),
                                 },
@@ -11861,34 +10195,6 @@ function ChatRoom({
                               {item.text}
                             </LinkedText>
                           </View>
-                        ) : rankingPayload ? (
-                          <RankingMessageCard
-                            avatarUri={cardDrawerMember?.avatarUri ?? item.avatarUri}
-                            drawerName={rankingPayload.drawerName}
-                            ranking={rankingPayload}
-                            textColor={
-                              mafiaTextOverride ??
-                              (mafiaStyleMuted ? colors.text : undefined) ??
-                              item.textColor ??
-                              (item.mine ? textColor : colors.text)
-                            }
-                          />
-                        ) : drawPayload ? (
-                          <DrawMessageCard
-                            selectedName={drawPayload.selectedName}
-                            selectedAvatarUri={
-                              roomMembersRef.current.find(
-                                (member) => member.name === drawPayload.selectedName,
-                              )?.avatarUri
-                            }
-                            title={drawPayload.title}
-                            textColor={
-                              mafiaTextOverride ??
-                              (mafiaStyleMuted ? colors.text : undefined) ??
-                              item.textColor ??
-                              (item.mine ? textColor : colors.text)
-                            }
-                          />
                         ) : (
                           <View>
                             {item.text === "삭제된 메시지입니다." ? (
@@ -11914,8 +10220,6 @@ function ChatRoom({
                                   s.messageText,
                                   {
                                     color:
-                                      mafiaTextOverride ??
-                                      (mafiaStyleMuted ? colors.text : undefined) ??
                                       item.textColor ??
                                       (item.mine ? textColor : colors.text),
                                   },
@@ -11945,10 +10249,10 @@ function ChatRoom({
                           </View>
                         )}
                       </Pressable>
-                      {!item.mine && !cardPayload && deliveryMeta}
+                      {!item.mine && deliveryMeta}
                     </View>
                   </View>
-                  {item.mine && !cardPayload ? (
+                  {item.mine ? (
                     !continuous ? (
                       <Pressable
                         accessibilityLabel={`${item.name} 프로필 메뉴`}
@@ -11956,11 +10260,7 @@ function ChatRoom({
                           openActiveMemberProfile(item);
                         }}
                       >
-                        <Avatar
-                          uri={item.avatarUri}
-                          size={46}
-                          mafiaParticipant={mafiaParticipant}
-                        />
+                        <Avatar uri={item.avatarUri} size={46} />
                       </Pressable>
                     ) : (
                       <View style={s.avatarSpacer} />
@@ -11971,22 +10271,6 @@ function ChatRoom({
             );
           })}
         </ScrollView>
-        {mafiaGameRunning && canForceEndMafiaGame && (
-          <Pressable
-            accessibilityLabel="마피아 게임 강제 종료"
-            onPress={confirmForceEndMafiaGame}
-            style={s.mafiaForceFab}
-          >
-            <LinearGradient
-              colors={["#82B9C1", "#5DBB8C"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={s.mafiaForceFabGradient}
-            >
-              <Ionicons name="warning-outline" size={20} color="#FFFFFF" />
-            </LinearGradient>
-          </Pressable>
-        )}
         {!chatReady && (
           <View pointerEvents="none" style={s.chatInitialLoader}>
             <ActivityIndicator color={colors.mint700} />
@@ -12075,14 +10359,6 @@ function ChatRoom({
                   setStoryPanelInitialWrite(true);
                   setPanel("stories");
                 }}
-                onRanking={sendRanking}
-                onDraw={sendDraw}
-                onMafia={handleMafiaMenu}
-                mafiaLabel={
-                  false && mafiaGameRunning && canForceEndMafiaGame
-                    ? "마피아 게임 강제 종료"
-                    : "마피아 게임"
-                }
                 onComingSoon={(label) => {
                   setTool(null);
                   setToast("아직 준비 중인 기능입니다.");
@@ -12182,17 +10458,10 @@ function ChatRoom({
                   value={message}
                   onPressIn={prepareComposerFocus}
                   onFocus={() => {
-                    composerFocusedRef.current = true;
                     prepareComposerFocus();
                     focusComposer();
                   }}
-                  onBlur={() => {
-                    composerFocusedRef.current = false;
-                  }}
-                  onChangeText={(value) => {
-                    composerFocusedRef.current = true;
-                    setMessage(value);
-                  }}
+                  onChangeText={setMessage}
                   onSubmitEditing={send}
                   placeholder="메시지를 입력해주세요."
                   placeholderTextColor={colors.textMuted}
@@ -12266,22 +10535,12 @@ function ChatRoom({
           setSelectedMember(null);
         }}
         onPoint={() => {
-          if (blockMafiaRestrictedFeature()) {
-            setSelectedMember(null);
-            return;
-          }
           setPointTarget(selectedMember);
           setPointTargetMember(selectedRoomMember ?? null);
           setPointDraft("");
           setSelectedMember(null);
         }}
-        onSecret={() => {
-          if (blockMafiaRestrictedFeature()) {
-            setSelectedMember(null);
-            return;
-          }
-          setTool("secret");
-        }}
+        onSecret={() => setTool("secret")}
         onProfile={() => {
           const found = selectedRoomMember ?? {
             name: selectedMember ?? "멤버",
@@ -12327,145 +10586,6 @@ function ChatRoom({
           setSelectedMember(null);
         }}
       />
-      {mafiaCapacityPickerOpen && (
-        <View style={s.sheetLayer}>
-          <Pressable
-            accessibilityLabel="마피아 게임 인원 선택 닫기"
-            onPress={() => setMafiaCapacityPickerOpen(false)}
-            style={s.sheetDim}
-          />
-          <View style={s.mafiaCapacitySheet}>
-            <View style={s.sheetHandle} />
-            <Text style={s.mafiaCapacityTitle}>마피아 게임 인원</Text>
-            <Text style={s.mafiaCapacityBody}>
-              {MAFIA_MIN_PLAYERS}명 이상부터 시작할 수 있습니다. 참여 가능 최대 인원을 정해주세요.
-            </Text>
-            <View style={s.mafiaCapacityStepper}>
-              <Pressable
-                disabled={mafiaCapacityDraft <= MAFIA_MIN_PLAYERS}
-                onPress={() =>
-                  setMafiaCapacityDraft((value) => Math.max(MAFIA_MIN_PLAYERS, value - 1))
-                }
-                style={[
-                  s.mafiaCapacityStepButtonWrap,
-                  mafiaCapacityDraft <= MAFIA_MIN_PLAYERS && s.disabledSoft,
-                ]}
-              >
-                <LinearGradient
-                  colors={["#82B9C1", "#5DBB8C"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={s.mafiaCapacityStepButton}
-                >
-                  <Text style={s.mafiaCapacityStepText}>−</Text>
-                </LinearGradient>
-              </Pressable>
-              <Text style={s.mafiaCapacityValue}>{mafiaCapacityDraft}명</Text>
-              <Pressable
-                disabled={mafiaCapacityDraft >= mafiaRoomMemberLimit}
-                onPress={() => setMafiaCapacityDraft((value) => Math.min(mafiaRoomMemberLimit, value + 1))}
-                style={[s.mafiaCapacityStepButtonWrap, mafiaCapacityDraft >= mafiaRoomMemberLimit && s.disabledSoft]}
-              >
-                <LinearGradient
-                  colors={["#82B9C1", "#5DBB8C"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={s.mafiaCapacityStepButton}
-                >
-                  <Text style={s.mafiaCapacityStepText}>＋</Text>
-                </LinearGradient>
-              </Pressable>
-            </View>
-            <View style={s.mafiaCapacityActions}>
-              <Pressable
-                onPress={() => setMafiaCapacityPickerOpen(false)}
-                style={s.mafiaCapacityCancel}
-              >
-                <Text style={s.mafiaCapacityCancelText}>취소</Text>
-              </Pressable>
-              <Pressable
-                disabled={mafiaBusy}
-                onPress={() => startMafiaWithCapacity(mafiaCapacityDraft)}
-                style={[s.mafiaCapacityStart, mafiaBusy && s.disabled]}
-              >
-                <LinearGradient
-                  colors={["#82B9C1", "#5DBB8C"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={s.mafiaCapacityStartGradient}
-                >
-                  <Text style={s.primaryText}>{mafiaBusy ? "시작 중..." : "시작하기"}</Text>
-                </LinearGradient>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      )}
-      {mafiaNightPicker && (
-        <View style={s.sheetLayer}>
-          <Pressable
-            accessibilityLabel="마피아 밤 행동 선택 닫기"
-            onPress={() => setMafiaNightPicker(null)}
-            style={s.sheetDim}
-          />
-          <View style={s.mafiaCapacitySheet}>
-            <View style={s.sheetHandle} />
-            <Text style={s.mafiaCapacityTitle}>{mafiaNightPicker.title}</Text>
-            <Text style={s.mafiaCapacityBody}>
-              살아있는 멤버 중 한 명을 선택한 뒤 확인을 눌러주세요. 다시 선택하면 변경됩니다.
-            </Text>
-            <View style={s.mafiaNightRadioList}>
-              {mafiaGame?.players
-                .filter((player) => player.joined && player.alive)
-                .filter((player) => {
-                  if (mafiaNightPicker.actionType === "kill") return player.role !== "mafia";
-                  if (mafiaNightPicker.actionType === "inspect") return player.userId !== currentUserId;
-                  return true;
-                })
-                .map((player) => {
-                  const selected = mafiaNightTargetDraft === player.userId;
-                  return (
-                    <Pressable
-                      key={player.userId}
-                      onPress={() => setMafiaNightTargetDraft(player.userId)}
-                      style={s.mafiaNightRadioRow}
-                    >
-                      <View style={[s.radioCircle, selected && s.radioCircleActive]}>
-                        {selected && <View style={s.radioDot} />}
-                      </View>
-                      <Text style={s.mafiaNightRadioText}>{player.name}</Text>
-                    </Pressable>
-                  );
-                })}
-            </View>
-            <View style={s.mafiaCapacityActions}>
-              <Pressable
-                onPress={() => setMafiaNightPicker(null)}
-                style={s.mafiaCapacityCancel}
-              >
-                <Text style={s.mafiaCapacityCancelText}>취소</Text>
-              </Pressable>
-              <Pressable
-                disabled={mafiaBusy || !mafiaNightTargetDraft}
-                onPress={() => void submitMafiaNightTarget()}
-                style={[
-                  s.mafiaCapacityStart,
-                  (mafiaBusy || !mafiaNightTargetDraft) && s.disabled,
-                ]}
-              >
-                <LinearGradient
-                  colors={["#82B9C1", "#5DBB8C"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={s.mafiaCapacityStartGradient}
-                >
-                  <Text style={s.primaryText}>{mafiaBusy ? "저장 중..." : "확인"}</Text>
-                </LinearGradient>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      )}
       {pointTarget && (
         <View style={s.sheetLayer}>
           <Pressable
@@ -12780,7 +10900,7 @@ function ChatRoom({
         }
       />
       {toast !== "" && (
-        <View pointerEvents="none" style={[s.toast, { bottom: chatToastBottom }]}>
+        <View pointerEvents="none" style={s.toast}>
           <Text style={s.toastText}>{toast}</Text>
         </View>
       )}
@@ -13494,16 +11614,9 @@ function StoryDetail({
   const [refreshing, setRefreshing] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const safeAreaInsets = useSafeAreaInsets();
-  const androidCommentKeyboardLift = useAndroidKeyboardLift(safeAreaInsets.bottom);
   const theme = useAppTheme();
   const foreground = themeForeground(theme);
-  const androidStoryBottomInset = 0;
-  const handleBack = useCallback(() => {
-    setMenuOpen(false);
-    Keyboard.dismiss();
-    requestAnimationFrame(onBack);
-  }, [onBack]);
-  useAndroidHardwareBack(handleBack);
+  useAndroidHardwareBack(onBack);
   const canDelete = story.mine || canModerate;
   const onChangeRef = useRef(onChange);
   useEffect(() => {
@@ -13731,7 +11844,7 @@ function StoryDetail({
       behavior={undefined}
       keyboardVerticalOffset={0}
     >
-      <EdgeBackLayer onBack={handleBack} />
+      <EdgeBackLayer onBack={onBack} />
       {!hideHeader && (
         <LinearGradient
           colors={theme.gradient}
@@ -13747,7 +11860,7 @@ function StoryDetail({
             },
           ]}
         >
-          <Pressable onPress={handleBack} style={s.storyHeaderAction}>
+          <Pressable onPress={onBack} style={s.storyHeaderAction}>
             <Ionicons name="chevron-back" size={22} color={foreground} />
           </Pressable>
           <Text style={[s.storyDetailHeaderTitle, { color: foreground }]}>스토리</Text>
@@ -13868,7 +11981,6 @@ function StoryDetail({
           <InlineBannerAd
             placement="story"
             dark={theme.id === "dark"}
-            reserveSpace={Platform.OS === "android"}
           />
         )}
         <View style={s.commentSection}>
@@ -13906,18 +12018,7 @@ function StoryDetail({
               backgroundColor: "#222222",
               borderTopColor: "#343434",
             },
-            Platform.OS === "android" && keyboardInset > 0
-              ? { marginBottom: keyboardInset }
-              : Platform.OS === "android" && androidCommentKeyboardLift > 0
-                ? { marginBottom: androidCommentKeyboardLift }
-              : Platform.OS === "android"
-                ? [
-                    s.androidStoryCommentComposerDocked,
-                    { marginBottom: -androidSystemBottomInset(safeAreaInsets.bottom) },
-                  ]
-              : androidStoryBottomInset > 0
-                ? { paddingBottom: androidStoryBottomInset }
-                : null,
+            keyboardInset > 0 && { marginBottom: keyboardInset },
           ]}
         >
           <View
@@ -14784,14 +12885,12 @@ function MemberPanel({
   room,
   isOwner,
   isSuperAdmin,
-  mafiaParticipantUserIds,
   onAdminReportUser,
   onProfile,
 }: {
   room: Room;
   isOwner: boolean;
   isSuperAdmin: boolean;
-  mafiaParticipantUserIds?: Set<string>;
   onAdminReportUser: (id: string, label: string) => void;
   onProfile: (member: RoomMember) => void;
 }) {
@@ -14918,9 +13017,6 @@ function MemberPanel({
           <MemberCard
             key={member.userId ?? member.name}
             {...member}
-            mafiaParticipant={Boolean(
-              member.userId && mafiaParticipantUserIds?.has(member.userId),
-            )}
             onPress={() => onProfile(member)}
             onLongPress={
               isOwner && !member.owner
@@ -14953,7 +13049,6 @@ function MemberCard({
   owner,
   mine,
   coHost,
-  mafiaParticipant,
   onPress,
   onLongPress,
   onManage,
@@ -14964,7 +13059,6 @@ function MemberCard({
   owner?: boolean;
   mine?: boolean;
   coHost?: boolean;
-  mafiaParticipant?: boolean;
   onPress: () => void;
   onLongPress?: () => void;
   onManage?: () => void;
@@ -14982,7 +13076,6 @@ function MemberCard({
           {mine && <Badge text="나" />}
           {owner && <Badge text="방장" pink />}
           {coHost && <Badge text="부방장" />}
-          {mafiaParticipant && <Badge text="마피아 게임 참여 중" />}
         </View>
         <Text style={s.memberIntro}>{intro}</Text>
       </View>
@@ -16978,12 +15071,10 @@ function StoreCard({
 
 function EditRoom({
   room,
-  adultVerified,
   onBack,
   onUpdated,
 }: {
   room: Room;
-  adultVerified: boolean;
   onBack: () => void;
   onUpdated: (room: Room) => void;
 }) {
@@ -17195,9 +15286,9 @@ function EditRoom({
                    ["region", "지역별", false, undefined],
                   [
                     "adult",
-                    adultVerified ? "성인" : "인증 필요",
-                    !adultVerified,
-                    adultVerified ? undefined : "성인 인증이 필요합니다.",
+                    "인증 필요",
+                    true,
+                    "성인 인증이 필요합니다.",
                   ],
                  ] as const
               ).map(([value, label, typeDisabled, disabledReason]) => (
@@ -17836,131 +15927,10 @@ function AdultVerificationScreen({
 }) {
   useAndroidHardwareBack(onBack);
   const [loading, setLoading] = useState(false);
-  const [webVisible, setWebVisible] = useState(false);
-  const [webUrl, setWebUrl] = useState<string | null>(null);
-  const [webHtml, setWebHtml] = useState<string | null>(null);
-  const closeWeb = () => {
-    setWebVisible(false);
-    setWebUrl(null);
-    setWebHtml(null);
-  };
-  const finishVerification = async (identityVerificationId?: string | null) => {
-    setLoading(true);
-    try {
-      if (identityVerificationId) {
-        await storePendingAdultVerificationId(identityVerificationId);
-        await completeAdultVerification(identityVerificationId);
-        await clearPendingAdultVerificationId(identityVerificationId);
-      }
-      closeWeb();
-      const done = await onRefresh();
-      Alert.alert(
-        "성인 인증",
-        done
-          ? "성인 인증이 완료되었습니다."
-          : "인증 결과가 아직 반영되지 않았습니다. 잠시 후 다시 확인해주세요.",
-      );
-    } catch (error) {
-      Alert.alert("인증 확인 실패", serverErrorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  };
-  const handleVerificationUrl = (url: string) => {
-    const identityVerificationId = parseAdultVerificationId(url);
-    if (!identityVerificationId) return false;
-    void finishVerification(identityVerificationId);
-    return true;
-  };
-  const buildPortOneHtml = (payload: {
-    storeId: string;
-    channelKey: string;
-    identityVerificationId: string;
-    redirectUrl: string;
-  }) => `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <script src="https://cdn.portone.io/v2/browser-sdk.js"></script>
-    <style>
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 24px;
-        font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
-        color: #1f2933;
-        background: linear-gradient(135deg, #eefafa, #ffffff);
-      }
-      .card {
-        width: 100%;
-        max-width: 360px;
-        border-radius: 24px;
-        padding: 28px 22px;
-        background: rgba(255,255,255,.95);
-        box-shadow: 0 20px 60px rgba(31,41,51,.12);
-        text-align: center;
-      }
-      .title { font-size: 20px; font-weight: 800; margin-bottom: 12px; }
-      .body { font-size: 14px; line-height: 1.6; color: #6b7280; }
-      .error { color: #dc2626; }
-    </style>
-  </head>
-  <body>
-    <div class="card">
-      <div class="title">성인인증을 시작합니다</div>
-      <div id="message" class="body">인증 창을 준비하고 있습니다.</div>
-    </div>
-    <script>
-      const message = document.getElementById('message');
-      function post(payload) {
-        window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify(payload));
-      }
-      async function run() {
-        try {
-          if (!window.PortOne) throw new Error('본인인증 모듈을 불러오지 못했습니다.');
-          const response = await window.PortOne.requestIdentityVerification({
-            storeId: ${JSON.stringify(payload.storeId)},
-            channelKey: ${JSON.stringify(payload.channelKey)},
-            identityVerificationId: ${JSON.stringify(payload.identityVerificationId)},
-            redirectUrl: ${JSON.stringify(payload.redirectUrl)},
-          });
-          if (response && response.code) {
-            throw new Error(response.message || '본인인증이 취소되었습니다.');
-          }
-          post({
-            type: 'adultVerificationComplete',
-            identityVerificationId: (response && response.identityVerificationId) || ${JSON.stringify(payload.identityVerificationId)}
-          });
-        } catch (error) {
-          message.className = 'body error';
-          message.textContent = error && error.message ? error.message : '본인인증을 시작하지 못했습니다.';
-          post({ type: 'adultVerificationError', message: message.textContent });
-        }
-      }
-      run();
-    </script>
-  </body>
-</html>`;
   const openPortal = async () => {
     setLoading(true);
     try {
-      const payload = await startAdultVerification();
-      if ("identityVerificationId" in payload) {
-        await storePendingAdultVerificationId(payload.identityVerificationId);
-      }
-      if ("url" in payload) {
-        setWebHtml(null);
-        setWebUrl(payload.url);
-      } else {
-        setWebHtml(buildPortOneHtml(payload));
-        setWebUrl(null);
-      }
-      setWebVisible(true);
+      await Linking.openURL(getOperationsPolicyUrl());
     } catch (error) {
       Alert.alert("열기 실패", serverErrorMessage(error));
     } finally {
@@ -17970,7 +15940,6 @@ function AdultVerificationScreen({
   const refresh = async () => {
     setLoading(true);
     try {
-      await completePendingAdultVerification();
       const done = await onRefresh();
       Alert.alert(
         "인증 상태",
@@ -17985,45 +15954,6 @@ function AdultVerificationScreen({
   return (
     <SafeAreaView style={s.safe}>
       <TopBar title="성인 인증" onBack={onBack} />
-      <Modal visible={webVisible} animationType="slide" onRequestClose={closeWeb}>
-        <SafeAreaView style={s.safe}>
-          <TopBar title="성인 인증 진행" onBack={closeWeb} />
-          <WebView
-            originWhitelist={["*"]}
-            source={
-              webHtml
-                ? {
-                    html: webHtml,
-                    baseUrl: "https://service-introduction-theta.vercel.app",
-                  }
-                : { uri: webUrl ?? "about:blank" }
-            }
-            javaScriptEnabled
-            domStorageEnabled
-            onShouldStartLoadWithRequest={(request) =>
-              !handleVerificationUrl(request.url)
-            }
-            onNavigationStateChange={(event) => {
-              handleVerificationUrl(event.url);
-            }}
-            onMessage={(event) => {
-              try {
-                const message = JSON.parse(event.nativeEvent.data);
-                if (message?.type === "adultVerificationComplete") {
-                  void finishVerification(message.identityVerificationId);
-                } else if (message?.type === "adultVerificationError") {
-                  Alert.alert(
-                    "인증 실패",
-                    message.message ?? "본인인증에 실패했습니다.",
-                  );
-                }
-              } catch {
-                // Ignore non-JSON messages.
-              }
-            }}
-          />
-        </SafeAreaView>
-      </Modal>
       <View style={s.verificationPage}>
         <View style={s.verificationIcon}>
           <Ionicons
@@ -18044,20 +15974,13 @@ function AdultVerificationScreen({
           <Pressable
             disabled={loading}
             onPress={openPortal}
-            style={[
-              s.primary,
-              Platform.OS === "android" && s.verificationPrimaryAndroid,
-              loading && s.disabled,
-            ]}
+            style={[s.primary, loading && s.disabled]}
           >
             <LinearGradient
               colors={["#82B9C1", "#5DBB8C"]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
-              style={[
-                s.primaryGradient,
-                Platform.OS === "android" && s.verificationGradientAndroid,
-              ]}
+              style={s.primaryGradient}
             >
               <Text style={s.primaryText}>
                 {loading ? "여는 중..." : "운영정책 웹 열기"}
@@ -18246,14 +16169,6 @@ function Settings({
               )
             }
           />
-          {Platform.OS === "android" && (
-            <Menu
-              icon="shield-checkmark-outline"
-              title="성인 인증"
-              value={adultVerified ? "완료" : "미완료"}
-              onPress={onAdultVerification}
-            />
-          )}
           <Menu
             icon="key-outline"
             title="비밀번호 변경"
@@ -18899,15 +16814,14 @@ function Avatar({
   uri,
   size = 44,
   overlap = false,
-  mafiaParticipant = false,
 }: {
   uri?: string;
   size?: number;
   overlap?: boolean;
-  mafiaParticipant?: boolean;
 }) {
   const safeUri = safeImageUri(uri);
-  const image = safeUri ? (
+  if (!safeUri) return <DefaultAvatar size={size} overlap={overlap} />;
+  return (
     <ExpoImage
       source={{ uri: safeUri }}
       contentFit="cover"
@@ -18919,32 +16833,10 @@ function Avatar({
           width: size,
           height: size,
           borderRadius: size / 2,
+          marginLeft: overlap ? -9 : 0,
         },
       ]}
     />
-  ) : (
-    <DefaultAvatar size={size} />
-  );
-  if (!mafiaParticipant) {
-    return <View style={{ marginLeft: overlap ? -9 : 0 }}>{image}</View>;
-  }
-  return (
-    <LinearGradient
-      colors={["#2F80ED", "#9B51E0"]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={{
-        width: size + 6,
-        height: size + 6,
-        borderRadius: (size + 6) / 2,
-        padding: 3,
-        marginLeft: overlap ? -9 : 0,
-      }}
-    >
-      <View style={{ borderRadius: size / 2, overflow: "hidden" }}>
-        {image}
-      </View>
-    </LinearGradient>
   );
 }
 function RoomImage({
@@ -19550,267 +17442,6 @@ function ChatDeliveryMeta({
     </Text>
   ) : null;
 }
-
-function mafiaPhaseLabel(state: MafiaGameState, nowMs = Date.now()) {
-  const remainingSeconds = Math.max(
-    0,
-    Math.ceil((Date.parse(state.endsAt) - nowMs) / 1000),
-  );
-  const suffix = remainingSeconds > 0 ? ` · ${remainingSeconds}초` : "";
-  if (state.status === "waiting")
-    return `마피아 모집 중 ${state.players.filter((p) => p.joined).length}/${state.capacity}${suffix}`;
-  if (state.phase === "day_discussion") return `${state.dayNumber}일 차 낮${suffix}`;
-  if (state.phase === "day_vote") return `투표하기${suffix}`;
-  if (state.phase === "final_defense") return `최후의 변론${suffix}`;
-  if (state.phase === "final_vote") return `찬반 투표${suffix}`;
-  if (state.phase === "night") return `${state.dayNumber}일 차 밤${suffix}`;
-  return "마피아 게임";
-}
-
-function mafiaPhaseLabelText(state: MafiaGameState, nowMs = Date.now()) {
-  const remainingSeconds = Math.max(
-    0,
-    Math.ceil((Date.parse(state.endsAt) - nowMs) / 1000),
-  );
-  const suffix = remainingSeconds > 0 ? ` · ${remainingSeconds}초` : "";
-  if (state.status === "waiting")
-    return `마피아 모집 중 ${state.players.filter((p) => p.joined).length}/${state.capacity}${suffix}`;
-  if (state.phase === "day_discussion") return `${state.dayNumber}일 차 낮${suffix}`;
-  if (state.phase === "day_vote") return `투표하기${suffix}`;
-  if (state.phase === "final_defense") return `최후의 변론${suffix}`;
-  if (state.phase === "final_vote") return `찬반 투표${suffix}`;
-  if (state.phase === "night") return `${state.dayNumber}일 차 밤${suffix}`;
-  return "마피아 게임";
-}
-
-function MafiaGameBar({
-  state,
-  busy,
-  onPress,
-  onShorten,
-  onExtend,
-  onNightAction,
-  nightActionLabel,
-  onStartNow,
-  canStartNow,
-  nowMs,
-}: {
-  state: MafiaGameState;
-  busy: boolean;
-  onPress: () => void;
-  onShorten: () => void;
-  onExtend: () => void;
-  onNightAction?: () => void;
-  nightActionLabel?: string;
-  onStartNow?: () => void;
-  canStartNow?: boolean;
-  nowMs?: number;
-}) {
-  const me = state.me;
-  const joinedNames = state.players
-    .filter((player) => player.joined)
-    .map((player) => player.name)
-    .filter(Boolean)
-    .join(", ");
-  const waitingSub = `${me?.joined ? "참여 중 · 누르면 참여 취소" : "누르면 참여"}\n현재 참여자: ${
-    joinedNames || "없음"
-  }`;
-  const sub =
-    state.status === "waiting"
-      ? me?.joined
-        ? "참여 중 · 누르면 참여 취소"
-        : "누르면 참여"
-      : me?.role
-        ? `내 역할: ${me.role}`
-        : "관전 중";
-  if (state.status === "running" && state.phase === "day_discussion") {
-    return (
-      <View style={[s.mafiaGameBarWrap, busy && s.disabledSoft]}>
-        <LinearGradient
-          colors={["#82B9C1", "#5DBB8C"]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={s.mafiaGameBarColumn}
-        >
-          <View style={s.mafiaGameBarHeader}>
-            <Ionicons name="people-circle-outline" size={18} color="#FFFFFF" />
-            <View style={s.flex}>
-              <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabelText(state, nowMs)}</Text>
-              <Text style={s.mafiaGameBarSub}>{sub}</Text>
-            </View>
-          </View>
-          <View style={s.mafiaGameActionRow}>
-            <Pressable disabled={busy} onPress={onShorten} style={s.mafiaGameActionChip}>
-              <Text style={s.mafiaGameActionText}>시간 단축</Text>
-            </Pressable>
-            <Pressable disabled={busy} onPress={onExtend} style={s.mafiaGameActionChip}>
-              <Text style={s.mafiaGameActionText}>시간 연장</Text>
-            </Pressable>
-          </View>
-        </LinearGradient>
-      </View>
-    );
-  }
-  if (state.status === "running" && state.phase === "night" && nightActionLabel && onNightAction) {
-    return (
-      <View style={[s.mafiaGameBarWrap, busy && s.disabledSoft]}>
-        <LinearGradient
-          colors={["#82B9C1", "#5DBB8C"]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={s.mafiaGameBarColumn}
-        >
-          <View style={s.mafiaGameBarHeader}>
-            <Ionicons name="moon-outline" size={18} color="#FFFFFF" />
-            <View style={s.flex}>
-              <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabelText(state, nowMs)}</Text>
-              <Text style={s.mafiaGameBarSub}>{sub}</Text>
-            </View>
-          </View>
-          <Pressable disabled={busy} onPress={onNightAction} style={s.mafiaGameActionChipWide}>
-            <Text style={s.mafiaGameActionText}>{nightActionLabel}</Text>
-          </Pressable>
-        </LinearGradient>
-      </View>
-    );
-  }
-  if (state.status === "waiting" && canStartNow && onStartNow) {
-    return (
-      <View style={[s.mafiaGameBarWrap, busy && s.disabledSoft]}>
-        <LinearGradient
-          colors={["#82B9C1", "#5DBB8C"]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={s.mafiaGameBarColumn}
-        >
-          <Pressable disabled={busy} onPress={onPress} style={s.mafiaGameBarHeader}>
-            <Ionicons name="people-circle-outline" size={18} color="#FFFFFF" />
-            <View style={s.flex}>
-              <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabelText(state, nowMs)}</Text>
-              <Text style={s.mafiaGameBarSub}>{state.status === "waiting" ? waitingSub : sub}</Text>
-            </View>
-          </Pressable>
-          <Pressable disabled={busy} onPress={onStartNow} style={s.mafiaGameActionChipWide}>
-            <Text style={s.mafiaGameActionText}>바로 시작</Text>
-          </Pressable>
-        </LinearGradient>
-      </View>
-    );
-  }
-  return (
-    <Pressable
-      disabled={busy}
-      onPress={onPress}
-      style={[s.mafiaGameBarWrap, busy && s.disabledSoft]}
-    >
-      <LinearGradient
-        colors={["#82B9C1", "#5DBB8C"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-        style={s.mafiaGameBar}
-      >
-        <Ionicons name="people-circle-outline" size={18} color="#FFFFFF" />
-        <View style={s.flex}>
-          <Text style={s.mafiaGameBarTitle}>{mafiaPhaseLabelText(state, nowMs)}</Text>
-          <Text style={s.mafiaGameBarSub}>{state.status === "waiting" ? waitingSub : sub}</Text>
-        </View>
-        <Ionicons name="chevron-up" size={16} color="#FFFFFF" />
-      </LinearGradient>
-    </Pressable>
-  );
-}
-
-function RankingMessageCard({
-  avatarUri,
-  drawerName,
-  ranking,
-  textColor,
-}: {
-  avatarUri?: string;
-  drawerName: string;
-  ranking: ChatRankingPayload;
-  textColor: string;
-}) {
-  return (
-    <View style={s.rankingCardContent}>
-      <View style={s.rankingCardHeader}>
-        <Avatar uri={avatarUri} size={32} />
-        <View style={s.rankingCardHeaderText}>
-          <RNText
-            numberOfLines={1}
-            style={[s.rankingCardDrawer, { color: textColor }]}
-          >
-            {drawerName}
-          </RNText>
-          <RNText style={[s.rankingCardTitle, { color: textColor }]}>
-            {ranking.title}
-          </RNText>
-        </View>
-      </View>
-      <View style={s.rankingCardList}>
-        {ranking.entries.map((entry) => (
-          <View key={`${entry.rank}-${entry.name}`} style={s.rankingCardEntry}>
-            <RNText style={[s.rankingCardRank, { color: textColor }]}>
-              {entry.rank}위
-            </RNText>
-            <RNText
-              numberOfLines={1}
-              style={[s.rankingCardName, { color: textColor }]}
-            >
-              {entry.name}
-            </RNText>
-          </View>
-        ))}
-      </View>
-    </View>
-  );
-}
-
-function DrawMessageCard({
-  selectedName,
-  selectedAvatarUri,
-  title,
-  textColor,
-}: {
-  selectedName: string;
-  selectedAvatarUri?: string;
-  title: string;
-  textColor: string;
-}) {
-  return (
-    <View style={s.drawCardContent}>
-      <RNText style={[s.drawCardTitle, { color: textColor }]}>{title}</RNText>
-      <Avatar uri={selectedAvatarUri} size={96} />
-      <RNText numberOfLines={1} style={[s.drawCardName, { color: textColor }]}>
-        {selectedName}
-      </RNText>
-    </View>
-  );
-}
-
-function MafiaRoleResultCard({ entries }: { entries: MafiaRoleResultEntry[] }) {
-  if (!entries.length) return null;
-  return (
-    <View style={s.mafiaRoleResultCard}>
-      <RNText style={s.mafiaRoleResultTitle}>마피아 게임 결과</RNText>
-      <View style={s.mafiaRoleResultList}>
-        {entries.map((entry) => (
-          <View key={entry.userId} style={s.mafiaRoleResultEntry}>
-            <Avatar uri={entry.avatarUri} size={34} />
-            <View style={s.mafiaRoleResultTextBlock}>
-              <RNText numberOfLines={1} style={s.mafiaRoleResultName}>
-                {entry.name}
-              </RNText>
-              <RNText style={s.mafiaRoleResultRole}>
-                {mafiaRoleLabel(entry.role)}
-              </RNText>
-            </View>
-          </View>
-        ))}
-      </View>
-    </View>
-  );
-}
 function MuteLogo({
   variant = "color",
   compact = false,
@@ -19896,10 +17527,6 @@ function ComposerPanel({
   onTopSpace,
   onPromotion,
   onNewStory,
-  onRanking,
-  onDraw,
-  onMafia,
-  mafiaLabel = "마피아 게임",
   onComingSoon,
   showPromotion,
   bubbleColor,
@@ -19922,10 +17549,6 @@ function ComposerPanel({
   onTopSpace: () => void;
   onPromotion: () => void;
   onNewStory: () => void;
-  onRanking: () => void;
-  onDraw: () => void;
-  onMafia: () => void;
-  mafiaLabel?: string;
   onComingSoon: (label: string) => void;
   showPromotion: boolean;
   secretDraft: string;
@@ -20033,17 +17656,17 @@ function ComposerPanel({
             <ToolAction
               icon="podium-outline"
               label="랭킹"
-              onPress={onRanking}
+              onPress={() => onComingSoon("랭킹")}
             />
             <ToolAction
               icon="shuffle-outline"
               label="제비뽑기"
-              onPress={onDraw}
+              onPress={() => onComingSoon("제비뽑기")}
             />
             <ToolAction
               icon="people-circle-outline"
-              label={mafiaLabel}
-              onPress={onMafia}
+              label="마피아 게임"
+              onPress={() => onComingSoon("마피아 게임")}
             />
           </View>
         </ScrollView>
@@ -20185,7 +17808,11 @@ function MemberActionSheet({
         onPress={onClose}
         style={s.sheetDim}
       />
-      <KeyboardSafeBottomSheet androidKeyboardOverlap={8}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={0}
+        style={s.sheetKeyboard}
+      >
         <View style={s.memberSheet}>
           <View style={s.sheetHandle} />
           <Pressable
@@ -20276,7 +17903,7 @@ function MemberActionSheet({
             </View>
           )}
         </View>
-      </KeyboardSafeBottomSheet>
+      </KeyboardAvoidingView>
     </View>
   );
 }
@@ -21602,15 +19229,6 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
   },
-  verificationPrimaryAndroid: {
-    alignSelf: "center",
-    width: 172,
-    maxWidth: 260,
-    backgroundColor: "transparent",
-  },
-  verificationGradientAndroid: {
-    paddingHorizontal: 22,
-  },
   readOnlyBanner: {
     height: 34,
     flexDirection: "row",
@@ -21884,210 +19502,6 @@ const s = StyleSheet.create({
   },
   replyComposerName: { color: colors.mint700, fontSize: 11, fontWeight: "800" },
   replyComposerText: { color: colors.textMuted, fontSize: 11, marginTop: 3 },
-  mafiaGameBarWrap: {
-    marginHorizontal: 10,
-    marginVertical: 6,
-    borderRadius: 16,
-    overflow: "hidden",
-    ...shadows.soft,
-  },
-  mafiaGameBar: {
-    minHeight: 54,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  mafiaGameBarColumn: {
-    minHeight: 76,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    gap: 9,
-  },
-  mafiaGameBarHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  mafiaGameActionRow: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  mafiaGameActionChip: {
-    flex: 1,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "rgba(255,255,255,.22)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  mafiaGameActionChipWide: {
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,.22)",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 14,
-  },
-  mafiaGameActionText: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  mafiaGameBarTitle: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  mafiaGameBarSub: {
-    color: "rgba(255,255,255,.86)",
-    fontSize: 11,
-    lineHeight: 16,
-    marginTop: 2,
-    flexShrink: 1,
-  },
-  mafiaDeadBar: {
-    minHeight: 42,
-    borderRadius: 14,
-    backgroundColor: "#F4F4F4",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 14,
-  },
-  mafiaDeadBarText: {
-    color: colors.textMuted,
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  mafiaForceFab: {
-    position: "absolute",
-    top: 12,
-    right: 14,
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    overflow: "hidden",
-    zIndex: 30,
-    ...shadows.soft,
-  },
-  mafiaForceFabGradient: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  mafiaCapacitySheet: {
-    position: "absolute",
-    left: 18,
-    right: 18,
-    bottom: 34,
-    borderRadius: 26,
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 22,
-    paddingTop: 14,
-    paddingBottom: 20,
-  },
-  mafiaCapacityTitle: {
-    marginTop: 12,
-    fontSize: 18,
-    fontWeight: "800",
-    color: colors.text,
-  },
-  mafiaCapacityBody: {
-    marginTop: 8,
-    fontSize: 13,
-    lineHeight: 19,
-    color: colors.textMuted,
-  },
-  mafiaCapacityStepper: {
-    marginTop: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-  },
-  mafiaCapacityStepButtonWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    overflow: "hidden",
-  },
-  mafiaCapacityStepButton: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  mafiaCapacityStepText: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-  mafiaCapacityValue: {
-    minWidth: 62,
-    textAlign: "center",
-    fontSize: 20,
-    fontWeight: "700",
-    color: colors.text,
-  },
-  mafiaCapacityActions: {
-    marginTop: 22,
-    flexDirection: "row",
-    gap: 10,
-  },
-  mafiaNightRadioList: {
-    marginTop: 14,
-    borderRadius: 18,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    overflow: "hidden",
-  },
-  mafiaNightRadioRow: {
-    minHeight: 48,
-    paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  mafiaNightRadioText: {
-    flex: 1,
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  mafiaCapacityCancel: {
-    flex: 1,
-    height: 50,
-    borderRadius: 16,
-    backgroundColor: "#F2F2F2",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  mafiaCapacityCancelText: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: colors.textMuted,
-  },
-  mafiaCapacityStart: {
-    flex: 1.4,
-    height: 50,
-    borderRadius: 16,
-    overflow: "hidden",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  mafiaCapacityStartGradient: {
-    flex: 1,
-    alignSelf: "stretch",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  mafiaScopedBubble: {
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: "rgba(30,30,30,.22)",
-  },
   sheetKeyboard: { ...StyleSheet.absoluteFill, justifyContent: "flex-end" },
   pointSendSheet: {
     marginHorizontal: 18,
@@ -22602,62 +20016,6 @@ const s = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "transparent",
   },
-  forceUpdatePage: {
-    flex: 1,
-    backgroundColor: "#F8FFFC",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 24,
-  },
-  forceUpdateCard: {
-    width: "100%",
-    maxWidth: 420,
-    borderRadius: 28,
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 24,
-    paddingVertical: 28,
-    alignItems: "center",
-    ...shadows.card,
-  },
-  forceUpdateIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 22,
-    backgroundColor: colors.mint050,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 16,
-  },
-  forceUpdateTitle: {
-    color: colors.text,
-    fontSize: 22,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  forceUpdateBody: {
-    marginTop: 12,
-    color: colors.textMuted,
-    fontSize: 15,
-    lineHeight: 22,
-    textAlign: "center",
-  },
-  forceUpdateButton: {
-    width: "100%",
-    marginTop: 22,
-    borderRadius: 18,
-    overflow: "hidden",
-  },
-  forceUpdateGradient: {
-    height: 54,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  forceUpdateBuild: {
-    marginTop: 12,
-    color: colors.textSubtle,
-    fontSize: 12,
-    fontWeight: "700",
-  },
   muteLogoMark: { width: 50, height: 36 },
   muteName: {
     color: colors.text,
@@ -22721,30 +20079,6 @@ const s = StyleSheet.create({
     backgroundColor: "#FFF",
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
-  },
-  appNoticeTicker: {
-    height: 28,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    overflow: "hidden",
-    justifyContent: "center",
-  },
-  appNoticeTickerText: {
-    paddingHorizontal: 20,
-    fontSize: 12,
-    fontWeight: "700",
-    lineHeight: 18,
-    flexShrink: 0,
-  },
-  appNoticeTickerMeasure: {
-    position: "absolute",
-    left: 0,
-    top: 0,
-    opacity: 0,
-    paddingHorizontal: 20,
-    fontSize: 12,
-    fontWeight: "700",
-    lineHeight: 18,
-    flexShrink: 0,
   },
   tab: { flex: 1, alignItems: "center", justifyContent: "center" },
   tabText: { color: colors.textMuted, fontSize: 12, fontWeight: "600" },
@@ -23326,17 +20660,6 @@ const s = StyleSheet.create({
     marginRight: 8,
     alignItems: "flex-end",
   },
-  rankingMessageRow: {
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  rankingMessageBlock: {
-    width: "86%",
-    maxWidth: "86%",
-    marginLeft: 0,
-    marginRight: 0,
-    alignItems: "center",
-  },
   sender: {
     color: colors.textSubtle,
     fontSize: 11,
@@ -23353,10 +20676,6 @@ const s = StyleSheet.create({
     flexShrink: 1,
   },
   mineBubbleLine: { justifyContent: "flex-end" },
-  rankingBubbleLine: {
-    justifyContent: "center",
-    width: "100%",
-  },
   bubble: {
     borderRadius: 12,
     paddingHorizontal: 13,
@@ -23364,13 +20683,6 @@ const s = StyleSheet.create({
     maxWidth: "100%",
     minWidth: 0,
     flexShrink: 1,
-  },
-  rankingBubble: {
-    width: "100%",
-    maxWidth: "100%",
-    borderRadius: 20,
-    paddingHorizontal: 18,
-    paddingVertical: 16,
   },
   imageBubble: { padding: 0, overflow: "hidden" },
   mineBubble: { backgroundColor: "#F5F5F5", borderBottomRightRadius: 4 },
@@ -23380,119 +20692,6 @@ const s = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     flexShrink: 1,
-  },
-  rankingCardContent: {
-    width: "100%",
-    gap: 14,
-  },
-  rankingCardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  rankingCardHeaderText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  rankingCardDrawer: {
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  rankingCardTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-    lineHeight: 18,
-    opacity: 0.78,
-    marginTop: 2,
-  },
-  rankingCardList: {
-    gap: 8,
-  },
-  rankingCardEntry: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  rankingCardRank: {
-    width: 46,
-    fontSize: 18,
-    fontWeight: "700",
-    textAlign: "right",
-  },
-  rankingCardName: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: 17,
-    fontWeight: "600",
-  },
-  drawCardContent: {
-    width: "100%",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 4,
-  },
-  drawCardTitle: {
-    alignSelf: "stretch",
-    textAlign: "left",
-    fontSize: 13,
-    fontWeight: "700",
-    lineHeight: 18,
-    opacity: 0.78,
-  },
-  drawCardName: {
-    alignSelf: "stretch",
-    textAlign: "center",
-    fontSize: 22,
-    fontWeight: "800",
-  },
-  mafiaRoleResultCard: {
-    alignSelf: "center",
-    width: "82%",
-    maxWidth: 360,
-    marginTop: -12,
-    marginBottom: 24,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderRadius: 18,
-    backgroundColor: "#FFFFFF",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    ...shadows.soft,
-  },
-  mafiaRoleResultTitle: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "800",
-    marginBottom: 10,
-    textAlign: "center",
-  },
-  mafiaRoleResultList: {
-    gap: 9,
-  },
-  mafiaRoleResultEntry: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  mafiaRoleResultTextBlock: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-  },
-  mafiaRoleResultName: {
-    flex: 1,
-    minWidth: 0,
-    color: colors.text,
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  mafiaRoleResultRole: {
-    color: colors.mint700,
-    fontSize: 12,
-    fontWeight: "800",
   },
   deletedMessageRow: {
     flexDirection: "row",
@@ -24608,10 +21807,6 @@ const s = StyleSheet.create({
     backgroundColor: "#FFF",
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
-  },
-  androidStoryCommentComposerDocked: {
-    marginBottom: 0,
-    paddingBottom: 0,
   },
   commentComposer: {
     minHeight: 62,

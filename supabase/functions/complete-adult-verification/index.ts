@@ -54,22 +54,6 @@ function normalizePhone(value: unknown) {
   return `+82${digits}`;
 }
 
-function phoneDigits(value: unknown) {
-  return normalizePhone(value).replace(/\D/g, '');
-}
-
-async function findUserByVerifiedPhone(
-  service: ReturnType<typeof createClient>,
-  verifiedPhone: string,
-) {
-  if (!phoneDigits(verifiedPhone)) return null;
-  const { data, error } = await service.rpc('find_user_id_by_verified_phone', {
-    p_phone: verifiedPhone,
-  });
-  if (error) throw error;
-  return data ? { id: String(data) } : null;
-}
-
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (request.method !== 'POST') return json({ error: 'METHOD_NOT_ALLOWED' }, 405);
@@ -77,7 +61,17 @@ Deno.serve(async (request) => {
   let attemptId = '';
   let service: ReturnType<typeof createClient> | null = null;
   try {
+    const authorization = request.headers.get('Authorization');
+    if (!authorization) return json({ error: 'UNAUTHORIZED' }, 401);
+
     const supabaseUrl = env('SUPABASE_URL');
+    const authed = createClient(supabaseUrl, env('SUPABASE_ANON_KEY'), {
+      global: { headers: { Authorization: authorization } },
+    });
+    const { data: userData, error: userError } = await authed.auth.getUser();
+    const user = userData.user;
+    if (userError || !user) return json({ error: 'UNAUTHORIZED' }, 401);
+
     const body = await request.json().catch(() => ({}));
     attemptId = typeof body.identityVerificationId === 'string'
       ? body.identityVerificationId.trim()
@@ -85,24 +79,11 @@ Deno.serve(async (request) => {
     if (!attemptId) return json({ error: 'MISSING_IDENTITY_VERIFICATION_ID' }, 400);
 
     service = createClient(supabaseUrl, env('SUPABASE_SERVICE_ROLE_KEY'));
-    const authorization = request.headers.get('Authorization');
-    let authedUserId = '';
-    let authedUserPhone = '';
-    if (authorization) {
-      const authed = createClient(supabaseUrl, env('SUPABASE_ANON_KEY'), {
-        global: { headers: { Authorization: authorization } },
-      });
-      const { data: userData } = await authed.auth.getUser();
-      if (userData.user) {
-        authedUserId = userData.user.id;
-        authedUserPhone = normalizePhone(userData.user.phone);
-      }
-    }
-
     const { data: attempt, error: attemptError } = await service
       .from('adult_verification_attempts')
       .select('id,user_id,status,expires_at')
       .eq('id', attemptId)
+      .eq('user_id', user.id)
       .maybeSingle();
     if (attemptError) throw attemptError;
     if (!attempt) return json({ error: 'VERIFICATION_ATTEMPT_NOT_FOUND' }, 404);
@@ -142,20 +123,8 @@ Deno.serve(async (request) => {
     }
 
     const verifiedPhone = normalizePhone(customer.phoneNumber ?? customer.phone);
-    const phoneMatchedUser = verifiedPhone
-      ? await findUserByVerifiedPhone(service, verifiedPhone)
-      : null;
-    const targetUserId = phoneMatchedUser?.id || (authedUserId && attempt.user_id === authedUserId ? authedUserId : '');
-    const accountPhone = authedUserPhone;
-    if (!targetUserId) {
-      await service.from('adult_verification_attempts').update({
-        status: 'failed',
-        failure_code: 'PHONE_ACCOUNT_NOT_FOUND',
-        updated_at: new Date().toISOString(),
-      }).eq('id', attemptId);
-      return json({ error: 'PHONE_ACCOUNT_NOT_FOUND' }, 404);
-    }
-    if (verifiedPhone && accountPhone && verifiedPhone !== accountPhone && targetUserId === authedUserId) {
+    const accountPhone = normalizePhone(user.phone);
+    if (verifiedPhone && accountPhone && verifiedPhone !== accountPhone) {
       await service.from('adult_verification_attempts').update({
         status: 'failed',
         failure_code: 'PHONE_MISMATCH',
@@ -170,7 +139,7 @@ Deno.serve(async (request) => {
         .from('users')
         .select('id')
         .eq('ci_hash', hashedCi)
-        .neq('id', targetUserId)
+        .neq('id', user.id)
         .maybeSingle();
       if (duplicate) return json({ error: 'IDENTITY_ALREADY_USED' }, 409);
     }
@@ -186,7 +155,7 @@ Deno.serve(async (request) => {
     };
     if (hashedCi) updatePayload.ci_hash = hashedCi;
 
-    const { error: updateError } = await service.from('users').update(updatePayload).eq('id', targetUserId);
+    const { error: updateError } = await service.from('users').update(updatePayload).eq('id', user.id);
     if (updateError) {
       if (updateError.code === '23505') return json({ error: 'IDENTITY_ALREADY_USED' }, 409);
       throw updateError;

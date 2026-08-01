@@ -19,7 +19,7 @@
     <key>CFBundlePackageType</key>
     <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.4</string>
+    <string>$(MARKETING_VERSION)</string>
     <key>CFBundleSignature</key>
     <string>????</string>
     <key>CFBundleURLTypes</key>
@@ -33,7 +33,7 @@
       </dict>
     </array>
     <key>CFBundleVersion</key>
-    <string>160</string>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>GADApplicationIdentifier</key>
     <string>ca-app-pub-4013454985021474~4784155440</string>
     <key>GADDelayAppMeasurementInit</key>
@@ -44,6 +44,10 @@
     <string>12.0</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>UIDeviceFamily</key>
+    <array>
+      <integer>1</integer>
+    </array>
     <key>NSAppTransportSecurity</key>
     <dict>
       <key>NSAllowsArbitraryLoads</key>
@@ -52,19 +56,13 @@
       <true/>
     </dict>
     <key>NSCameraUsageDescription</key>
-    <string>채팅, 스토리, 프로필에 사용할 사진을 촬영하기 위해 카메라 권한이 필요합니다.</string>
-    <key>NSFaceIDUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your Face ID biometric data.</string>
+    <string>채팅과 프로필에 보낼 사진을 촬영하기 위해 카메라 권한이 필요합니다.</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>채팅 이미지를 사진 앱에 저장하기 위해 권한이 필요합니다.</string>
+    <string>채팅 이미지를 사진첩에 저장하기 위해 권한이 필요합니다.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>채팅 이미지와 프로필 이미지를 확인하기 위해 사진 접근 권한이 필요합니다.</string>
+    <string>채팅 이미지를 확인하기 위해 사진 접근 권한이 필요합니다.</string>
     <key>NSUserTrackingUsageDescription</key>
-    <string>留욎땄??愿묎퀬 ?쒓났 ?щ?瑜??좏깮?섍린 ?꾪빐 湲곌린 愿묎퀬 ?앸퀎???묎렐 沅뚰븳???붿껌?⑸땲??</string>
-    <key>UIDeviceFamily</key>
-    <array>
-      <integer>1</integer>
-    </array>
+    <string>맞춤형 광고 제공 여부를 선택하기 위해 기기 광고 식별자 접근 권한을 요청합니다.</string>
     <key>UILaunchStoryboardName</key>
     <string>SplashScreen</string>
     <key>UIRequiredDeviceCapabilities</key>
@@ -72,7 +70,7 @@
       <string>arm64</string>
     </array>
     <key>UIRequiresFullScreen</key>
-    <false/>
+    <true/>
     <key>UIStatusBarStyle</key>
     <string>UIStatusBarStyleDefault</string>
     <key>UISupportedInterfaceOrientations</key>

@@ -3,6 +3,5 @@
   "EX_DEV_CLIENT_NETWORK_INSPECTOR": "true",
   "expo.inlineModules.watchedDirectories": "[]",
   "expo-image.disable-libdav1d": "false",
-  "ios.buildReactNativeFromSource": "true",
-  "expo.inlineModules.xcodeProjectTargets": "{\"mainTarget\":\"app\",\"targets\":[]}"
+  "ios.buildReactNativeFromSource": "true"
 }

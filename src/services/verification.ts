@@ -51,21 +51,7 @@ export function getOperationsPolicyUrl() {
   return baseUrl;
 }
 
-export type AdultVerificationStart =
-  | {
-      mode: 'portone';
-      storeId: string;
-      channelKey: string;
-      identityVerificationId: string;
-      redirectUrl: string;
-      expiresAt?: string;
-    }
-  | {
-      mode: 'legacy' | 'mock' | string;
-      url: string;
-    };
-
-export async function startAdultVerification(): Promise<AdultVerificationStart> {
+export async function startAdultVerification() {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error('Supabase environment is not configured.');
   }
@@ -74,34 +60,6 @@ export async function startAdultVerification(): Promise<AdultVerificationStart> 
     body: { returnUrl: 'mute://adult-verification-complete' },
   });
   if (error) throw error;
-  if (data?.mode === 'portone') {
-    if (!data.storeId || !data.channelKey || !data.identityVerificationId || !data.redirectUrl) {
-      throw new Error('ADULT_VERIFICATION_PROVIDER_NOT_CONFIGURED');
-    }
-    return {
-      mode: 'portone',
-      storeId: String(data.storeId),
-      channelKey: String(data.channelKey),
-      identityVerificationId: String(data.identityVerificationId),
-      redirectUrl: String(data.redirectUrl),
-      expiresAt: data.expiresAt ? String(data.expiresAt) : undefined,
-    };
-  }
-  const url = data?.url ?? data?.redirectUrl;
-  if (!url) throw new Error('ADULT_VERIFICATION_PROVIDER_NOT_CONFIGURED');
-  return {
-    mode: data?.mode ?? 'legacy',
-    url: String(url),
-  };
-}
-
-export async function completeAdultVerification(identityVerificationId: string) {
-  if (!isSupabaseConfigured || !supabase) {
-    throw new Error('Supabase environment is not configured.');
-  }
-
-  const { error } = await supabase.functions.invoke('complete-adult-verification', {
-    body: { identityVerificationId },
-  });
-  if (error) throw error;
+  if (!data?.url) throw new Error('ADULT_VERIFICATION_PROVIDER_NOT_CONFIGURED');
+  return data.url as string;
 }
