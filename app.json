@@ -3,14 +3,14 @@
     "name": "뮤트",
     "slug": "mute-chat",
     "scheme": "mute",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/mute-app-icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "app.mute.chat",
-      "buildNumber": "173",
+      "buildNumber": "174",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIViewControllerBasedStatusBarAppearance": true,
@@ -21,10 +21,11 @@
       }
     },
     "android": {
+      "versionCode": 153,
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
-        "foregroundImage": "./assets/mute-app-icon.png",
-        "backgroundImage": "./assets/android-icon-background.png",
+        "foregroundImage": "./assets/android-adaptive-icon-foreground.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
@@ -61,7 +62,7 @@
           "androidAppId": "ca-app-pub-4013454985021474~9838684343",
           "iosAppId": "ca-app-pub-4013454985021474~4784155440",
           "delayAppMeasurementInit": true,
-          "userTrackingUsageDescription": "맞춤형 광고 제공 여부를 선택하기 위해 기기 광고 식별자 접근 권한을 요청합니다."
+          "userTrackingUsageDescription": "留욎땄??愿묎퀬 ?쒓났 ?щ?瑜??좏깮?섍린 ?꾪빐 湲곌린 愿묎퀬 ?앸퀎???묎렐 沅뚰븳???붿껌?⑸땲??"
         }
       ],
       "expo-iap",
@@ -70,7 +71,7 @@
     ],
     "extra": {
       "brand": {
-        "ko": "뮤트",
+        "ko": "裕ㅽ듃",
         "en": "Mute"
       },
       "eas": {

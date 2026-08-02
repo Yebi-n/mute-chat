@@ -23,12 +23,61 @@ export type ServerRoomMessage = {
   storyImageUri?: string;
   bubbleColor?:string;
   textColor?:string;
+  mafiaGameId?: string | null;
+  mafiaVisibility?: 'public' | 'private' | 'spectator' | 'mafia' | 'lover';
+  mafiaRecipientUserIds?: string[];
 };
 
 export type RoomReadReceipt = {
   roomId: string;
   lastReadMessageId: string | null;
   lastReadAt: string;
+};
+
+export type MafiaGamePhase =
+  | 'lobby'
+  | 'day_discussion'
+  | 'day_vote'
+  | 'final_defense'
+  | 'final_vote'
+  | 'night'
+  | 'ended';
+
+export type MafiaRole = 'mafia' | 'police' | 'doctor' | 'lover' | 'citizen';
+export type MafiaNightActionType = 'kill' | 'save' | 'inspect';
+
+export type MafiaPlayerState = {
+  userId: string;
+  name: string;
+  avatarPath?: string | null;
+  role?: MafiaRole | null;
+  team?: 'mafia' | 'citizen' | null;
+  alive: boolean;
+  joined: boolean;
+};
+
+export type MafiaGameState = {
+  id: string;
+  roomId: string;
+  hostUserId?: string | null;
+  status: 'waiting' | 'running' | 'ended' | 'cancelled';
+  phase: MafiaGamePhase;
+  dayNumber: number;
+  capacity: number;
+  endsAt: string;
+  defenseTargetUserId?: string | null;
+  winner?: 'mafia' | 'citizen' | null;
+  me?: MafiaPlayerState | null;
+  players: MafiaPlayerState[];
+  nightActions?: Partial<
+    Record<
+      MafiaNightActionType,
+      {
+        targetUserId: string;
+        targetName: string;
+      } | null
+    >
+  >;
 };
 
 function requireClient() {
@@ -156,7 +205,7 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
     .maybeSingle();
   let messageQuery = client
     .from('messages')
-    .select('id,sender_user_id,kind,body,sender_deleted_at,reply_to_message_id,secret_recipient_user_id,media_group_id,story_id,created_at,sender_display_name_snapshot,sender_avatar_asset_path_snapshot')
+    .select('id,sender_user_id,kind,body,sender_deleted_at,reply_to_message_id,secret_recipient_user_id,media_group_id,story_id,created_at,sender_display_name_snapshot,sender_avatar_asset_path_snapshot,mafia_game_id,mafia_visibility,mafia_recipient_user_ids')
     .eq('room_id', roomId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
@@ -314,7 +363,134 @@ export async function listRoomMessages(roomId: string, limit = 50, before?: stri
     storyImageUri: row.story_id ? storyImageUriById.get(row.story_id as string) : undefined,
     bubbleColor:row.sender_user_id?styleByUserId.get(row.sender_user_id as string)?.bubbleColor:undefined,
     textColor:row.sender_user_id?styleByUserId.get(row.sender_user_id as string)?.textColor:undefined,
+    mafiaGameId: row.mafia_game_id as string | null,
+    mafiaVisibility: (row.mafia_visibility as ServerRoomMessage['mafiaVisibility']) ?? 'public',
+    mafiaRecipientUserIds: Array.isArray(row.mafia_recipient_user_ids)
+      ? (row.mafia_recipient_user_ids as string[])
+      : [],
   })) as ServerRoomMessage[];
+}
+
+function normalizeMafiaState(data: unknown): MafiaGameState | null {
+  if (!data || typeof data !== 'object') return null;
+  return data as MafiaGameState;
+}
+
+export async function getMafiaGameState(roomId: string) {
+  const { data, error } = await requireClient().rpc('mafia_get_state', {
+    p_room_id: roomId,
+  });
+  if (error) throw error;
+  return normalizeMafiaState(data);
+}
+
+export async function startMafiaLobby(input: { roomId: string; capacity: number }) {
+  const { data, error } = await requireClient().rpc('mafia_start_lobby', {
+    p_room_id: input.roomId,
+    p_capacity: input.capacity,
+  });
+  if (error) throw error;
+  schedulePendingPushDispatch();
+  return normalizeMafiaState(data);
+}
+
+export async function startMafiaNow(gameId: string) {
+  const { data, error } = await requireClient().rpc('mafia_start_now', {
+    p_game_id: gameId,
+  });
+  if (error) throw error;
+  schedulePendingPushDispatch();
+  return normalizeMafiaState(data);
+}
+
+export async function joinMafiaGame(gameId: string) {
+  const { data, error } = await requireClient().rpc('mafia_join_game', {
+    p_game_id: gameId,
+  });
+  if (error) throw error;
+  return normalizeMafiaState(data);
+}
+
+export async function cancelMafiaJoin(gameId: string) {
+  const { data, error } = await requireClient().rpc('mafia_cancel_join', {
+    p_game_id: gameId,
+  });
+  if (error) throw error;
+  schedulePendingPushDispatch();
+  return normalizeMafiaState(data);
+}
+
+export async function tickMafiaGame(gameId: string) {
+  const { data, error } = await requireClient().rpc('mafia_tick', {
+    p_game_id: gameId,
+  });
+  if (error) throw error;
+  return normalizeMafiaState(data);
+}
+
+export async function voteMafiaGame(input: {
+  gameId: string;
+  targetUserId?: string | null;
+  voteType: 'execute' | 'approve' | 'reject';
+}) {
+  const { data, error } = await requireClient().rpc('mafia_vote', {
+    p_game_id: input.gameId,
+    p_target_user_id: input.targetUserId ?? null,
+    p_vote_type: input.voteType,
+  });
+  if (error) throw error;
+  return normalizeMafiaState(data);
+}
+
+export async function submitMafiaNightAction(input: {
+  gameId: string;
+  targetUserId: string;
+  actionType: 'kill' | 'save' | 'inspect';
+}) {
+  const { data, error } = await requireClient().rpc('mafia_night_action', {
+    p_game_id: input.gameId,
+    p_target_user_id: input.targetUserId,
+    p_action_type: input.actionType,
+  });
+  if (error) throw error;
+  return normalizeMafiaState(data);
+}
+
+export async function adjustMafiaPhaseTime(input: {
+  gameId: string;
+  deltaSeconds: number;
+}) {
+  const { data, error } = await requireClient().rpc('mafia_extend_phase', {
+    p_game_id: input.gameId,
+    p_delta_seconds: input.deltaSeconds,
+  });
+  if (error) throw error;
+  return normalizeMafiaState(data);
+}
+
+export async function sendMafiaScopedMessage(input: {
+  gameId: string;
+  body: string;
+  visibility: 'spectator' | 'mafia' | 'lover';
+}) {
+  const { data, error } = await requireClient().rpc('mafia_send_scoped_message', {
+    p_game_id: input.gameId,
+    p_body: input.body,
+    p_visibility: input.visibility,
+  });
+  if (error) throw error;
+  const messageId = requireMessageId(data);
+  schedulePendingPushDispatch();
+  return messageId;
+}
+
+export async function forceEndMafiaGame(gameId: string) {
+  const { data, error } = await requireClient().rpc('mafia_force_end', {
+    p_game_id: gameId,
+  });
+  if (error) throw error;
+  schedulePendingPushDispatch();
+  return normalizeMafiaState(data);
 }
 
 export async function getLatestRoomMessageCursor(roomId: string) {

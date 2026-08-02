@@ -85,7 +85,12 @@ export async function registerPushDevice() {
     Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
   const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
   if (isSupabaseConfigured && supabase) {
-    const enabled=await getGlobalNotificationsEnabled();
+    let enabled = true;
+    try {
+      enabled = await getGlobalNotificationsEnabled();
+    } catch {
+      enabled = true;
+    }
     const { error } = await supabase.rpc('register_push_device', {
       p_platform: Platform.OS,
       p_push_token: token,
