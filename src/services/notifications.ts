@@ -52,7 +52,7 @@ export async function registerPushDevice() {
   if (Platform.OS === 'web') return null;
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('messages', {
-      name: 'messages',
+      name: '채팅 및 가입 알림',
       importance: Notifications.AndroidImportance.HIGH,
     });
   }
@@ -73,14 +73,6 @@ export async function registerPushDevice() {
     iosStatus === Notifications.IosAuthorizationStatus.PROVISIONAL ||
     iosStatus === Notifications.IosAuthorizationStatus.EPHEMERAL;
   if (!granted) return null;
-
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('messages', {
-      name: '채팅 및 가입 알림',
-      importance: Notifications.AndroidImportance.HIGH,
-    });
-  }
-
   const projectId =
     Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
   const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
