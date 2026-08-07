@@ -1,4 +1,4 @@
-export type MainTab = 'promotion' | 'member' | 'concept' | 'region' | 'adult';
+export type MainTab = 'promotion' | 'member' | 'concept' | 'adult';
 
 export type Room = {
   id: string;

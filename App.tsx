@@ -1071,7 +1071,6 @@ const BASE_CATEGORIES: { key: MainTab; label: string }[] = [
   { key: "promotion", label: "프로모션" },
   { key: "member", label: "Member" },
   { key: "concept", label: "콘셉트" },
-  { key: "region", label: "지역별" },
 ];
 
 const AdFreeContext = createContext(false);
@@ -4072,7 +4071,7 @@ function AuthenticatedApp({
     if (promotingRoomsRef.current.has(room.id)) {
       return { ok: false as const, remainingMs: -1 };
     }
-    if (room.isAdult) {
+    if (false && room.isAdult) {
       return { ok: false as const, remainingMs: -1 };
     }
     const current = Date.now();
@@ -4240,7 +4239,11 @@ function AuthenticatedApp({
     };
   });
   const activeTopSpaces = enrichedRoomData
-    .filter((room) => (topSpaceExpiresAt[room.id] ?? 0) > now)
+    .filter(
+      (room) =>
+        (topSpaceExpiresAt[room.id] ?? 0) > now &&
+        (!room.isAdult || canSeeAdultRooms),
+    )
     .sort(
       (a, b) => (topSpaceExpiresAt[b.id] ?? 0) - (topSpaceExpiresAt[a.id] ?? 0),
     );
@@ -6529,15 +6532,13 @@ function MainScreen({
             bottomTab === "myRooms"
               ? joinedIds.includes(room.id) || room.isSample
               : category === "promotion"
-                ? !room.isAdult &&
+                ? (!room.isAdult || canSeeAdultRooms) &&
                   (Boolean(promotionTimestamps[room.id]) || room.isPromoted)
                 : category === "member"
                   ? room.category === "member"
                   : category === "concept"
                     ? room.category === "concept"
-                    : category === "region"
-                      ? !!room.region
-                      : !!room.isAdult;
+                    : !!room.isAdult;
           return tabMatch;
         })
         .sort((a, b) => {
@@ -12058,7 +12059,7 @@ function ChatRoom({
             {!readOnly && (
               <ComposerPanel
                 tool={tool}
-                showPromotion={isOwner && !room.isAdult}
+                showPromotion={isOwner}
                 promotionRemainingMs={Math.max(0,promotionAvailableAt-Date.now())}
                 onCamera={() => sendImage("camera")}
                 onGallery={() => sendImage("gallery")}
@@ -16987,13 +16988,11 @@ function EditRoom({
   onBack: () => void;
   onUpdated: (room: Room) => void;
 }) {
-  const initialType: "member" | "concept" | "region" | "adult" = room.isAdult
+  const initialType: "member" | "concept" | "adult" = room.isAdult
     ? "adult"
-    : room.region
-      ? "region"
-      : room.category === "concept"
-        ? "concept"
-        : "member";
+    : room.category === "concept"
+      ? "concept"
+      : "member";
   const [name, setName] = useState(room.name ?? "");
   const [description, setDescription] = useState(room.description ?? "");
   const [roomType, setRoomType] = useState(initialType);
@@ -17072,7 +17071,7 @@ function EditRoom({
         description: description.trim(),
         category: roomType,
         maxMembers,
-        region: roomType === "region" ? region.trim() : undefined,
+        region: undefined,
       });
       let coverUri = room.coverUri;
       if (coverRemoved) {
@@ -17103,9 +17102,7 @@ function EditRoom({
               ? "콘셉트"
               : roomType === "adult"
                 ? "성인"
-                : roomType === "region"
-                  ? region.trim() || "지역별"
-                  : "Member",
+                : "Member",
         ]),
       ];
       const savedRoom = await getRoomById(room.id).catch(() => null);
@@ -17116,7 +17113,7 @@ function EditRoom({
             name: name.trim(),
             description: description.trim(),
             maxMembers,
-            region: roomType === "region" ? region.trim() : undefined,
+            region: undefined,
             category:
               roomType === "concept"
                 ? "concept"
@@ -17192,7 +17189,6 @@ function EditRoom({
                 [
                    ["member", "Member", false, undefined],
                    ["concept", "콘셉트", false, undefined],
-                   ["region", "지역별", false, undefined],
                   [
                     "adult",
                     adultVerified ? "성인" : "인증 필요",
@@ -17226,7 +17222,7 @@ function EditRoom({
                 </Pressable>
               ))}
             </View>
-            {roomType === "region" && (
+            {false && (
               <View style={s.regionFieldWrap}>
                 <View style={s.inlineLabelRow}>
                   <Text style={s.fieldLabel}>지역</Text>
@@ -17336,7 +17332,7 @@ function CreateRoom({
     useState<ImagePicker.ImagePickerAsset | null>(null);
   const [maxMembers, setMaxMembers] = useState(1);
   const [roomType, setRoomType] = useState<
-    "member" | "concept" | "region" | "adult"
+    "member" | "concept" | "adult"
   >("member");
   const [coverAsset, setCoverAsset] =
     useState<ImagePicker.ImagePickerAsset | null>(null);
@@ -17363,7 +17359,6 @@ function CreateRoom({
   const types: [typeof roomType, string, boolean, string?][] = [
     ["member", "Member", false],
     ["concept", "콘셉트", false],
-    ["region", "지역별", false],
     [
       "adult",
       adultVerified ? "성인" : "인증 필요",
@@ -17443,7 +17438,7 @@ function CreateRoom({
         description: description.trim(),
         category: roomType,
         maxMembers,
-        region: roomType === "region" ? region.trim() : undefined,
+        region: undefined,
       };
       const id = isSupabaseConfigured
         ? await createRoom(input)
@@ -17503,9 +17498,7 @@ function CreateRoom({
               ? "콘셉트"
               : roomType === "adult"
                 ? "성인"
-                : roomType === "region"
-                  ? region.trim() || "지역별"
-                  : "Member",
+                : "Member",
         ]),
       ];
       const created: Room = {
@@ -17527,7 +17520,7 @@ function CreateRoom({
         emoji: "○",
         imageColor: "#E8ECEA",
         coverUri: finalCoverUri,
-        region: roomType === "region" ? region.trim() : undefined,
+        region: undefined,
       };
       onCreated(created);
     } catch (error) {
@@ -17726,7 +17719,7 @@ function CreateRoom({
                 </Pressable>
               ))}
             </View>
-            {roomType === "region" && (
+            {false && (
               <View
                 onLayout={(event) => {
                   regionFieldY.current = event.nativeEvent.layout.y;
