@@ -696,6 +696,47 @@ function buildMafiaRoleResults(
     });
 }
 
+function decodeMafiaRolePayloadText(value?: string | null) {
+  if (!value) return "";
+  try {
+    return decodeURIComponent(value.replace(/\+/g, "%20"));
+  } catch {
+    return value.replace(/\+/g, " ");
+  }
+}
+
+function parseMafiaRoleResultsFromBody(
+  body: string | null | undefined,
+  members: RoomMember[],
+): MafiaRoleResultEntry[] {
+  if (!isMafiaGameEndSystemBody(body)) return [];
+  const rolesMatch = body?.match(/\sroles=([^\s]+)/);
+  const payload = rolesMatch?.[1];
+  if (!payload) return [];
+  const membersByUserId = new Map(
+    members
+      .filter((member) => Boolean(member.userId))
+      .map((member) => [member.userId!, member]),
+  );
+  return payload
+    .split("|")
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .map((chunk) => {
+      const [userId = "", role = "", encodedName = ""] = chunk.split(",");
+      const member = membersByUserId.get(userId);
+      return {
+        userId,
+        name:
+          decodeMafiaRolePayloadText(encodedName).trim() ||
+          member?.name ||
+          "멤버",
+        role: (role || null) as MafiaRole | null,
+        avatarUri: member?.avatarUri,
+      };
+    })
+    .filter((entry) => Boolean(entry.userId));
+}
 const CHAT_RANKING_TITLE_RE = /^(.+?)님이\s*랭킹을\s*뽑았습니다\.?$/;
 const CHAT_RANKING_ENTRY_RE = /^(\d+)\s*위[\s,.:：-]*(.+)$/;
 const CHAT_DRAW_TITLE_RE = /^(.+?)님이\s*제비를\s*뽑았습니다\.?$/;
@@ -11469,9 +11510,14 @@ function ChatRoom({
             );
             if (item.kind === "system") {
               if (!item.text.trim()) return null;
-              const mafiaRoleResults =
-                isMafiaGameEndSystemBody(item.mafiaSystemBody) &&
-                mafiaGame?.id === item.mafiaGameId
+              const mafiaRoleResultsFromBody = parseMafiaRoleResultsFromBody(
+                item.mafiaSystemBody,
+                roomMembersRef.current,
+              );
+              const mafiaRoleResults = mafiaRoleResultsFromBody.length
+                ? mafiaRoleResultsFromBody
+                : isMafiaGameEndSystemBody(item.mafiaSystemBody) &&
+                    mafiaGame?.id === item.mafiaGameId
                   ? buildMafiaRoleResults(mafiaGame, roomMembersRef.current)
                   : [];
               return (
