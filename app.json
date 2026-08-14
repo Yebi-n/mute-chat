@@ -3,14 +3,14 @@
     "name": "뮤트",
     "slug": "mute-chat",
     "scheme": "mute",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "orientation": "portrait",
     "icon": "./assets/mute-app-icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "app.mute.chat",
-      "buildNumber": "179",
+      "buildNumber": "180",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIViewControllerBasedStatusBarAppearance": true,
