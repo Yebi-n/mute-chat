@@ -3251,7 +3251,6 @@ function AuthenticatedApp({
   const isSuperAdmin = Boolean(
     session?.user.app_metadata?.admin_role === "super_admin",
   );
-  const canAccessAdultRoom = (room: Room) => !room.isAdult || canSeeAdultRooms;
   const [screen, setScreen] = useState<Screen>("main");
   const [bottomTab, setBottomTab] = useState<BottomTab>("myRooms");
   const [category, setCategory] = useState<MainTab>("promotion");
@@ -3300,9 +3299,15 @@ function AuthenticatedApp({
   const [adultVerified, setAdultVerified] = useState(false);
   const [adultContentWebOptedIn, setAdultContentWebOptedIn] = useState(false);
   const [iosAdultContentEnabled, setIosAdultContentEnabled] = useState(false);
-  const showAdultTab = isSuperAdmin || adultVerified;
-  const canSeeAdultRooms = isSuperAdmin || adultVerified;
-  const canUseAdultFeatures = isSuperAdmin || adultVerified;
+  const hasAdultContentAccess =
+    isSuperAdmin ||
+    adultVerified ||
+    iosAdultContentEnabled ||
+    adultContentWebOptedIn;
+  const showAdultTab = hasAdultContentAccess;
+  const canSeeAdultRooms = hasAdultContentAccess;
+  const canUseAdultFeatures = hasAdultContentAccess;
+  const canAccessAdultRoom = (room: Room) => !room.isAdult || hasAdultContentAccess;
   const [chatInitialPanel, setChatInitialPanel] = useState<ChatPanel>(null);
   const [chatInitialStoryId, setChatInitialStoryId] = useState<string | null>(
     null,
@@ -3956,7 +3961,7 @@ function AuthenticatedApp({
   };
   const openRoom = async (room: Room) => {
     if (!canAccessAdultRoom(room)) {
-      Alert.alert("접근 불가", "이 콘텐츠는 현재 iOS에서 이용할 수 없습니다.");
+      Alert.alert("성인 인증 필요", "성인 인증 후 이용할 수 있는 방입니다.");
       return;
     }
     setChatInitialPanel(null);
@@ -3983,7 +3988,7 @@ function AuthenticatedApp({
   };
   const openRoomDetail = (room: Room) => {
     if (!canAccessAdultRoom(room)) {
-      Alert.alert("접근 불가", "이 콘텐츠는 현재 iOS에서 이용할 수 없습니다.");
+      Alert.alert("성인 인증 필요", "성인 인증 후 이용할 수 있는 방입니다.");
       return;
     }
     setSelectedRoom(room);
@@ -4016,7 +4021,7 @@ function AuthenticatedApp({
       return;
     }
     if (!canAccessAdultRoom(room)) {
-      Alert.alert("접근 불가", "이 콘텐츠는 현재 iOS에서 이용할 수 없습니다.");
+      Alert.alert("성인 인증 필요", "성인 인증 후 이용할 수 있는 방입니다.");
       return;
     }
     setSelectedRoom(room);
@@ -4311,7 +4316,7 @@ function AuthenticatedApp({
         {({ navigation }) => {
           const navigateRoom = async (room: Room) => {
             if (!canAccessAdultRoom(room)) {
-              Alert.alert("접근 불가", "이 콘텐츠는 현재 iOS에서 이용할 수 없습니다.");
+              Alert.alert("성인 인증 필요", "성인 인증 후 이용할 수 있는 방입니다.");
               return;
             }
             setChatInitialPanel(null);
@@ -4330,7 +4335,7 @@ function AuthenticatedApp({
           };
           const navigateRoomDetail = (room: Room) => {
             if (!canAccessAdultRoom(room)) {
-              Alert.alert("접근 불가", "이 콘텐츠는 현재 iOS에서 이용할 수 없습니다.");
+              Alert.alert("성인 인증 필요", "성인 인증 후 이용할 수 있는 방입니다.");
               return;
             }
             setSelectedRoom(room);
@@ -4369,7 +4374,7 @@ function AuthenticatedApp({
               return;
             }
             if (!canAccessAdultRoom(room)) {
-              Alert.alert("접근 불가", "이 콘텐츠는 현재 iOS에서 이용할 수 없습니다.");
+              Alert.alert("성인 인증 필요", "성인 인증 후 이용할 수 있는 방입니다.");
               return;
             }
             setSelectedRoom(room);
