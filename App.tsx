@@ -8086,6 +8086,7 @@ function ChatRoom({
   const prependSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const lastOlderLoadRequestedAtRef = useRef(0);
   const messagePositions = useRef<Record<string, number>>({});
   const restoreScrollAfterPanelRef = useRef(false);
   const [chatReady, setChatReady] = useState(false);
@@ -9212,11 +9213,14 @@ function ChatRoom({
   const loadOlderMessages = async () => {
     if (
       loadingOlderRef.current ||
+      prependHeightRef.current !== null ||
+      Date.now() - lastOlderLoadRequestedAtRef.current < 650 ||
       !hasOlderMessages ||
       !isSupabaseConfigured ||
       !isUuid(room.id)
     )
       return;
+    lastOlderLoadRequestedAtRef.current = Date.now();
     const oldest = messages.find(
       (item) => item.createdAt && !item.id.startsWith("pending-"),
     );
@@ -9343,6 +9347,7 @@ function ChatRoom({
   useEffect(() => {
     initialScrollDone.current = false;
     lastContentSizeMessageCountRef.current = 0;
+    lastOlderLoadRequestedAtRef.current = 0;
     nearBottomRef.current = true;
     restoreScrollAfterPanelRef.current = false;
     if (prependSettleTimerRef.current) {
